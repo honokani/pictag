@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Caption Tool for LoRA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Bootstrapの縞模様を完全に無効化 */
+        .table-striped tbody tr:nth-child(odd) {
+            background-color: #fffbf0 !important; /* 薄い黄 */
+        }
+        .table-striped tbody tr:nth-child(even) {
+            background-color: #fff5f5 !important; /* 薄い赤 */
+        }
+        /* テーブルの基本色を薄く設定 */
+        .table tbody tr:nth-child(even) {
+            background-color: #fff5f5 !important; /* 薄い赤 */
+        }
+        .table tbody tr:nth-child(odd) {
+            background-color: #fffbf0 !important; /* 薄い黄 */
+        }
+        .selected-row {
+            background-color: #bbdefb !important;
+        }
+        .selected-row td {
+            background-color: #bbdefb !important;
+        }
+        /* チェックボックスを大きくする */
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        /* 削除済み行のスタイル */
+        .dead-row {
+            background-color: #6c757d !important;
+            color: #fff !important;
+        }
+        .dead-row td {
+            background-color: #6c757d !important;
+            color: #fff !important;
+        }
+        /* 削除済み行が選択された時 */
+        .dead-row.selected-row {
+            background-color: #495057 !important;
+        }
+        .dead-row.selected-row td {
+            background-color: #495057 !important;
+        }
+        .collapsed-column {
+            width: 30px !important;
+            min-width: 30px !important;
+            max-width: 30px !important;
+        }
+        .thumbnail-cell {
+            width: 150px;
+            height: 150px;
+            object-fit: cover;
+            cursor: pointer;
+        }
+        .table-container {
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        .sticky-header {
+            position: sticky;
+            top: 0;
+            background-color: white;
+            z-index: 10;
+        }
+        /* hover効果を無効化 */
+        .table tbody tr:hover {
+            background-color: inherit !important;
+        }
+        .table-hover tbody tr:hover {
+            background-color: inherit !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid mt-3">
+        <h2>Caption Tool for LoRA Training</h2>
+        
+        <!-- プロジェクト選択・ディレクトリ読み込み -->
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <label class="form-label">既存プロジェクト選択</label>
+                <select class="form-select" id="existingProjects" onchange="loadExistingProject()">
+                    <option value="">-- 既存プロジェクトを選択 --</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label">画像格納ディレクトリパス</label>
+                <div class="input-group">
+                    <input type="text" class="form-control" id="imageDir" placeholder="/path/to/images">
+                    <button class="btn btn-primary" onclick="loadDirectory()">読み込み</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- カラム操作 -->
+        <div class="row mb-3">
+            <div class="col-md-12">
+                <label class="form-label">カラム操作</label>
+                <div class="row">
+                    <div class="col-md-1">
+                        <div class="input-group">
+                            <span class="input-group-text">初期：</span>
+                            <div class="input-group-text">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="defaultValueToggle">
+                                    <label class="form-check-label" for="defaultValueToggle" id="toggleLabel">False</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="taskSelect" onchange="updateTaskUI()">
+                            <option value="column追加">column追加</option>
+                            <option value="kind改名">kind改名</option>
+                            <option value="column改名">column改名</option>
+                            <option value="kind・column両方改名">kind・column両方改名</option>
+                            <option value="column表から削除">column表から削除</option>
+                            <option value="column全体から削除">column全体から削除</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="kindSelect" onchange="updateCaptionSelect()">
+                            <option value="new_kind">new_kind</option>
+                        </select>
+                    </div>
+                    <div class="col-md-1">
+                        <input type="text" class="form-control" id="kindText" placeholder="新種別名" disabled>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="captionSelect" onchange="updateCaptionText()">
+                            <option value="new_column">new_column</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <input type="text" class="form-control" id="captionText" placeholder="新カラム名">
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-primary" onclick="executeTask()">実行</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 操作ボタン -->
+        <div class="row mb-3">
+            <div class="col-md-4">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="isDeadVisibleToggle" checked>
+                    <label class="form-check-label" for="isDeadVisibleToggle">
+                        削除済み画像を表示 (is_dead_visible)
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-4 text-center">
+                <button class="btn btn-danger" onclick="removeAllDead()">削除済みを完全削除</button>
+            </div>
+            <div class="col-md-4 d-flex justify-content-end">
+                <button class="btn btn-primary" onclick="saveData()">保存</button>
+                <button class="btn btn-secondary ms-2" onclick="refreshTable()">更新</button>
+            </div>
+        </div>
+        
+        <!-- テーブル -->
+        <div class="table-container">
+            <table class="table">
+                <thead class="sticky-header">
+                    <tr id="tableHeader">
+                        <!-- 動的に生成 -->
+                    </tr>
+                </thead>
+                <tbody id="tableBody">
+                    <!-- 動的に生成 -->
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- ステータス -->
+        <div class="mt-3">
+            <div id="statusMessage" class="alert" style="display: none;"></div>
+        </div>
+        
+        <!-- 画像表示モーダル -->
+        <div class="modal fade" id="imageModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="imageModalTitle">画像表示</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body text-center">
+                        <img id="modalImage" src="" class="img-fluid" alt="Original Image">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/control.js"></script>
+</body>
+</html>
