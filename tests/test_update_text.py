@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from helpers import make_images
+from helpers import caption_of, make_images
 
 
 @pytest.fixture
@@ -26,7 +26,8 @@ def strict_json(data):
 def test_update_text_sets_value_and_returns_caption(loaded, tool):
     res = loaded.write(loaded.row_index("b.png"), "looks: standing")
     assert res["success"]
-    assert res["caption"] == "girl:\n  - looks: standing"
+    assert res["caption"] == caption_of("looks: standing")
+    assert res["characters"] == "1 girl"
     assert girl(tool) == {"a.png": "", "b.png": "looks: standing"}
 
 

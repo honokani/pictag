@@ -17,6 +17,11 @@ def tokens(monkeypatch):
     monkeypatch.setattr(pictag, "token_counter", TokenCounter(word_tokenizer()))
 
 
+def count(caption):
+    """テスト用のトークナイザーでのトークン数"""
+    return TokenCounter(word_tokenizer()).count(caption)
+
+
 @pytest.fixture
 def imgs(tmp_path):
     return make_images(tmp_path / "imgs" / "proj", {"a.png": (100, 100), "b.png": (100, 100), "c.png": (800, 800)})
@@ -83,7 +88,7 @@ def test_load_shows_rows_sections_and_template_keys(page, imgs):
     expect(page.locator('#projectSelect option[value="proj"]')).to_be_attached()
 
     # 確定タグのキーは空の欄にも薄く出る（action は確定タグなし）
-    expect(cell(page, "a.png", "picture").locator(".ln.empty")).to_have_text(["place:", "object:", "vibes:", "view:"])
+    expect(cell(page, "a.png", "picture").locator(".ln.empty")).to_have_text(["place:", "characters:", "vibes:", "view:"])
     expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
     expect(cell(page, "a.png", "action").locator(".ln")).to_have_count(0)
 
@@ -105,7 +110,7 @@ def test_editor_starts_with_template_keys_and_caret_on_first_empty_key(page, img
     editor.evaluate("el => el.blur()")
     expect(filled(page, "a.png")).to_have_text(["looks: standing"])
     expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["clothes:", "body:"])
-    expect(tokens_of(page, "a.png")).to_have_text("6 / 507")
+    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption_of('looks: standing'))} / 507")
     # 値の無いキーは保存しない
     assert tool.df.set_index("サムネイル").loc["a.png", "girl"] == "looks: standing"
 
@@ -116,8 +121,8 @@ def test_edit_updates_tokens_and_preview_then_saves(page, imgs, tool):
     write(page, "a.png", text)
 
     caption = caption_of(text)
-    assert caption == "girl:\n  - looks: standing\n  - body: long black hair"
-    expect(tokens_of(page, "a.png")).to_have_text("12 / 507")
+    assert caption == "picture:\n  - characters: 1 girl\n\ngirl:\n  - looks: standing\n  - body: long black hair"
+    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption)} / 507")
     expect(tokens_of(page, "a.png")).to_have_attribute("title", caption)
     expect(page.locator("#saveButton")).to_have_text("保存 *")
 
@@ -302,7 +307,7 @@ def test_tokens_over_the_limit_are_marked(page, imgs, monkeypatch):
     monkeypatch.setattr(pictag, "TOKEN_LIMIT", 5)
     load_dir(page, imgs)
     write(page, "a.png", "looks: standing")
-    expect(tokens_of(page, "a.png")).to_have_text("6 / 5")
+    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption_of('looks: standing'))} / 5")
     expect(tokens_of(page, "a.png")).to_have_class("tokens over")
 
 
@@ -319,3 +324,67 @@ def test_project_select_opens_saved_project(page, tmp_path):
 
     page.select_option("#projectSelect", "proj_a")
     expect(filled(page, "a.png")).to_have_text(["looks: standing"])
+
+
+def picture_view(page, name):
+    return cell(page, name, "picture").locator(".ln", has_text="view:")
+
+
+def choice(page, name, label):
+    return cell(page, name, "picture").locator(".choice", has_text=label)
+
+
+def test_picture_shows_characters_automatically(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "looks: standing")
+    characters = cell(page, "a.png", "picture").locator(".ln.auto")
+    expect(characters).to_have_text("characters: 1 girl")
+
+    page.fill("#sectionName", "dog")
+    page.click("#sectionForm button")
+    write(page, "a.png", "looks: sitting", section="dog")
+    expect(characters).to_have_text("characters: 1 girl + 1 dog")
+    expect(cell(page, "b.png", "picture").locator(".ln.auto")).to_have_text("characters:")
+
+
+def test_adding_girl_twice_names_them_a_and_b(page, imgs):
+    load_dir(page, imgs)
+    page.fill("#sectionName", "girl")
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(4)
+    assert section_names(page) == ["picture", "action", "girl A", "girl B"]
+    expect(choice(page, "a.png", "girl B")).to_have_text("👧 girl B")
+
+
+def test_view_buttons_toggle_and_clear(page, imgs):
+    load_dir(page, imgs)
+    choice(page, "a.png", "behind").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from behind")
+    expect(choice(page, "a.png", "behind")).to_have_class("choice on")
+    choice(page, "a.png", "front").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from front")
+    choice(page, "a.png", "above").click()
+    choice(page, "a.png", "girl").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from front, from above, girl POV")
+
+    cell(page, "a.png", "picture").locator('.choice.clear[data-group="camera0"]').click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from above, girl POV")
+    choice(page, "a.png", "girl").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from above")
+
+
+def test_view_button_applies_to_selected_rows(page, imgs):
+    load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
+    row(page, "b.png").locator("td.meta").click(modifiers=["Shift"])
+    choice(page, "a.png", "close-up").click()
+    for name in ["a.png", "b.png"]:
+        expect(picture_view(page, name)).to_have_text("view: close-up")
+    expect(picture_view(page, "c.png")).to_have_class("ln empty")
+
+
+def test_view_keeps_free_text(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "view: focus on hands", section="picture")
+    choice(page, "a.png", "close-up").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: focus on hands, close-up")

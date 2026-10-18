@@ -1,7 +1,7 @@
 """段落の入力（文字列）→ Krea2 用キャプション"""
 import pytest
 
-from caption_format import merge_same_tail, parse_line, phrases_of, render_caption
+from caption_format import merge_same_tail, parse_line, phrases_of, render_caption, with_line
 
 # (段落, 入力)。1行は「キー: 語句, 語句」か、キーなしの文
 OWNER_SECTIONS = [
@@ -83,3 +83,17 @@ def test_crlf_input():
 def test_phrases_of_lists_phrases_before_merging():
     assert phrases_of("body: long hair, black hair\ngirl walks a dog") == [
         ("body", "long hair"), ("body", "black hair"), ("", "girl walks a dog")]
+
+
+PICTURE_KEYS = ["place", "characters", "vibes", "view"]
+
+
+@pytest.mark.parametrize("text, value, expected", [
+    ("place: classroom\nvibes: cozy", "1 girl", "place: classroom\ncharacters: 1 girl\nvibes: cozy"),
+    ("", "1 girl", "characters: 1 girl"),
+    ("vibes: cozy", "1 girl", "characters: 1 girl\nvibes: cozy"),
+    ("characters: typed by hand\nplace: classroom", "1 dog", "place: classroom\ncharacters: 1 dog"),
+    ("place: classroom\ncharacters: old", "", "place: classroom"),
+])
+def test_with_line_places_the_line_in_template_order(text, value, expected):
+    assert with_line(text, "characters", value, PICTURE_KEYS) == expected

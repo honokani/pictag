@@ -102,6 +102,15 @@ td.meta .tokens.over { color: #c62828; font-weight: 700; }
 td.cell { min-width: 220px; max-width: 380px; cursor: text; }
 td.cell .text { white-space: pre-wrap; word-break: break-word; min-height: 1.5em; }
 td.cell .ln.empty { color: #b8b8b8; }
+td.cell .ln.auto { font-style: italic; color: #4a5a7a; }
+td.cell .ln.auto.empty { color: #b8b8b8; }
+
+.choices { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-top: 4px; font-size: 12px; }
+.choices .group { display: inline-flex; gap: 2px; }
+.choices .choice-label { margin-left: 2px; }
+.choice { padding: 0 5px; border-radius: 3px; border-color: #ccc; color: #444; line-height: 1.6; }
+.choice.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+.choice.clear { color: #999; }
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 

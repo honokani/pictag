@@ -48,7 +48,8 @@ def test_save_writes_krea2_captions_with_lf(api, tool, imgs):
     api.save()
 
     assert (tool.captions_dir / "a.txt").read_bytes() == (
-        b"picture:\n  - place: classroom\n\naction:\n  - girl walks a dog\n\ngirl:\n  - body: long black hair")
+        b"picture:\n  - place: classroom\n  - characters: 1 girl\n\naction:\n  - girl walks a dog\n\n"
+        b"girl:\n  - body: long black hair")
     assert (tool.captions_dir / "b.txt").read_bytes() == b""
 
 
@@ -76,7 +77,7 @@ def test_unreadable_table_is_not_opened(api, tool, imgs, base_dir):
     assert (base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8") == "{broken"
 
 
-DEFAULT_TEMPLATES = {"picture": ["place", "object", "vibes", "view"], "subject": ["looks", "clothes", "body"]}
+DEFAULT_TEMPLATES = {"picture": ["place", "characters", "vibes", "view"], "subject": ["looks", "clothes", "body"]}
 
 
 def test_words_of_sentences_are_in_dictionary(api, imgs):

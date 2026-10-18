@@ -8,7 +8,8 @@ from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 
-from caption_format import render_caption
+from caption_format import phrases_of, render_caption
+from subjects import characters_of
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -17,8 +18,10 @@ SECTION = "girl"
 
 
 def caption_of(text, section=SECTION):
-    """1つの段落だけに入力したときのキャプション"""
-    return render_caption([(section, text)])
+    """1つの段落だけに入力したときのキャプション（人物の段落に入力があれば、picture に characters が付く）"""
+    if section in ("picture", "action") or not phrases_of(text):
+        return render_caption([(section, text)])
+    return render_caption([("picture", f"characters: {characters_of([section])}"), (section, text)])
 
 
 def word_tokenizer():

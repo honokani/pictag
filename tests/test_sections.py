@@ -4,7 +4,7 @@ import json
 import pytest
 
 import app as pictag
-from helpers import make_images, word_tokenizer
+from helpers import caption_of, make_images, word_tokenizer
 from tokens import TokenCounter
 
 DEFAULT_SECTIONS = ["picture", "action", "girl"]
@@ -70,7 +70,7 @@ def test_fixed_sections_come_first_even_if_missing_in_saved_table(api, tool, img
     assert texts(tool)["a.png"] == "looks: standing"
 
 
-@pytest.mark.parametrize("name", ["girl", "picture", "", "is_dead", "a:b"])
+@pytest.mark.parametrize("name", ["picture", "action", "", "is_dead", "a:b"])
 def test_add_section_rejects_duplicate_or_bad_names_with_reason(api, tool, imgs, name):
     api.load(imgs)
     res = api.add_section(name)
@@ -113,7 +113,7 @@ def test_bulk_add_and_remove_phrase(api, tool, imgs):
     res = api.bulk_add(rows, "body: black hair")
     assert res["success"], res
     assert texts(tool) == {"a.png": "body: long hair, black hair", "b.png": "body: black hair"}
-    assert [r["caption"] for r in res["rows"]] == ["girl:\n  - body: long black hair", "girl:\n  - body: black hair"]
+    assert [r["caption"] for r in res["rows"]] == [caption_of("body: long hair, black hair"), caption_of("body: black hair")]
 
     api.bulk_remove(rows, "body: long hair")
     assert texts(tool) == {"a.png": "body: black hair", "b.png": "body: black hair"}
@@ -148,8 +148,8 @@ def test_table_data_has_texts_caption_and_tokens(api, imgs, monkeypatch):
     assert body["token_limit"] == 507
     a, b = body["data"]
     assert a["texts"] == {"picture": "", "action": "", "girl": "looks: standing"}
-    assert a["caption"] == "girl:\n  - looks: standing"
-    assert a["tokens"] == 6  # girl / : / - / looks / : / standing
+    assert a["caption"] == "picture:\n  - characters: 1 girl\n\ngirl:\n  - looks: standing"
+    assert a["tokens"] == 13  # picture / : / - / characters / : / 1 / girl / girl / : / - / looks / : / standing
     assert b["tokens"] == 0
 
 
@@ -157,3 +157,83 @@ def test_tokens_are_null_until_tokenizer_is_ready(api, imgs, monkeypatch):
     monkeypatch.setattr(pictag, "token_counter", TokenCounter())
     api.load(imgs)
     assert [r["tokens"] for r in api.rows()] == [None, None]
+
+
+CAMERA = ["from front", "from side", "from behind"]
+VERTICAL = ["from above", "from below"]
+
+
+def test_adding_the_same_subject_names_them_with_letters(api, tool, imgs):
+    api.load(imgs)
+    api.write(api.row_index("a.png"), "looks: standing")
+    assert api.add_section("girl")["success"]
+    assert sections(tool) == ["picture", "action", "girl A", "girl B"]
+    assert texts(tool, "girl A")["a.png"] == "looks: standing"
+    api.add_section("guy")
+    api.add_section("guy")
+    api.add_section("guy")
+    assert sections(tool) == ["picture", "action", "girl A", "girl B", "guy A", "guy B", "guy C"]
+
+
+def test_caption_has_characters_of_subjects_with_text(api, imgs):
+    api.load(imgs)
+    api.add_section("dog")
+    row = api.row_index("a.png")
+    api.write(row, "place: classroom", section="picture")
+    api.write(row, "looks: standing")
+    res = api.write(row, "looks: sitting", section="dog")
+    assert res["characters"] == "1 girl + 1 dog"
+    assert res["caption"] == ("picture:\n  - place: classroom\n  - characters: 1 girl + 1 dog\n\n"
+                              "girl:\n  - looks: standing\n\ndog:\n  - looks: sitting")
+    a, b = api.rows()
+    assert a["characters"] == "1 girl + 1 dog"
+    assert b["characters"] == "" and b["caption"] == ""
+
+
+def test_set_choice_keeps_one_phrase_per_group_on_rows(api, tool, imgs):
+    api.load(imgs)
+    rows = [api.row_index("a.png"), api.row_index("b.png")]
+
+    def choose(phrase, group, on=True):
+        return api.post("/set_choice", {"rows": rows, "section": "picture", "key": "view",
+                                        "phrase": phrase, "group": group, "on": on})
+
+    assert choose("from front", CAMERA)["success"]
+    assert choose("from behind", CAMERA)["success"]
+    res = choose("from above", VERTICAL)
+    assert [r["texts"]["picture"] for r in res["rows"]] == ["view: from behind, from above"] * 2
+    choose("from behind", CAMERA, on=False)
+    assert texts(tool, "picture") == {"a.png": "view: from above", "b.png": "view: from above"}
+
+
+@pytest.mark.parametrize("payload", [
+    {"phrase": "from up", "group": CAMERA, "on": True},
+    {"phrase": "from front", "group": CAMERA, "on": "yes"},
+    {"phrase": "from front", "group": "from front", "on": True},
+    {"phrase": "from front", "group": CAMERA, "on": True, "section": "zzz"},
+])
+def test_set_choice_rejects_bad_requests(api, tool, imgs, payload):
+    api.load(imgs)
+    res = api.post("/set_choice", {"rows": [0], "section": "picture", "key": "view", **payload})
+    assert res["success"] is False
+    assert texts(tool, "picture") == {"a.png": "", "b.png": ""}
+
+
+def test_table_data_has_view_choices_for_current_subjects(api, imgs):
+    api.load(imgs)
+    api.add_section("guy")
+    body = api.table()
+    assert body["auto_keys"] == ["characters"]
+    assert body["view_choices"]["camera"] == [CAMERA, VERTICAL, ["close-up"]]
+    assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["girl POV", "guy POV", "third-person POV"]
+
+
+def test_choice_keeps_free_text_on_the_view_line(api, tool, imgs):
+    api.load(imgs)
+    api.write(0, "view: focus on hands", section="picture")
+    api.post("/set_choice", {"rows": [0], "section": "picture", "key": "view",
+                             "phrase": "close-up", "group": ["close-up"], "on": True})
+    assert texts(tool, "picture")["a.png"] == "view: focus on hands, close-up"
+    api.post("/set_choice", {"rows": [0], "section": "picture", "key": "view",
+                             "phrase": "close-up", "group": ["close-up"], "on": False})
+    assert texts(tool, "picture")["a.png"] == "view: focus on hands"

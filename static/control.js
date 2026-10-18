@@ -13,6 +13,8 @@ const state = {
     tokenLimit: 507,
     templates: {},        // 確定タグ {picture: [...], subject: [...]}
     fixedSections: [],    // 固定の段落（外せない・改名できない）
+    autoKeys: [],         // 自動で作るキー（characters。入力欄には出さない）
+    viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count}]
     words: [],            // キーなしの文の単語 [{section, word, count}]
     selected: new Set(),  // 行の index
@@ -112,6 +114,14 @@ function tidyInput(text) {
 function templateKeys(section) {
     if (state.templates[section]) return state.templates[section];
     return state.fixedSections.includes(section) ? [] : (state.templates.subject || []);
+}
+
+// 入力欄に出すキー（自動で作るキーは除く）
+const editKeys = section => templateKeys(section).filter(key => !state.autoKeys.includes(key));
+
+// 行のうち、key の行の語句
+function phrasesOfKey(text, key) {
+    return (text || '').split('\n').map(parseLine).filter(p => p.key === key).flatMap(p => p.phrases);
 }
 
 // 確定タグのキーを並びどおりに置いた行（値の無いキーは「key: 」）。ほかの行はその後ろ
@@ -337,19 +347,40 @@ function metaHtml(row) {
         `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'} / ${state.tokenLimit}</div>`;
 }
 
-// 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く出す
-function cellHtml(section, text) {
-    const lines = mergeTemplate(text, templateKeys(section)).map(line => {
+// view のボタン（各組の先頭の ☓ でその組の語句を消す）。押されている語句は on
+function choicesHtml(row) {
+    const view = phrasesOfKey(row.texts.picture, 'view');
+    const button = (phrase, label, group) =>
+        `<button type="button" class="choice${view.includes(phrase) ? ' on' : ''}" data-group="${group}" ` +
+        `data-phrase="${escapeHtml(phrase)}" title="${escapeHtml(phrase)}">${escapeHtml(label)}</button>`;
+    const clear = group => `<button type="button" class="choice clear" data-group="${group}" title="選択なし">☓</button>`;
+    const camera = state.viewChoices.camera.map((phrases, g) =>
+        `<span class="group">${clear(`camera${g}`)}${phrases.map(p => button(p, p.replace(/^from /, ''), `camera${g}`)).join('')}</span>`);
+    const pov = `<span class="group">${clear('pov')}${state.viewChoices.pov.map(c => button(c.phrase, `${c.emoji} ${c.label}`, 'pov')).join('')}</span>`;
+    return `<div class="choices"><span class="choice-label">🎥</span>${camera.join('')}<span class="choice-label">👀</span>${pov}</div>`;
+}
+
+const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
+
+// 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く、自動のキー（characters）は自動の値で出す
+function cellHtml(section, row) {
+    const keys = templateKeys(section);
+    const lines = mergeTemplate(row.texts[section] || '', keys).map(line => {
+        const key = parseLine(line).key;
+        if (state.autoKeys.includes(key)) {
+            const value = row.characters || '';
+            return `<div class="ln auto${value ? '' : ' empty'}" title="自動">${escapeHtml(`${key}:${value ? ` ${value}` : ''}`)}</div>`;
+        }
         const empty = parseLine(line).phrases.length === 0;
         return `<div class="ln${empty ? ' empty' : ''}">${escapeHtml(line.trimEnd())}</div>`;
     });
-    return `<div class="text">${lines.join('')}</div>`;
+    return `<div class="text">${lines.join('')}</div>${keys.includes('view') ? choicesHtml(row) : ''}`;
 }
 
 function rowHtml(row) {
     const name = row['サムネイル'];
     const classes = [row.is_dead ? 'dead' : '', state.selected.has(row.index) ? 'selected' : ''].filter(Boolean).join(' ');
-    const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row.texts[s] || '')}</td>`).join('');
+    const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row)}</td>`).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt=""></td>` +
         `<td class="meta">${metaHtml(row)}</td>${cells}</tr>`;
@@ -385,6 +416,8 @@ async function refreshTable() {
     state.tokenLimit = body.token_limit;
     state.templates = body.templates;
     state.fixedSections = body.fixed_sections;
+    state.autoKeys = body.auto_keys;
+    state.viewChoices = body.view_choices;
     state.selected = new Set([...state.selected].filter(i => state.byIndex.has(i)));
     if (!state.byIndex.has(state.anchor)) state.anchor = null;
     state.loaded = true;
@@ -399,7 +432,7 @@ function startEdit(td) {
     commitEdit();
     const index = Number(td.closest('tr').dataset.index);
     const section = td.dataset.section;
-    const keys = templateKeys(section);
+    const keys = editKeys(section);
     const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
     const el = document.createElement('textarea');
     el.value = lines.join('\n');
@@ -433,7 +466,7 @@ function commitEdit() {
     const text = tidyInput(editor.el.value);
     const changed = text !== (row.texts[editor.section] || '');
     row.texts[editor.section] = text;
-    editor.td.innerHTML = cellHtml(editor.section, text);
+    editor.td.innerHTML = cellHtml(editor.section, row);
     if (changed) track(sendText(row, editor.section, text)).catch(e => setStatus(String(e.message || e), 'error'));
 }
 
@@ -445,8 +478,33 @@ async function sendText(row, section, text) {
     }
     row.caption = res.caption;
     row.tokens = res.tokens;
+    row.characters = res.characters;
     const tr = rowElement(row.index);
-    if (tr) tr.querySelector('td.meta').innerHTML = metaHtml(row);
+    if (tr) {
+        tr.querySelector('td.meta').innerHTML = metaHtml(row);
+        // 人物の段落を書き換えると characters が変わるので picture の欄を描き直す（編集中なら触らない）
+        const picture = tr.querySelector('td.cell[data-section="picture"]');
+        if (picture && !picture.querySelector('textarea')) picture.innerHTML = cellHtml('picture', row);
+    }
+    setDirty(true);
+    refreshWords();
+}
+
+// view のボタン: 押した行（選択中の行の中なら選択中の全行）の view の行に、組の語句を1つだけ置く
+async function choose(button) {
+    const index = Number(button.closest('tr').dataset.index);
+    const rows = state.selected.has(index) ? visibleIndexes().filter(i => state.selected.has(i)) : [index];
+    const group = choiceGroup(button.dataset.group);
+    const clear = button.classList.contains('clear');
+    commitEdit();
+    await settled();
+    const res = await postJson('/set_choice', {
+        rows, section: 'picture', key: 'view', group,
+        phrase: clear ? group[0] : button.dataset.phrase,
+        on: !clear && !button.classList.contains('on'),
+    });
+    if (!res.success) return setStatus(res.message || '選べませんでした', 'error');
+    res.rows.forEach(replaceRow);
     setDirty(true);
     refreshWords();
 }
@@ -660,6 +718,11 @@ function wire() {
     $('bulkText').addEventListener('blur', hideSuggestions);
 
     $('gridBody').addEventListener('click', event => {
+        const choice = event.target.closest('.choice');
+        if (choice) {
+            guarded(choose)(choice);
+            return;
+        }
         const td = event.target.closest('td');
         if (!td) return;
         const index = Number(td.closest('tr').dataset.index);

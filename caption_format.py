@@ -73,3 +73,13 @@ def render_caption(sections):
 def phrases_of(text):
     """入力の語句を (キー, 語句) で並べる（まとめる前の1つずつ）"""
     return [(key, phrase) for key, phrases in parse_lines(text) for phrase in phrases]
+
+
+def with_line(text, key, value, keys):
+    """key の行を「key: value」に差し替え、keys の並びで key より前のキーの行の後ろに置く（value が空なら消すだけ）"""
+    lines = [line for line in text.splitlines() if parse_line(line)[0] != key]
+    if not value:
+        return '\n'.join(lines)
+    before = set(keys[:keys.index(key)])
+    at = max((i + 1 for i, line in enumerate(lines) if parse_line(line)[0] in before), default=0)
+    return '\n'.join([*lines[:at], f'{key}: {value}', *lines[at:]])

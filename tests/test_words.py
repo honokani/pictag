@@ -2,7 +2,7 @@
 import pytest
 
 from words import (add_phrase, check_section_name, count_sentence_words, count_words, empty_shared, freeze,
-                   phrase_entries, remove_phrase)
+                   phrase_entries, remove_phrase, set_choice)
 
 
 def test_count_words_counts_each_section_key_and_phrase():
@@ -88,3 +88,17 @@ def test_phrase_entries_include_shared_phrases_with_zero_count():
         {"section": "girl", "key": "body", "phrase": "long hair", "count": 1, "shared": False},
         {"section": "girl", "key": "body", "phrase": "short hair", "count": 0, "shared": True},
     ]
+
+
+CAMERA = ["from front", "from side", "from behind"]
+
+
+@pytest.mark.parametrize("text, phrase, on, expected", [
+    ("", "from behind", True, "view: from behind"),
+    ("view: from above, from front", "from behind", True, "view: from above, from behind"),
+    ("view: from above, from behind", "from behind", False, "view: from above"),
+    ("view: from behind", "from behind", False, ""),
+    ("place: classroom", "from side", True, "place: classroom\nview: from side"),
+])
+def test_set_choice_keeps_one_phrase_of_the_group(text, phrase, on, expected):
+    assert set_choice(text, "view", phrase, CAMERA, on) == expected

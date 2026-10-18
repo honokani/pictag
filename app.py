@@ -8,10 +8,11 @@ from flask import Flask, render_template, request, jsonify, send_file
 import pandas as pd
 from PIL import Image
 
-from caption_format import parse_line, render_caption
+from caption_format import parse_line, phrases_of, render_caption, with_line
+from subjects import CAMERA_GROUPS, characters_of, name_for_new, pov_choices
 from tokens import TOKEN_LIMIT, TokenCounter
-from words import (add_phrase, check_section_name, count_sentence_words, count_words, empty_shared, freeze,
-                   phrase_entries, remove_phrase, word_entries)
+from words import (AUTO_KEYS, add_phrase, check_section_name, count_sentence_words, count_words, empty_shared, freeze,
+                   phrase_entries, remove_phrase, set_choice, word_entries)
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -413,19 +414,27 @@ class CaptionTool:
             logger.error(f"Failed to create thumbnail for {image_path}: {e}")
             return image_path
 
+    def subjects(self):
+        """人物などの段落（固定の段落以外）を表の並びで"""
+        return [s for s in section_names(self.df) if s not in FIXED_SECTIONS]
+
     def add_section(self, name):
-        """段落を表の末尾に足す（入力は空）"""
+        """人物などの段落を表の末尾に足す（入力は空）。同じ名前があれば A, B, … を付ける（今ある無印は A に改名）"""
         self.last_error = ''
         if self.image_dir is None:
             return self.fail('先にプロジェクトを読み込んでください')
         try:
             name = check_section_name(name)
+            if name in FIXED_SECTIONS:
+                raise ValueError(f'「{name}」は固定の段落です')
+            renames, name = name_for_new(name, self.subjects())
         except ValueError as e:
             return self.fail(str(e))
         if name in self.df.columns:
             return self.fail(f'段落「{name}」は既にあります')
+        self.df = self.df.rename(columns=renames)
         self.df[name] = ''
-        logger.info(f"Added section: {name}")
+        logger.info(f"Added section: {name} (renamed: {renames})")
         return True
 
     def rename_section(self, old, new):
@@ -480,11 +489,35 @@ class CaptionTool:
             self.df.at[r, section] = reduce(lambda t, p: edit(t, key, p), phrases, to_text(self.df.at[r, section]))
         return True
 
+    def choose(self, rows, section, key, phrase, group, on):
+        """ボタンでの選択: 複数行の段落の key の行に、group の語句を1つだけ置く（on でなければ group の語句を消す）"""
+        self.last_error = ''
+        if section not in section_names(self.df):
+            return self.fail(f'段落「{section}」がありません')
+        if not isinstance(rows, list) or not rows or not all(self.is_row(r) for r in rows):
+            return self.fail('行の指定が正しくありません')
+        valid_group = isinstance(group, list) and all(isinstance(p, str) and p for p in group)
+        if not (isinstance(key, str) and key and valid_group and phrase in group and isinstance(on, bool)):
+            return self.fail('選択の指定が正しくありません')
+        for r in dict.fromkeys(rows):
+            self.df.at[r, section] = set_choice(to_text(self.df.at[r, section]), key, phrase, group, on)
+        return True
+
+    def row_texts(self, record, sections):
+        """キャプションに使う入力と characters。picture に characters（入力のある人物の段落から）を入れる"""
+        texts = {s: to_text(record[s]) for s in sections}
+        characters = characters_of([s for s in sections if s not in FIXED_SECTIONS and phrases_of(texts[s])])
+        keys = self.shared['templates'].get('picture', [])
+        if 'picture' in texts and 'characters' in keys:
+            texts['picture'] = with_line(texts['picture'], 'characters', characters, keys)
+        return texts, characters
+
     def row_view(self, index, record, sections):
-        """画面に渡す1行（入力・キャプション・トークン数）"""
-        caption = render_caption([(s, to_text(record[s])) for s in sections])
+        """画面に渡す1行（入力・characters・キャプション・トークン数）"""
+        texts, characters = self.row_texts(record, sections)
+        caption = render_caption([(s, texts[s]) for s in sections])
         return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
-                'texts': {s: to_text(record[s]) for s in sections},
+                'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
                 'caption': caption, 'tokens': token_counter.count(caption)}
 
     def row_views(self, indexes):
@@ -514,8 +547,8 @@ class CaptionTool:
         for record in self.df.to_dict('records'):
             folder = self.captions_dead_dir if to_flag(record['is_dead']) else self.captions_dir
             txt_path = folder / f"{Path(record['サムネイル']).stem}.txt"
-            caption = render_caption([(s, to_text(record[s])) for s in sections])
-            txt_path.write_text(caption, encoding='utf-8', newline='\n')
+            texts, _ = self.row_texts(record, sections)
+            txt_path.write_text(render_caption([(s, texts[s]) for s in sections]), encoding='utf-8', newline='\n')
 
         logger.info(f"Data saved: {len(self.df)} rows, {len(sections)} sections")
 
@@ -606,12 +639,13 @@ def load_directory():
 def get_table_data():
     """テーブルデータ取得
 
-    sections: 段落の並び。data: 行ごとの {index, サムネイル, is_dead, texts, caption, tokens}
+    sections: 段落の並び。data: 行ごとの {index, サムネイル, is_dead, texts, characters, caption, tokens}
     サムネイル列は画像ファイル名（URL はフロントで /thumbnail/<名前>, /image/<名前> を組み立てる）
-    tokens はトークナイザーの準備ができるまで null
+    tokens はトークナイザーの準備ができるまで null。view_choices は view のボタン（🎥 の組と、人物ごとの 👀）
     """
     df = caption_tool.df
-    common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS}
+    common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS,
+              'auto_keys': AUTO_KEYS, 'view_choices': {'camera': CAMERA_GROUPS, 'pov': pov_choices(caption_tool.subjects())}}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})
 
@@ -660,13 +694,22 @@ def freeze_dictionary():
 
 @app.route('/update_text', methods=['POST'])
 def update_text():
-    """入力の更新（{row_index, section, text}）。更新後のキャプションとトークン数を返す"""
+    """入力の更新（{row_index, section, text}）。更新後の characters・キャプション・トークン数を返す"""
     data = request.get_json() or {}
     row_index = data.get('row_index')
     if not caption_tool.update_text(row_index, data.get('section'), data.get('text')):
         return jsonify({'success': False})
     row = caption_tool.row_views([row_index])[0]
-    return jsonify({'success': True, 'caption': row['caption'], 'tokens': row['tokens']})
+    return jsonify({'success': True, 'characters': row['characters'], 'caption': row['caption'], 'tokens': row['tokens']})
+
+@app.route('/set_choice', methods=['POST'])
+def set_choice_on_rows():
+    """ボタンでの選択（{rows, section, key, phrase, group, on}）。group の語句は1つだけ残る"""
+    data = request.get_json() or {}
+    rows = data.get('rows')
+    if not caption_tool.choose(rows, data.get('section'), data.get('key'), data.get('phrase'), data.get('group'), data.get('on')):
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
 
 @app.route('/add_phrase', methods=['POST'])
 def add_phrase_to_rows():
