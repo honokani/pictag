@@ -819,8 +819,11 @@ function handleMarkKey(event) {
 }
 
 // 長押し（1秒）でマークの列を全行クリア。短く押しただけなら案内だけ出す
-// 長押し（1秒）で run を行う。短く押しただけなら hint を出すだけ（誤操作を防ぐ）
+const HOLD_MS = 1000;  // 長押しで実行するまでの時間（ボタンの中の帯もこの時間で満タンになる）
+
+// 長押し（1秒）で run を行う。押している間はボタンの中で帯が伸び、満タンで実行。短く押しただけなら hint を出すだけ
 function holdToRun(button, run, hint) {
+    button.style.setProperty('--hold-ms', `${HOLD_MS}ms`);
     let timer = null;
     const cancel = () => {
         if (timer === null) return;
@@ -835,7 +838,7 @@ function holdToRun(button, run, hint) {
             timer = null;
             button.classList.remove('holding');
             guarded(run)();
-        }, 1000);
+        }, HOLD_MS);
     });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach(name => button.addEventListener(name, cancel));
 }
@@ -864,7 +867,8 @@ function bulkKeys(section) {
 }
 
 function fillBulkKeys() {
-    const keep = $('bulkKey').value;
+    // 前に選んでいたキーが新しい段落にもあれば残す（最初の1回は先頭のキー）
+    const keep = $('bulkKey').options.length ? $('bulkKey').value : null;
     const keys = bulkKeys($('bulkSection').value);
     $('bulkKey').innerHTML = keys.map(k => `<option value="${escapeHtml(k)}">${k ? escapeHtml(k) : '（キーなし）'}</option>`).join('');
     if (keys.includes(keep)) $('bulkKey').value = keep;

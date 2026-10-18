@@ -455,6 +455,7 @@ def test_bulk_form_replaces_key_help_only_while_selected(page, imgs):
 def test_bulk_keys_follow_the_section(page, imgs):
     load_dir(page, imgs)
     row(page, "a.png").locator("td.meta").click()
+    expect(page.locator("#bulkKey")).to_have_value("place")  # 最初は先頭のキー
     page.select_option("#bulkSection", "picture")
     assert option_values(page, "#bulkKey") == ["place", "vibes", "view", "extra", ""]
     page.select_option("#bulkSection", "girl")
@@ -501,3 +502,18 @@ def test_selecting_rows_does_not_shift_the_table(page, imgs):
     row(page, "a.png").locator("td.meta").click()
     expect(page.locator("#bulkForm")).to_be_visible()
     assert page.locator("#grid").bounding_box()["y"] == before
+
+
+def test_hold_button_fills_while_pressed_and_resets_when_released_early(page, imgs):
+    load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
+    button = page.locator("#deselectButton")
+    button.hover()
+    page.mouse.down()
+    expect(button).to_have_class("hold holding")
+    page.wait_for_timeout(500)
+    width = button.evaluate("el => parseFloat(getComputedStyle(el, '::before').width)")
+    assert 0 < width < button.evaluate("el => el.getBoundingClientRect().width")  # 途中まで伸びている
+    page.mouse.up()
+    expect(button).to_have_class("hold")
+    expect(page.locator("#selectionInfo")).to_have_text("選択 1 行")  # 1秒未満で離したので解除しない
