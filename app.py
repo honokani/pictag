@@ -12,28 +12,83 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# data_out / data_work の既定の置き場所（起動ディレクトリに依存させない）
+APP_DIR = Path(__file__).resolve().parent
+
+# 画面・API が特別扱いする名前（タグ名・種別名には使えない）
+RESERVED_CAPTIONS = {'サムネイル', 'is_dead', 'index', 'new_column'}
+RESERVED_KINDS = {'new_kind'}
+
+def to_flag(value):
+    """セル値を bool に揃える（欠損や bool 以外は False）"""
+    return bool(value) if pd.api.types.is_bool(value) else False
+
+def same_path(a, b):
+    """同じディレクトリを指すか（Windows の大文字小文字・区切り文字の違いは無視）"""
+    return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+
 class CaptionTool:
-    def __init__(self):
+    def __init__(self, base_dir=None):
+        # data_out / data_work の置き場所
+        self.base_dir = Path(base_dir) if base_dir is not None else APP_DIR
+        self.data_out_dir = self.base_dir / "data_out"
+        self.data_work_dir = self.base_dir / "data_work"
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
         self.caption_info_df = pd.DataFrame(columns=['caption', 'kind'])
-        
+        self.last_error = ''  # 直近の失敗理由（API が画面へ返す）
+
+    def fail(self, message):
+        """失敗理由を残して False を返す"""
+        self.last_error = message
+        logger.warning(message)
+        return False
+
+    def resolve_image_dir(self, image_dir):
+        """入力された画像ディレクトリを検証して絶対パスにする（前後の空白・引用符は除く）"""
+        text = str(image_dir or '').strip().strip('"\'').strip()
+        if not text:
+            raise ValueError('画像ディレクトリのパスを入力してください')
+        path = Path(text)
+        if not path.is_dir():
+            raise FileNotFoundError(f'画像ディレクトリが見つかりません: {path}')
+        path = path.resolve()
+        if not path.name:
+            raise ValueError(f'ドライブ直下は読み込めません: {path}')
+        return path
+
+    def check_registered_path(self, tgt_path_file, image_dir):
+        """同名プロジェクトが別ディレクトリに紐付いていないか確認する
+
+        紐付け先が今もあれば別データとみなして拒否。無ければ（移動・改名した）紐付けを新しいパスへ更新する
+        """
+        if not tgt_path_file.exists():
+            return
+        registered = Path(tgt_path_file.read_text(encoding='utf-8').strip())
+        if same_path(registered, image_dir):
+            return
+        if registered.is_dir():
+            raise ValueError(f'プロジェクト「{image_dir.name}」は別のディレクトリに紐付いています: {registered}')
+        tgt_path_file.write_text(str(image_dir), encoding='utf-8')
+        logger.info(f"Updated tgt_path.txt: {registered} -> {image_dir}")
+
     def setup_directories(self, image_dir):
-        """ディレクトリ構造をセットアップ"""
-        self.image_dir = Path(image_dir)
+        """ディレクトリ構造をセットアップ（検証で例外になった場合は今のプロジェクトのまま）"""
+        image_dir = self.resolve_image_dir(image_dir)
+        self.check_registered_path(self.data_out_dir / image_dir.name / "tgt_path.txt", image_dir)
+
+        self.image_dir = image_dir
         self.dir_name = self.image_dir.name
-        
+
         # data_out構造作成
-        self.data_out_dir = Path("data_out")
         self.data_out_target = self.data_out_dir / self.dir_name
-        self.data_out_dir.mkdir(exist_ok=True)
+        self.data_out_dir.mkdir(parents=True, exist_ok=True)
         self.data_out_target.mkdir(exist_ok=True)
-        
+
         # data_work構造作成
-        self.data_work_dir = Path("data_work")
         self.data_work_target = self.data_work_dir / self.dir_name
-        self.data_work_dir.mkdir(exist_ok=True)
+        self.data_work_dir.mkdir(parents=True, exist_ok=True)
         self.data_work_target.mkdir(exist_ok=True)
         
         # captions と captions_dead ディレクトリ作成
@@ -96,8 +151,8 @@ class CaptionTool:
         
         # 元画像ファイル一覧取得
         if self.image_dir.exists():
-            alive_image_files = {f.name for f in self.image_dir.iterdir() 
-                                if f.suffix.lower() in image_extensions}
+            alive_image_files = {f.name for f in self.image_dir.iterdir()
+                                if f.is_file() and f.suffix.lower() in image_extensions}
         else:
             alive_image_files = set()
         
@@ -110,48 +165,53 @@ class CaptionTool:
                     thumbnail_files.add(original_name)
         
         # 既存DataFrameから全ファイル取得（これが重要）
-        existing_files = set()
-        if not self.df.empty and 'サムネイル' in self.df.columns:
-            existing_files = set(self.df['サムネイル'].tolist())
-        
+        # 画像名ごとの行を1回だけ引いておく。旧版のバグで入った サムネイル=NaN の行は捨てる
+        has_table = 'サムネイル' in self.df.columns
+        existing_rows = {}
+        if has_table:
+            for record in self.df.to_dict('records'):
+                name = record['サムネイル']
+                if isinstance(name, str) and name not in existing_rows:
+                    existing_rows[name] = record
+        existing_files = set(existing_rows)
+
         # 全ての画像ファイル（既存DataFrame + 新規alive + サムネイル）
         all_image_files = existing_files | alive_image_files | thumbnail_files
-        
-        # 既存キャプション情報からカラム取得
-        additional_columns = []
-        if not self.caption_info_df.empty:
+
+        # タグ列: 保存済みの表があればその列を保つ（「表から削除」した列を戻さない）
+        # 新規プロジェクトはキャプション情報の全タグから始める
+        if has_table:
+            additional_columns = [col for col in self.df.columns if col not in ['サムネイル', 'is_dead']]
+        elif not self.caption_info_df.empty:
             additional_columns = self.caption_info_df['caption'].tolist()
-        
+        else:
+            additional_columns = []
+        additional_columns = list(dict.fromkeys(additional_columns))  # 重複除去（順序は保つ）
+
         # DataFrameを再構築
         columns = ['サムネイル', 'is_dead'] + additional_columns
         data = []
-        
+
         for img_file in sorted(all_image_files):
             is_alive = img_file in alive_image_files
             is_dead = not is_alive
-            
+
             row = {
                 'サムネイル': img_file,
                 'is_dead': is_dead
             }
-            
+
             # 既存のタグ列の値を設定
+            existing_row = existing_rows.get(img_file, {})
             for col in additional_columns:
-                if not self.df.empty and 'サムネイル' in self.df.columns:
-                    existing_row = self.df[self.df['サムネイル'] == img_file]
-                    if not existing_row.empty and col in existing_row.columns:
-                        row[col] = existing_row.iloc[0][col]
-                    else:
-                        row[col] = False
-                else:
-                    row[col] = False
-            
+                row[col] = to_flag(existing_row.get(col, False))
+
             data.append(row)
             
             # サムネイル生成とキャプション移動処理
             if is_alive:
-                if img_file not in thumbnail_files:
-                    self.create_thumbnail(self.image_dir / img_file)
+                # 生成済みでも元画像が更新されていれば作り直す
+                self.create_thumbnail(self.image_dir / img_file)
                 
                 # deadからの復帰処理
                 stem = Path(img_file).stem
@@ -168,7 +228,7 @@ class CaptionTool:
         
         # DataFrameを更新
         if data:
-            self.df = pd.DataFrame(data)
+            self.df = pd.DataFrame(data, columns=columns)
         else:
             self.df = pd.DataFrame(columns=columns)
         
@@ -225,57 +285,92 @@ class CaptionTool:
                     self.caption_info_df = pd.concat([self.caption_info_df, new_entry], ignore_index=True)
                 logger.info(f"Added existing column '{col}' as undef kind to caption info")
     
+    def thumbnail_file(self, image_name):
+        """サムネイルのパス（生成済みかは問わない）"""
+        return self.data_work_target / f"t_{image_name}"
+
+    def is_known_image(self, image_name):
+        """表に載っている画像か（画像配信はこれに限る）"""
+        if self.image_dir is None or 'サムネイル' not in self.df.columns:
+            return False
+        return bool((self.df['サムネイル'] == image_name).any())
+
     def create_thumbnail(self, image_path):
-        """サムネイル作成"""
-        thumb_path = self.data_work_target / f"t_{image_path.name}"
-        
-        if thumb_path.exists():
+        """サムネイル作成。表示に使うパスを返す
+
+        サムネイルの mtime は元画像の mtime に揃えておき、一致しなければ（元画像を差し替えたら）作り直す
+        """
+        thumb_path = self.thumbnail_file(image_path.name)
+
+        if not image_path.exists():
+            # 元画像が無い（削除済み）: 残っているサムネイルを使う
+            return thumb_path if thumb_path.exists() else image_path
+
+        source_stat = image_path.stat()
+        if thumb_path.exists() and thumb_path.stat().st_mtime_ns == source_stat.st_mtime_ns:
             return thumb_path
-        
+
         try:
             with Image.open(image_path) as img:
                 # サイズチェック
                 width, height = img.size
                 if max(width, height) <= 600:
-                    # リサイズ不要、元ファイルパス返す
+                    # リサイズ不要、元ファイルパス返す（小さく差し替えられた画像の古いサムネイルは消す）
+                    if thumb_path.exists():
+                        thumb_path.unlink()
                     return image_path
-                
+
                 # リサイズ実行
                 img.thumbnail((600, 600), Image.Resampling.LANCZOS)
                 img.save(thumb_path, quality=85, optimize=True)
+                os.utime(thumb_path, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
                 logger.info(f"Created thumbnail: {thumb_path}")
                 return thumb_path
-                
+
         except Exception as e:
             logger.error(f"Failed to create thumbnail for {image_path}: {e}")
             return image_path
     
     def add_column(self, column_name, kind, default_value=False):
         """カラム追加"""
+        self.last_error = ''
         try:
             # 文字列のstrip処理
             column_name = column_name.strip()
             kind = kind.strip()
-            
+
             logger.info(f"add_column called: name='{column_name}', kind='{kind}', default={default_value}")
-            
+
             # 空白文字チェック
             if not column_name or not kind:
-                logger.warning(f"Empty column name or kind: '{column_name}', '{kind}'")
-                return False
-            
-            if not self.df.empty and column_name in self.df.columns:
-                logger.warning(f"Column '{column_name}' already exists in DataFrame")
-                return False
-            
-            # DataFrameが空の場合の対応
-            if self.df.empty:
+                return self.fail(f"Empty column name or kind: '{column_name}', '{kind}'")
+
+            if self.image_dir is None:
+                return self.fail('先にプロジェクトを読み込んでください')
+
+            if column_name in RESERVED_CAPTIONS:
+                return self.fail(f'「{column_name}」はカラム名に使えません')
+            if kind in RESERVED_KINDS:
+                return self.fail(f'「{kind}」は種別名に使えません')
+
+            if column_name in self.df.columns:
+                return self.fail(f'カラム「{column_name}」は表に既にあります')
+
+            # キャプション情報に別の種別で登録済みなら追加しない（同じタグが2つの種別に分かれるため）
+            registered_kinds = []
+            if not self.caption_info_df.empty:
+                registered_kinds = self.caption_info_df.loc[self.caption_info_df['caption'] == column_name, 'kind'].tolist()
+            if registered_kinds and kind not in registered_kinds:
+                return self.fail(f'「{column_name}」は種別「{registered_kinds[0]}」に登録済みです')
+
+            # 表が無い場合の対応（画像0枚のプロジェクトでも既存の列は消さない）
+            if 'サムネイル' not in self.df.columns:
                 logger.info("DataFrame is empty, creating minimal structure")
-                self.df = pd.DataFrame(columns=['サムネイル'])
-            
+                self.df = pd.DataFrame(columns=['サムネイル', 'is_dead'])
+
             # DataFrameにカラム追加
             logger.info(f"Adding column '{column_name}' to DataFrame")
-            self.df[column_name] = default_value
+            self.df[column_name] = to_flag(default_value)
             
             # キャプション情報に追加
             new_entry = pd.DataFrame({'caption': [column_name], 'kind': [kind]})
@@ -297,12 +392,16 @@ class CaptionTool:
     
     def rename_kind(self, old_kind, new_kind):
         """種別名変更"""
+        self.last_error = ''
         old_kind = old_kind.strip()
         new_kind = new_kind.strip()
-        
+
         if not old_kind or not new_kind or old_kind == new_kind:
             return False
-        
+
+        if new_kind in RESERVED_KINDS:
+            return self.fail(f'「{new_kind}」は種別名に使えません')
+
         # キャプション情報の種別名を更新
         self.caption_info_df.loc[self.caption_info_df['kind'] == old_kind, 'kind'] = new_kind
         
@@ -311,19 +410,28 @@ class CaptionTool:
     
     def rename_column(self, old_column, new_column, kind):
         """カラム名変更"""
+        self.last_error = ''
         old_column = old_column.strip()
         new_column = new_column.strip()
-        
+
         if not old_column or not new_column:
             return False
-        
+
         # 同じ名前の場合はTrueを返す（修正箇所）
         if old_column == new_column:
             return True
-        
+
         if old_column not in self.df.columns:
-            return False
-        
+            return self.fail(f'カラム「{old_column}」は表にありません')
+
+        if new_column in RESERVED_CAPTIONS:
+            return self.fail(f'「{new_column}」はカラム名に使えません')
+
+        # 既存のカラムや辞書のタグと同じ名前にはしない（列・タグが重複して表が壊れるため）
+        in_caption_info = not self.caption_info_df.empty and (self.caption_info_df['caption'] == new_column).any()
+        if new_column in self.df.columns or in_caption_info:
+            return self.fail(f'「{new_column}」は既にあります')
+
         # DataFrameのカラム名変更
         self.df = self.df.rename(columns={old_column: new_column})
         
@@ -335,7 +443,7 @@ class CaptionTool:
     
     def remove_column_from_table(self, column_name):
         """テーブルからカラム削除（キャプション情報は保持）"""
-        if column_name not in self.df.columns or column_name == 'サムネイル':
+        if column_name not in self.df.columns or column_name in ['サムネイル', 'is_dead']:
             return False
         
         self.df = self.df.drop(columns=[column_name])
@@ -344,7 +452,7 @@ class CaptionTool:
     
     def remove_column_completely(self, column_name):
         """テーブルとキャプション情報からカラム完全削除"""
-        if column_name == 'サムネイル':
+        if column_name in ['サムネイル', 'is_dead']:
             return False
         
         # テーブルから削除（存在する場合のみ）
@@ -362,10 +470,13 @@ class CaptionTool:
             return False
     
     def update_cell(self, row_index, column_name, value):
-        """セル更新"""
-        if column_name in ['サムネイル', 'is_dead']:
+        """セル更新（表にある行・タグ列に bool だけ書く。それ以外を .at に渡すと行や列が勝手に増える）"""
+        if column_name in ['サムネイル', 'is_dead'] or column_name not in self.df.columns:
             return False
-        
+
+        if type(row_index) is not int or row_index not in self.df.index or not isinstance(value, bool):
+            return False
+
         self.df.at[row_index, column_name] = value
         return True
     
@@ -409,10 +520,13 @@ class CaptionTool:
     
     def save_data(self):
         """データ保存"""
-        # 保存前に重複チェック
+        if self.image_dir is None:
+            raise ValueError('先にプロジェクトを読み込んでください')
+
+        # 保存前に重複チェック（行番号は画面の行位置と揃うよう振り直す）
         if not self.df.empty:
             original_len = len(self.df)
-            self.df = self.df.drop_duplicates(subset=['サムネイル'], keep='first')
+            self.df = self.df.drop_duplicates(subset=['サムネイル'], keep='first').reset_index(drop=True)
             if original_len != len(self.df):
                 logger.warning(f"Removed {original_len - len(self.df)} duplicate rows before saving")
 
@@ -445,7 +559,7 @@ class CaptionTool:
             # Trueのカラム名を取得（空白文字を除外、is_deadは除外）
             true_tags = []
             for col in self.df.columns:
-                if col not in ['サムネイル', 'is_dead'] and row[col] is True:
+                if col not in ['サムネイル', 'is_dead'] and to_flag(row[col]):
                     stripped_col = col.strip()
                     if stripped_col:
                         true_tags.append(stripped_col)
@@ -466,8 +580,8 @@ def index():
 @app.route('/get_existing_projects')
 def get_existing_projects():
     """既存プロジェクト一覧取得"""
-    data_out_dir = Path("data_out")
-    
+    data_out_dir = caption_tool.data_out_dir
+
     if not data_out_dir.exists():
         return jsonify({'projects': []})
     
@@ -499,8 +613,12 @@ def load_existing_project():
     
     if not project_name:
         return jsonify({'success': False, 'message': 'Project name required'})
-    
-    data_out_dir = Path("data_out") / project_name
+
+    # プロジェクト名は data_out 直下のフォルダ名だけ（../ 等で外を読ませない）
+    if Path(project_name).name != project_name or project_name in ('.', '..'):
+        return jsonify({'success': False, 'message': 'Invalid project name'})
+
+    data_out_dir = caption_tool.data_out_dir / project_name
     tgt_path_file = data_out_dir / "tgt_path.txt"
     
     if not tgt_path_file.exists():
@@ -541,16 +659,12 @@ def get_table_data():
     if caption_tool.df.empty:
         return jsonify({'columns': [], 'data': []})
     
+    # サムネイル列は画像ファイル名（URL はフロントで /thumbnail/<名前>, /image/<名前> を組み立てる）
     table_data = []
     for index, row in caption_tool.df.iterrows():
         row_data = {'index': index}
         for col in caption_tool.df.columns:
-            if col == 'サムネイル':
-                image_path = caption_tool.image_dir / row[col]
-                thumb_path = caption_tool.create_thumbnail(image_path)
-                row_data[col] = f"/thumbnail/{thumb_path.name}"
-            else:
-                row_data[col] = row[col]
+            row_data[col] = row[col]
         table_data.append(row_data)
     
     return jsonify({
@@ -560,17 +674,26 @@ def get_table_data():
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
-    """サムネイル画像配信"""
-    if filename.startswith('t_'):
-        thumb_path = caption_tool.data_work_target / filename
-        if thumb_path.exists():
-            return send_file(thumb_path)
-    
-    original_name = filename.replace('t_', '') if filename.startswith('t_') else filename
-    original_path = caption_tool.image_dir / original_name
-    if original_path.exists():
-        return send_file(original_path)
-    
+    """サムネイル画像配信（filename は元画像名。サムネイルが無い小さい画像は元画像）"""
+    if not caption_tool.is_known_image(filename):
+        return "Image not found", 404
+
+    for path in [caption_tool.thumbnail_file(filename), caption_tool.image_dir / filename]:
+        if path.exists():
+            return send_file(path.resolve())
+
+    return "Image not found", 404
+
+@app.route('/image/<filename>')
+def serve_image(filename):
+    """元画像配信（元画像が無い削除済み画像はサムネイル）"""
+    if not caption_tool.is_known_image(filename):
+        return "Image not found", 404
+
+    for path in [caption_tool.image_dir / filename, caption_tool.thumbnail_file(filename)]:
+        if path.exists():
+            return send_file(path.resolve())
+
     return "Image not found", 404
 
 @app.route('/get_kinds')
@@ -587,9 +710,12 @@ def get_kinds():
         logger.error(f"Error in get_kinds: {e}")
         return jsonify({'kinds': ['new_kind', 'undef']})
 
-@app.route('/get_captions_by_kind/<kind>')
-def get_captions_by_kind(kind):
-    """指定種別のキャプション一覧取得"""
+@app.route('/get_captions_by_kind')
+@app.route('/get_captions_by_kind/<path:kind>')
+def get_captions_by_kind(kind=None):
+    """指定種別のキャプション一覧取得（種別は ?kind= でも指定できる。/ や ? を含む種別名用）"""
+    if kind is None:
+        kind = request.args.get('kind', '')
     try:
         if hasattr(caption_tool, 'caption_info_df') and not caption_tool.caption_info_df.empty:
             captions = caption_tool.get_captions_by_kind(kind)
@@ -601,9 +727,12 @@ def get_captions_by_kind(kind):
         logger.error(f"Error in get_captions_by_kind: {e}")
         return jsonify({'captions': ['new_column']})
 
-@app.route('/get_table_captions_by_kind/<kind>')
-def get_table_captions_by_kind(kind):
-    """指定種別のテーブル内カラム一覧取得"""
+@app.route('/get_table_captions_by_kind')
+@app.route('/get_table_captions_by_kind/<path:kind>')
+def get_table_captions_by_kind(kind=None):
+    """指定種別のテーブル内カラム一覧取得（種別は ?kind= でも指定できる）"""
+    if kind is None:
+        kind = request.args.get('kind', '')
     try:
         if hasattr(caption_tool, 'df') and not caption_tool.df.empty:
             table_columns = [col for col in caption_tool.df.columns if col != 'サムネイル']
@@ -651,9 +780,11 @@ def add_column():
         logger.info(f"API: add_column called with name='{column_name}', kind='{kind}', default={default_value}")
         
         result = caption_tool.add_column(column_name, kind, default_value)
-        
+
         logger.info(f"API: add_column result={result}")
-        return jsonify({'success': result})
+        if not result:
+            return jsonify({'success': False, 'error': caption_tool.last_error})
+        return jsonify({'success': True})
         
     except Exception as e:
         logger.error(f"API: Error in add_column: {e}")
@@ -667,8 +798,8 @@ def update_cell():
     column_name = data.get('column_name')
     value = data.get('value')
     
-    caption_tool.update_cell(row_index, column_name, value)
-    return jsonify({'success': True})
+    success = caption_tool.update_cell(row_index, column_name, value)
+    return jsonify({'success': success})
 
 @app.route('/rename_kind', methods=['POST'])
 def rename_kind():
@@ -678,7 +809,7 @@ def rename_kind():
     new_kind = data.get('new_kind')
     
     success = caption_tool.rename_kind(old_kind, new_kind)
-    return jsonify({'success': success})
+    return jsonify({'success': success, 'message': caption_tool.last_error})
 
 @app.route('/rename_column', methods=['POST'])
 def rename_column():
@@ -689,7 +820,7 @@ def rename_column():
     kind = data.get('kind')
     
     success = caption_tool.rename_column(old_column, new_column, kind)
-    return jsonify({'success': success})
+    return jsonify({'success': success, 'message': caption_tool.last_error})
 
 @app.route('/rename_both', methods=['POST'])
 def rename_both():
@@ -699,11 +830,17 @@ def rename_both():
     new_kind = data.get('new_kind')
     old_column = data.get('old_column')
     new_column = data.get('new_column')
-    
+
+    # 種別名を先に検証（カラム名だけ変わって種別が変わらない、を防ぐ）
+    new_kind = (new_kind or '').strip()
+    if not new_kind or new_kind in RESERVED_KINDS:
+        return jsonify({'success': False, 'message': f'「{new_kind}」は種別名に使えません'})
+
     # カラム名変更（同じ名前でも成功するように修正済み）
     column_success = caption_tool.rename_column(old_column, new_column, old_kind)
     if not column_success:
-        return jsonify({'success': False})
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    new_column = new_column.strip()
     
     # 特定のカラムの種別のみ変更（修正箇所）
     if old_kind != new_kind:
@@ -746,8 +883,15 @@ def remove_all_dead():
         if dead_count == 0:
             return jsonify({'success': False, 'message': '削除済み画像がありません'})
         
-        # is_dead == False の行のみ残す
-        caption_tool.df = caption_tool.df[caption_tool.df['is_dead'] == False]
+        # 削除する行のサムネイルも消す（残っていると次の読み込みで削除済み行として復活する）
+        dead_names = caption_tool.df.loc[caption_tool.df['is_dead'] == True, 'サムネイル'].tolist()
+        for name in dead_names:
+            thumb_path = caption_tool.thumbnail_file(name)
+            if thumb_path.exists():
+                thumb_path.unlink()
+
+        # is_dead == False の行のみ残す（行番号は画面の行位置と揃うよう振り直す）
+        caption_tool.df = caption_tool.df[caption_tool.df['is_dead'] == False].reset_index(drop=True)
         
         after_count = len(caption_tool.df)
         
@@ -777,5 +921,9 @@ def save_data():
         logger.error(f"Failed to save data: {e}")
         return jsonify({'success': False, 'message': str(e)})
 
+def server_options(env):
+    """起動設定（既定は 127.0.0.1 のみ。LAN へ公開するときは PICTAG_HOST=0.0.0.0）"""
+    return {'host': env.get('PICTAG_HOST', '127.0.0.1'), 'port': 5000, 'debug': True}
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(**server_options(os.environ))
