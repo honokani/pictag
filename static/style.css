@@ -101,6 +101,8 @@ td.meta .tokens.over { color: #c62828; font-weight: 700; }
 
 td.cell { min-width: 220px; max-width: 380px; cursor: text; }
 td.cell .text { white-space: pre-wrap; word-break: break-word; min-height: 1.5em; }
+td.cell .ln.empty { color: #b8b8b8; }
+th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 
 tr.selected td { background: #e3edfc; }

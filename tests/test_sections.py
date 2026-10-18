@@ -1,4 +1,6 @@
 """段落（大kind）と、複数行への一括入力"""
+import json
+
 import pytest
 
 import app as pictag
@@ -27,28 +29,48 @@ def test_first_project_starts_with_default_sections(api, tool, imgs):
     assert texts(tool) == {"a.png": "", "b.png": ""}
 
 
-def test_new_project_starts_with_sections_of_other_projects(api, tool, tmp_path):
+def test_new_project_does_not_bring_subjects_of_other_projects(api, tool, tmp_path):
     api.load(make_images(tmp_path / "imgs" / "proj_a", {"a.png": (100, 100)}))
     assert api.add_section("dog")["success"]
     api.save()
 
     api.load(make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)}))
-    assert sections(tool) == [*DEFAULT_SECTIONS, "dog"]
+    assert sections(tool) == DEFAULT_SECTIONS
 
 
-def test_existing_project_keeps_its_sections(api, tool, tmp_path):
+def test_existing_project_keeps_its_subjects(api, tool, tmp_path):
     api.load(make_images(tmp_path / "imgs" / "proj_a", {"a.png": (100, 100)}))
-    assert api.post("/remove_section", {"name": "action"})["success"]
+    api.add_section("dog")
+    assert api.post("/remove_section", {"name": "girl"})["success"]
     api.save()
     api.load(make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)}))
-    api.add_section("dog")
     api.save()
 
     api.open_project("proj_a")
-    assert sections(tool) == ["picture", "girl"]
+    assert sections(tool) == ["picture", "action", "dog"]
 
 
-@pytest.mark.parametrize("name", ["girl", "", "is_dead", "a:b"])
+@pytest.mark.parametrize("name", ["picture", "action"])
+def test_fixed_sections_cannot_be_removed_or_renamed(api, tool, imgs, name):
+    api.load(imgs)
+    res = api.post("/remove_section", {"name": name})
+    assert res["success"] is False and res["message"]
+    res = api.post("/rename_section", {"old": name, "new": "x"})
+    assert res["success"] is False and res["message"]
+    assert sections(tool) == DEFAULT_SECTIONS
+
+
+def test_fixed_sections_come_first_even_if_missing_in_saved_table(api, tool, imgs, base_dir):
+    saved = {"sections": ["girl", "action"],
+             "rows": [{"image": "a.png", "is_dead": False, "texts": {"girl": "looks: standing"}}]}
+    (base_dir / "data_out" / "proj").mkdir(parents=True)
+    (base_dir / "data_out" / "proj" / "table.json").write_text(json.dumps(saved), encoding="utf-8")
+    api.load(imgs)
+    assert sections(tool) == ["picture", "action", "girl"]
+    assert texts(tool)["a.png"] == "looks: standing"
+
+
+@pytest.mark.parametrize("name", ["girl", "picture", "", "is_dead", "a:b"])
 def test_add_section_rejects_duplicate_or_bad_names_with_reason(api, tool, imgs, name):
     api.load(imgs)
     res = api.add_section(name)
@@ -75,12 +97,12 @@ def test_rename_section_to_existing_name_is_rejected(api, tool, imgs):
     assert sections(tool) == DEFAULT_SECTIONS
 
 
-def test_removed_section_stays_removed_after_save(api, tool, imgs):
+def test_removed_subject_stays_removed_after_save(api, tool, imgs):
     api.load(imgs)
-    api.post("/remove_section", {"name": "action"})
+    assert api.post("/remove_section", {"name": "girl"})["success"]
     api.save()
     api.open_project("proj")
-    assert sections(tool) == ["picture", "girl"]
+    assert sections(tool) == ["picture", "action"]
 
 
 def test_bulk_add_and_remove_phrase(api, tool, imgs):

@@ -1,7 +1,8 @@
 """使用中の語句（全プロジェクトの入力から作る辞書）と、入力への語句の足し引き"""
 import pytest
 
-from words import add_phrase, check_section_name, count_words, dictionary_entries, remove_phrase
+from words import (add_phrase, check_section_name, count_sentence_words, count_words, empty_shared, freeze,
+                   phrase_entries, remove_phrase)
 
 
 def test_count_words_counts_each_section_key_and_phrase():
@@ -18,11 +19,11 @@ def test_count_words_counts_each_section_key_and_phrase():
     }
 
 
-def test_dictionary_entries_are_sorted_by_use():
+def test_phrase_entries_are_sorted_by_use():
     counter = count_words([("girl", "body: black hair"), ("girl", "body: long hair"), ("girl", "body: long hair")])
-    assert dictionary_entries(counter) == [
-        {"section": "girl", "key": "body", "phrase": "long hair", "count": 2},
-        {"section": "girl", "key": "body", "phrase": "black hair", "count": 1},
+    assert phrase_entries(counter, empty_shared()) == [
+        {"section": "girl", "key": "body", "phrase": "long hair", "count": 2, "shared": False},
+        {"section": "girl", "key": "body", "phrase": "black hair", "count": 1, "shared": False},
     ]
 
 
@@ -57,3 +58,33 @@ def test_invalid_section_names_are_rejected(name):
 
 def test_section_name_is_stripped():
     assert check_section_name("  girl ") == "girl"
+
+
+def test_count_sentence_words_splits_lines_without_key():
+    counter = count_sentence_words([
+        ("action", "girl spread arms\nguy grab girl's waist"),
+        ("action", "looks: standing\ngirl smiles, waves"),
+    ])
+    assert counter == {("action", w): n for w, n in [
+        ("girl", 2), ("spread", 1), ("arms", 1), ("guy", 1), ("grab", 1), ("girl's", 1), ("waist", 1),
+        ("smiles", 1), ("waves", 1)]}
+
+
+def test_freeze_adds_used_entries_once():
+    shared = {"templates": {}, "phrases": [{"section": "girl", "key": "body", "phrase": "long hair"}], "words": []}
+    phrases = count_words([("girl", "body: long hair, black hair")])
+    words = count_sentence_words([("action", "girl smiles")])
+    frozen, added = freeze(shared, phrases, words)
+    assert added == 3
+    assert frozen["phrases"] == [{"section": "girl", "key": "body", "phrase": "long hair"},
+                                 {"section": "girl", "key": "body", "phrase": "black hair"}]
+    assert frozen["words"] == [{"section": "action", "word": "girl"}, {"section": "action", "word": "smiles"}]
+
+
+def test_phrase_entries_include_shared_phrases_with_zero_count():
+    shared = {"templates": {}, "phrases": [{"section": "girl", "key": "body", "phrase": "short hair"}], "words": []}
+    entries = phrase_entries(count_words([("girl", "body: long hair")]), shared)
+    assert entries == [
+        {"section": "girl", "key": "body", "phrase": "long hair", "count": 1, "shared": False},
+        {"section": "girl", "key": "body", "phrase": "short hair", "count": 0, "shared": True},
+    ]

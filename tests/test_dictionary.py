@@ -15,7 +15,7 @@ def test_dictionary_lists_phrases_in_use_including_unsaved_edits(api, imgs):
     api.load(imgs)
     api.write(api.row_index("a.png"), "body: long hair\ngirl walks a dog")
     api.write(api.row_index("b.png"), "body: long hair")
-    assert api.words() == {("girl", "body", "long hair"): 2, ("girl", "", "girl walks a dog"): 1}
+    assert api.phrases() == {("girl", "body", "long hair"): 2, ("girl", "", "girl walks a dog"): 1}
 
 
 def test_dictionary_includes_saved_projects(api, tmp_path):
@@ -26,7 +26,7 @@ def test_dictionary_includes_saved_projects(api, tmp_path):
 
     api.load(make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)}))
     api.write(0, "looks: standing")
-    assert api.words() == {("dog", "fur", "brown"): 1, ("girl", "looks", "standing"): 1}
+    assert api.phrases() == {("dog", "fur", "brown"): 1, ("girl", "looks", "standing"): 1}
 
 
 def test_phrase_disappears_when_no_image_uses_it(api, imgs):
@@ -34,9 +34,9 @@ def test_phrase_disappears_when_no_image_uses_it(api, imgs):
     api.write(0, "body: long hair")
     api.save()
     api.write(0, "")
-    assert api.words() == {}
+    assert api.phrases() == {}
     api.save()
-    assert api.words() == {}
+    assert api.phrases() == {}
 
 
 def test_save_writes_krea2_captions_with_lf(api, tool, imgs):
@@ -74,3 +74,53 @@ def test_unreadable_table_is_not_opened(api, tool, imgs, base_dir):
     assert res["success"] is False and res["message"]
     assert tool.image_dir == other.resolve()
     assert (base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8") == "{broken"
+
+
+DEFAULT_TEMPLATES = {"picture": ["place", "object", "vibes", "view"], "subject": ["looks", "clothes", "body"]}
+
+
+def test_words_of_sentences_are_in_dictionary(api, imgs):
+    api.load(imgs)
+    api.write(0, "girl spread arms\nguy grab girl's waist", section="action")
+    assert api.words() == {("action", w): 1 for w in ["girl", "spread", "arms", "guy", "grab", "girl's", "waist"]}
+
+
+def test_dictionary_has_default_templates(api, imgs):
+    api.load(imgs)
+    assert api.dictionary()["templates"] == DEFAULT_TEMPLATES
+    assert api.table()["templates"] == DEFAULT_TEMPLATES
+
+
+def test_freeze_keeps_phrases_and_words_after_they_are_unused(api, imgs, base_dir):
+    api.load(imgs)
+    api.write(0, "body: long hair")
+    api.write(0, "girl spread arms", section="action")
+
+    res = api.post("/freeze")
+    assert res["success"] and res["added"] == 5, res  # 語句 2 + 単語 3
+    api.write(0, "")
+    api.write(0, "", section="action")
+    assert api.phrases() == {("girl", "body", "long hair"): 0, ("action", "", "girl spread arms"): 0}
+    assert api.words() == {("action", "girl"): 0, ("action", "spread"): 0, ("action", "arms"): 0}
+
+    shared = json.loads((base_dir / "data_work" / "shared.json").read_text(encoding="utf-8"))
+    assert shared["templates"] == DEFAULT_TEMPLATES
+    assert {"section": "girl", "key": "body", "phrase": "long hair"} in shared["phrases"]
+
+
+def test_freeze_twice_adds_nothing_new(api, imgs):
+    api.load(imgs)
+    api.write(0, "body: long hair")
+    api.post("/freeze")
+    assert api.post("/freeze")["added"] == 0
+
+
+def test_shared_dictionary_is_used_by_other_projects(api, tmp_path):
+    api.load(make_images(tmp_path / "imgs" / "proj_a", {"a.png": (100, 100)}))
+    api.write(0, "body: long hair")
+    api.post("/freeze")
+    api.write(0, "")
+    api.save()
+
+    api.load(make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)}))
+    assert api.phrases() == {("girl", "body", "long hair"): 0}

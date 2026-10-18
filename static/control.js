@@ -11,7 +11,10 @@ const state = {
     rows: [],
     byIndex: new Map(),
     tokenLimit: 507,
-    words: [],            // [{section, key, phrase, count}]
+    templates: {},        // 確定タグ {picture: [...], subject: [...]}
+    fixedSections: [],    // 固定の段落（外せない・改名できない）
+    phrases: [],          // 辞書の語句 [{section, key, phrase, count}]
+    words: [],            // キーなしの文の単語 [{section, word, count}]
     selected: new Set(),  // 行の index
     anchor: null,         // Shift 範囲選択の起点（最後にクリックした行）
     dirty: false,
@@ -97,8 +100,43 @@ function addPhrase(text, key, phrase) {
     return [...lines.slice(0, at), renderInputLine(key, [...parsed[at].phrases, phrase]), ...lines.slice(at + 1)].join('\n');
 }
 
-// 行末のカンマ・空白と末尾の空行を落とす（候補の確定で付く ", " の後始末）
-const tidyInput = text => text.split('\n').map(line => line.replace(/[\s,]+$/, '')).join('\n').replace(/\n+$/, '');
+// 保存する形に整える: 行末のカンマ・空白（候補の確定で付く ", "）、空行、値の無いキーの行を落とす
+function tidyInput(text) {
+    return text.split('\n')
+        .map(line => line.replace(/[\s,]+$/, ''))
+        .filter(line => parseLine(line).phrases.length > 0)
+        .join('\n');
+}
+
+// 段落の確定タグ（キーの並び）。固定の段落は自分の名前で、人物などの段落は subject を使う
+function templateKeys(section) {
+    if (state.templates[section]) return state.templates[section];
+    return state.fixedSections.includes(section) ? [] : (state.templates.subject || []);
+}
+
+// 確定タグのキーを並びどおりに置いた行（値の無いキーは「key: 」）。ほかの行はその後ろ
+function mergeTemplate(text, keys) {
+    const lines = text ? text.split('\n') : [];
+    const parsed = lines.map(parseLine);
+    const used = new Set();
+    const keyLines = keys.map(key => {
+        const at = parsed.findIndex((p, i) => p.key === key && !used.has(i));
+        if (at < 0) return `${key}: `;
+        used.add(at);
+        return lines[at];
+    });
+    return [...keyLines, ...lines.filter((line, i) => !used.has(i) && line.trim())];
+}
+
+// 編集を始めたときのカーソル位置: 最初の値の無いキーの行の末尾（無ければ最後）
+function firstEmptyKeyEnd(lines, keyCount) {
+    let offset = 0;
+    for (let i = 0; i < lines.length; i++) {
+        if (i < keyCount && parseLine(lines[i]).phrases.length === 0) return offset + lines[i].length;
+        offset += lines[i].length + 1;
+    }
+    return Math.max(0, offset - 1);
+}
 
 // ---- あいまい検索（打った文字が順に含まれる語句を拾う。連続・語頭の一致を高く） ----
 
@@ -120,7 +158,8 @@ function fuzzyScore(query, text) {
     return score - t.length * 0.02;
 }
 
-// 入力欄のカーソル位置の文脈（今の行のキー、打ちかけの語句）
+// 入力欄のカーソル位置の文脈
+// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語 / start = 行頭（キー・語句・文・単語）
 function contextOf(el) {
     const value = el.value;
     const caret = el.selectionStart;
@@ -128,20 +167,22 @@ function contextOf(el) {
     const lineEndAt = value.indexOf('\n', caret);
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
+    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
-    const hasKey = colon >= 0 && keyPart !== '' && !keyPart.includes(',');
-    const segment = Math.max(before.lastIndexOf(','), hasKey ? colon : -1) + 1;
-    const raw = before.slice(segment);
-    const query = raw.trimStart();
-    return {
-        key: hasKey ? keyPart : null,
-        query,
-        queryStart: lineStart + segment + (raw.length - query.length),
-        caret,
-        restEmpty: value.slice(caret, lineEnd).trim() === '',
-        current: parseLine(value.slice(lineStart, lineEnd)).phrases,
-    };
+    if (colon >= 0 && keyPart !== '' && !keyPart.includes(',')) {
+        const segment = Math.max(before.lastIndexOf(','), colon) + 1;
+        const raw = before.slice(segment);
+        const query = raw.trimStart();
+        return {...base, mode: 'phrase', key: keyPart, query, queryStart: lineStart + segment + (raw.length - query.length)};
+    }
+    const prefix = before.match(/^\s*-*\s*/)[0].length;
+    const rest = before.slice(prefix);
+    const lastBreak = Math.max(rest.lastIndexOf(' '), rest.lastIndexOf(','), rest.lastIndexOf('\t'));
+    if (lastBreak >= 0) {
+        return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1};
+    }
+    return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
 }
 
 function keepBest(items) {
@@ -157,31 +198,41 @@ const wordBonus = (w, section) => (w.section === section ? 3 : 0) + Math.log1p(w
 
 // キーのある行: そのキーで使われた語句（打っていなくても使用回数の多い順に出す）
 function phraseCandidates(section, ctx) {
-    return keepBest(state.words
-        .filter(w => w.key === ctx.key && !ctx.current.includes(w.phrase))
-        .map(w => ({kind: 'phrase', label: w.phrase, match: w.phrase, phrase: w.phrase, count: w.count, bonus: wordBonus(w, section)})));
+    return keepBest(state.phrases
+        .filter(p => p.key === ctx.key && !ctx.current.includes(p.phrase))
+        .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
 }
 
-// 行頭: キー、キー付きの語句、キーなしの文（1文字以上打ったときだけ）
+// キーなしの文の単語（1文字以上打ったときだけ）
+function wordCandidates(section, ctx) {
+    if (!ctx.query) return [];
+    return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
+}
+
+// 行頭: キー、キー付きの語句、キーなしの文、単語（1文字以上打ったときだけ）
 function lineStartCandidates(section, ctx) {
     if (!ctx.query) return [];
-    return keepBest(state.words.flatMap(w => {
-        const bonus = wordBonus(w, section);
-        if (!w.key) return [{kind: 'line', label: w.phrase, match: w.phrase, phrase: w.phrase, count: w.count, bonus}];
-        return [
-            {kind: 'key', label: `${w.key}:`, match: w.key, key: w.key, count: 0, bonus: bonus + 1},
-            {kind: 'keyed', label: `${w.key}: ${w.phrase}`, match: w.phrase, key: w.key, phrase: w.phrase, count: w.count, bonus},
-        ];
-    }));
+    return keepBest([
+        ...state.phrases.flatMap(p => {
+            const bonus = wordBonus(p, section);
+            if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
+            return [
+                {kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1},
+                {kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus},
+            ];
+        }),
+        ...wordCandidates(section, ctx),
+    ]);
 }
 
+const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates};
+
 function candidates(section, ctx) {
-    const pool = ctx.key !== null ? phraseCandidates(section, ctx) : lineStartCandidates(section, ctx);
-    return pool
+    return CANDIDATE_SOURCES[ctx.mode](section, ctx)
         .map(item => ({...item, score: fuzzyScore(ctx.query, item.match)}))
         .filter(item => item.score !== null)
         .sort((a, b) => (b.score + b.bonus) - (a.score + a.bonus))
-        .slice(0, 8);
+        .slice(0, 20);
 }
 
 function showSuggestions(el, section) {
@@ -226,7 +277,12 @@ function accept(item) {
     } else if (item.kind === 'keyed') {
         el.value = `${item.key}: ${item.phrase}`;  // 一括入力は1行
     } else {
-        const text = item.kind === 'key' ? `${item.key}: ` : item.phrase + (item.kind === 'phrase' && ctx.restEmpty ? ', ' : '');
+        const text = {
+            key: () => `${item.key}: `,
+            phrase: () => item.phrase + (ctx.restEmpty ? ', ' : ''),
+            word: () => item.word + (ctx.restEmpty ? ' ' : ''),
+            line: () => item.phrase,
+        }[item.kind]();
         el.setRangeText(text, ctx.queryStart, ctx.caret, 'end');
     }
     el.dispatchEvent(new Event('input'));
@@ -253,7 +309,10 @@ function refreshWords() {
     clearTimeout(refreshWords.timer);
     refreshWords.timer = setTimeout(() => {
         getJson('/get_dictionary')
-            .then(body => { state.words = body.words; })
+            .then(body => {
+                state.phrases = body.phrases;
+                state.words = body.words;
+            })
             .catch(e => console.warn('辞書を読めません', e));
     }, 100);
 }
@@ -264,9 +323,10 @@ function headHtml() {
     return [
         '<th>サムネイル</th>',
         '<th>画像 / トークン</th>',
-        ...state.sections.map(s =>
-            `<th data-section="${escapeHtml(s)}"><span class="section-name" title="ダブルクリックで改名">${escapeHtml(s)}</span>` +
-            `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${escapeHtml(s)} を外す">×</button></th>`),
+        ...state.sections.map(s => (state.fixedSections.includes(s)
+            ? `<th data-section="${escapeHtml(s)}"><span class="section-name fixed">${escapeHtml(s)}</span></th>`
+            : `<th data-section="${escapeHtml(s)}"><span class="section-name" title="ダブルクリックで改名">${escapeHtml(s)}</span>` +
+              `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${escapeHtml(s)} を外す">×</button></th>`)),
     ].join('');
 }
 
@@ -277,12 +337,19 @@ function metaHtml(row) {
         `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'} / ${state.tokenLimit}</div>`;
 }
 
-const cellHtml = text => `<div class="text">${escapeHtml(text)}</div>`;
+// 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く出す
+function cellHtml(section, text) {
+    const lines = mergeTemplate(text, templateKeys(section)).map(line => {
+        const empty = parseLine(line).phrases.length === 0;
+        return `<div class="ln${empty ? ' empty' : ''}">${escapeHtml(line.trimEnd())}</div>`;
+    });
+    return `<div class="text">${lines.join('')}</div>`;
+}
 
 function rowHtml(row) {
     const name = row['サムネイル'];
     const classes = [row.is_dead ? 'dead' : '', state.selected.has(row.index) ? 'selected' : ''].filter(Boolean).join(' ');
-    const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(row.texts[s] || '')}</td>`).join('');
+    const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row.texts[s] || '')}</td>`).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt=""></td>` +
         `<td class="meta">${metaHtml(row)}</td>${cells}</tr>`;
@@ -316,6 +383,8 @@ async function refreshTable() {
     state.rows = body.data;
     state.byIndex = new Map(body.data.map(r => [r.index, r]));
     state.tokenLimit = body.token_limit;
+    state.templates = body.templates;
+    state.fixedSections = body.fixed_sections;
     state.selected = new Set([...state.selected].filter(i => state.byIndex.has(i)));
     if (!state.byIndex.has(state.anchor)) state.anchor = null;
     state.loaded = true;
@@ -330,8 +399,10 @@ function startEdit(td) {
     commitEdit();
     const index = Number(td.closest('tr').dataset.index);
     const section = td.dataset.section;
+    const keys = templateKeys(section);
+    const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
     const el = document.createElement('textarea');
-    el.value = state.byIndex.get(index).texts[section] || '';
+    el.value = lines.join('\n');
     td.replaceChildren(el);
     state.editor = {index, section, td, el};
     el.addEventListener('input', () => { autosize(el); showSuggestions(el, section); });
@@ -349,7 +420,8 @@ function startEdit(td) {
     el.addEventListener('blur', () => commitEdit());
     autosize(el);
     el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
+    const caret = firstEmptyKeyEnd(lines, keys.length);
+    el.setSelectionRange(caret, caret);
 }
 
 function commitEdit() {
@@ -361,7 +433,7 @@ function commitEdit() {
     const text = tidyInput(editor.el.value);
     const changed = text !== (row.texts[editor.section] || '');
     row.texts[editor.section] = text;
-    editor.td.innerHTML = cellHtml(text);
+    editor.td.innerHTML = cellHtml(editor.section, text);
     if (changed) track(sendText(row, editor.section, text)).catch(e => setStatus(String(e.message || e), 'error'));
 }
 
@@ -464,6 +536,16 @@ async function removeSection(name) {
     await refreshTable();
 }
 
+async function freezeDictionary() {
+    if (!window.confirm('今使っている語句と単語を共用辞書に入れますか？\n入れた語句は、どの画像からも消えても候補に残ります。')) return;
+    commitEdit();
+    await settled();
+    const res = await postJson('/freeze');
+    if (!res.success) return setStatus(res.message, 'error');
+    refreshWords();
+    setStatus(res.message, 'ok');
+}
+
 async function refreshProjects() {
     const body = await getJson('/get_existing_projects');
     const options = body.projects
@@ -563,6 +645,7 @@ function wire() {
     $('projectSelect').addEventListener('change', guarded(openProject));
     $('saveButton').addEventListener('click', guarded(save));
     $('removeDeadButton').addEventListener('click', guarded(removeDead));
+    $('freezeButton').addEventListener('click', guarded(freezeDictionary));
     $('showDead').addEventListener('change', toggleDead);
     $('sectionForm').addEventListener('submit', event => {
         event.preventDefault();
@@ -593,7 +676,7 @@ function wire() {
         if (button) guarded(removeSection)(button.closest('th').dataset.section);
     });
     $('gridHead').addEventListener('dblclick', event => {
-        const name = event.target.closest('.section-name');
+        const name = event.target.closest('.section-name:not(.fixed)');
         if (name) guarded(renameSection)(name.closest('th').dataset.section);
     });
 

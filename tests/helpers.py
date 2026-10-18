@@ -99,7 +99,15 @@ class Api:
         """画像名から行の index を引く（フロントが update_text に送る値）"""
         return next(r["index"] for r in self.rows() if r["サムネイル"] == image_name)
 
-    def words(self):
+    def dictionary(self):
         r = self.c.get("/get_dictionary")
         assert r.status_code == 200, r.data
-        return {(w["section"], w["key"], w["phrase"]): w["count"] for w in r.get_json()["words"]}
+        return r.get_json()
+
+    def phrases(self):
+        """辞書の語句 {(段落, キー, 語句): 使用回数}"""
+        return {(w["section"], w["key"], w["phrase"]): w["count"] for w in self.dictionary()["phrases"]}
+
+    def words(self):
+        """辞書の単語（キーなしの文から） {(段落, 単語): 使用回数}"""
+        return {(w["section"], w["word"]): w["count"] for w in self.dictionary()["words"]}

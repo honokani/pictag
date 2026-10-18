@@ -10,7 +10,8 @@ from PIL import Image
 
 from caption_format import parse_line, render_caption
 from tokens import TOKEN_LIMIT, TokenCounter
-from words import add_phrase, check_section_name, count_words, dictionary_entries, remove_phrase
+from words import (add_phrase, check_section_name, count_sentence_words, count_words, empty_shared, freeze,
+                   phrase_entries, remove_phrase, word_entries)
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -24,8 +25,10 @@ APP_DIR = Path(__file__).resolve().parent
 # 表の固定列。それ以外の列は段落（大kind）で、値は入力の文字列
 FIXED_COLUMNS = ['サムネイル', 'is_dead']
 TABLE_FILE = 'table.json'  # data_out/<フォルダ名>/ 直下。画像 × 段落の入力
+SHARED_FILE = 'shared.json'  # data_work/ 直下。共用辞書（freeze した語句・単語と確定タグ）
 SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォルダは SDXL 版のプロジェクト
-DEFAULT_SECTIONS = ['picture', 'action', 'girl']  # どのプロジェクトにも段落が無いときの最初の段落
+FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
+DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl']  # 新規プロジェクトの段落（guy や dog は必要なときに足す）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
 
 # キャプションのトークン数（tokenizer.json は起動時に裏で取得する）
@@ -51,6 +54,10 @@ def write_json(path, data):
 
 def section_names(df):
     return [c for c in df.columns if c not in FIXED_COLUMNS]
+
+def with_fixed_sections(sections):
+    """固定の段落を先頭に揃える（無ければ足す）"""
+    return [*FIXED_SECTIONS, *(s for s in sections if s not in FIXED_SECTIONS)]
 
 def section_texts(df):
     """表の全入力を (段落, 入力) で並べる"""
@@ -86,6 +93,19 @@ def read_table(path):
 def normalize_newlines(text):
     return text.replace('\r\n', '\n').replace('\r', '\n')
 
+def read_shared(path):
+    """共用辞書を読む（無い・壊れているときは既定の確定タグだけ）"""
+    shared = empty_shared()
+    if not path.exists():
+        return shared
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+        return {key: data.get(key, value) if isinstance(data.get(key), type(value)) else value
+                for key, value in shared.items()}
+    except (OSError, ValueError, AttributeError) as e:
+        logger.warning(f"Failed to load shared dictionary: {e}")
+        return shared
+
 class CaptionTool:
     def __init__(self, base_dir=None):
         # data_out / data_work の置き場所
@@ -95,7 +115,8 @@ class CaptionTool:
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
-        self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数)
+        self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
+        self.shared = read_shared(self.data_work_dir / SHARED_FILE)
         self.last_error = ''  # 直近の失敗理由（API が画面へ返す）
 
     def fail(self, message):
@@ -185,7 +206,7 @@ class CaptionTool:
         logger.info(f"DataFrame created: {len(self.df)} rows, {len(self.df.columns)} columns")
 
     def saved_tables(self):
-        """保存済みの他プロジェクトの (段落, 語句の使用回数)。ファイルが変わらなければ読み直さない"""
+        """保存済みの他プロジェクトの (段落, 語句の使用回数, 単語の使用回数)。ファイルが変わらなければ読み直さない"""
         if not self.data_out_dir.exists():
             return []
         results = []
@@ -200,24 +221,37 @@ class CaptionTool:
                 except ValueError as e:
                     logger.warning(str(e))
                     continue
-                cached = (mtime, section_names(df), count_words(section_texts(df)))
+                texts = section_texts(df)
+                cached = (mtime, section_names(df), count_words(texts), count_sentence_words(texts))
                 self.saved_cache[path] = cached
             results.append(cached[1:])
         return results
 
-    def known_sections(self):
-        """他プロジェクトにある段落（新規プロジェクトの初期の段落）。どこにも無ければ既定の段落"""
-        sections = list(dict.fromkeys(s for names, _ in self.saved_tables() for s in names))
-        return sections or list(DEFAULT_SECTIONS)
-
     def usage(self):
-        """使用中の語句の使用回数（他プロジェクトの保存済みの表 + 今の表）"""
-        counter = Counter()
-        for _, words in self.saved_tables():
-            counter.update(words)
+        """使用中の (語句, 単語) の使用回数（他プロジェクトの保存済みの表 + 今の表）"""
+        phrases, words = Counter(), Counter()
+        for _, saved_phrases, saved_words in self.saved_tables():
+            phrases.update(saved_phrases)
+            words.update(saved_words)
         if 'サムネイル' in self.df.columns:
-            counter.update(count_words(section_texts(self.df)))
-        return counter
+            texts = section_texts(self.df)
+            phrases.update(count_words(texts))
+            words.update(count_sentence_words(texts))
+        return phrases, words
+
+    def dictionary(self):
+        """画面に渡す辞書（使用中 + 共用辞書の語句・単語、確定タグ）"""
+        phrases, words = self.usage()
+        return {'phrases': phrase_entries(phrases, self.shared), 'words': word_entries(words, self.shared),
+                'templates': self.shared['templates']}
+
+    def freeze_dictionary(self):
+        """使用中の語句・単語を共用辞書に足して保存する。足した数を返す"""
+        self.shared, added = freeze(self.shared, *self.usage())
+        self.data_work_dir.mkdir(parents=True, exist_ok=True)
+        write_json(self.data_work_dir / SHARED_FILE, self.shared)
+        logger.info(f"Froze dictionary: {added} entries added")
+        return added
 
     def manage_dead_alive_status(self):
         """画像の生存状態を管理し、dead/alive状態を更新"""
@@ -253,9 +287,9 @@ class CaptionTool:
         # 全ての画像ファイル（既存DataFrame + 新規alive + サムネイル）
         all_image_files = existing_files | alive_image_files | thumbnail_files
 
-        # 段落: 保存済みの表があればその段落を保つ（外した段落を戻さない）
-        # 新規プロジェクトは他プロジェクトにある段落から始める
-        sections = section_names(self.df) if has_table else self.known_sections()
+        # 段落: 保存済みの表があればその段落を保つ（外した人物などの段落を戻さない）。固定の段落は必ず先頭に置く
+        # 新規プロジェクトは既定の段落（picture / action / girl）から始める
+        sections = with_fixed_sections(section_names(self.df)) if has_table else list(DEFAULT_SECTIONS)
 
         # DataFrameを再構築
         columns = FIXED_COLUMNS + sections
@@ -395,8 +429,10 @@ class CaptionTool:
         return True
 
     def rename_section(self, old, new):
-        """段落の名前を変える（入力はそのまま）"""
+        """段落の名前を変える（入力はそのまま）。固定の段落は改名できない"""
         self.last_error = ''
+        if old in FIXED_SECTIONS:
+            return self.fail(f'「{old}」は固定の段落なので改名できません')
         if old not in section_names(self.df):
             return self.fail(f'段落「{old}」がありません')
         try:
@@ -410,8 +446,10 @@ class CaptionTool:
         return True
 
     def remove_section(self, name):
-        """段落を表から外す（その段落の入力も消える）"""
+        """段落を表から外す（その段落の入力も消える）。固定の段落は外せない"""
         self.last_error = ''
+        if name in FIXED_SECTIONS:
+            return self.fail(f'「{name}」は固定の段落なので外せません')
         if name not in section_names(self.df):
             return self.fail(f'段落「{name}」がありません')
         self.df = self.df.drop(columns=[name])
@@ -573,12 +611,13 @@ def get_table_data():
     tokens はトークナイザーの準備ができるまで null
     """
     df = caption_tool.df
+    common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS}
     if 'サムネイル' not in df.columns:
-        return jsonify({'sections': [], 'data': [], 'token_limit': TOKEN_LIMIT})
+        return jsonify({'sections': [], 'data': [], **common})
 
     sections = section_names(df)
     data = [caption_tool.row_view(index, record, sections) for index, record in zip(df.index, df.to_dict('records'))]
-    return jsonify({'sections': sections, 'data': data, 'token_limit': TOKEN_LIMIT})
+    return jsonify({'sections': sections, 'data': data, **common})
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
@@ -606,8 +645,18 @@ def serve_image(filename):
 
 @app.route('/get_dictionary')
 def get_dictionary():
-    """使用中の語句（全プロジェクトの入力から作る。使用回数の多い順）"""
-    return jsonify({'words': dictionary_entries(caption_tool.usage())})
+    """辞書（phrases: 語句、words: キーなしの文の単語、templates: 確定タグ）。使用回数の多い順で、共用辞書だけのものは 0 回"""
+    return jsonify(caption_tool.dictionary())
+
+@app.route('/freeze', methods=['POST'])
+def freeze_dictionary():
+    """使用中の語句・単語を共用辞書に入れる"""
+    try:
+        added = caption_tool.freeze_dictionary()
+        return jsonify({'success': True, 'added': added, 'message': f'共用辞書に {added} 件入れました'})
+    except OSError as e:
+        logger.error(f"Failed to freeze dictionary: {e}")
+        return jsonify({'success': False, 'message': str(e)})
 
 @app.route('/update_text', methods=['POST'])
 def update_text():
