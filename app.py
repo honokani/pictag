@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import threading
 from collections import Counter
 from functools import reduce
 from pathlib import Path
@@ -308,11 +309,8 @@ class CaptionTool:
                 **{s: to_text(existing_row.get(s, '')) for s in sections},
             })
 
-            # サムネイル生成とキャプション移動処理
+            # キャプション移動処理（サムネイルは画面が表示するときに作る。読み込みを待たせないため）
             if is_alive:
-                # 生成済みでも元画像が更新されていれば作り直す
-                self.create_thumbnail(self.image_dir / img_file)
-
                 # deadからの復帰処理
                 stem = Path(img_file).stem
                 dead_caption_path = self.captions_dead_dir / f"{stem}.txt"
@@ -403,10 +401,12 @@ class CaptionTool:
                         thumb_path.unlink()
                     return image_path
 
-                # リサイズ実行
+                # リサイズ実行（同時に要求されても壊れないよう、一時ファイルに書いてから置き換える）
                 img.thumbnail((600, 600), Image.Resampling.LANCZOS)
-                img.save(thumb_path, quality=85, optimize=True)
-                os.utime(thumb_path, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+                tmp_path = thumb_path.with_name(f".tmp{threading.get_ident()}_{thumb_path.name}")
+                img.save(tmp_path, quality=85)
+                os.utime(tmp_path, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
+                os.replace(tmp_path, thumb_path)
                 logger.info(f"Created thumbnail: {thumb_path}")
                 return thumb_path
 
@@ -655,13 +655,16 @@ def get_table_data():
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
-    """サムネイル画像配信（filename は元画像名。サムネイルが無い小さい画像は元画像）"""
+    """サムネイル画像配信（filename は元画像名）。初めて表示するときに作る（元画像が更新されていれば作り直す）
+
+    長辺 600px 以下の画像は元画像。元画像が消えた削除済み画像は、残っているサムネイル
+    """
     if not caption_tool.is_known_image(filename):
         return "Image not found", 404
 
-    for path in [caption_tool.thumbnail_file(filename), caption_tool.image_dir / filename]:
-        if path.exists():
-            return send_file(path.resolve())
+    path = caption_tool.create_thumbnail(caption_tool.image_dir / filename)
+    if path.exists():
+        return send_file(path.resolve())
 
     return "Image not found", 404
 
