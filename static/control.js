@@ -12,6 +12,12 @@ function showStatus(message, isError = false) {
     }, 3000);
 }
 
+// サーバーが返した失敗理由（あれば「: 理由」）
+function failureReason(result) {
+    const reason = result.message || result.error;
+    return reason ? `: ${reason}` : '';
+}
+
 // 画像URL（サムネイル列の値は画像ファイル名）
 function thumbnailUrl(imageName) {
     return `/thumbnail/${encodeURIComponent(imageName)}`;
@@ -38,15 +44,15 @@ function toggleRowSelection(rowIndex, event) {
             selectedRows.add(rowIndex);
         }
     } else if (event.shiftKey && selectedRows.size > 0) {
-        // Shift + クリック: 範囲選択
+        // Shift + クリック: 範囲選択（表示中の行のみ。非表示の削除済み行は含めない）
         const lastSelected = Math.max(...selectedRows);
         const start = Math.min(rowIndex, lastSelected);
         const end = Math.max(rowIndex, lastSelected);
-        
+
         selectedRows.clear();
-        for (let i = start; i <= end; i++) {
-            selectedRows.add(i);
-        }
+        visibleRowIndexes()
+            .filter(i => i >= start && i <= end)
+            .forEach(i => selectedRows.add(i));
     } else {
         // 通常クリック: 単一選択（前の選択をクリア）
         selectedRows.clear();
@@ -57,12 +63,25 @@ function toggleRowSelection(rowIndex, event) {
     updateStatusMessage();
 }
 
+// 行は data-row-index（表データでの位置）で特定する。削除済みを非表示にすると画面上の行位置とずれるため
+function visibleRowIndexes() {
+    const rows = document.getElementById('tableBody').querySelectorAll('tr');
+    return Array.from(rows).map(row => Number(row.dataset.rowIndex));
+}
+
+function findCheckbox(rowIndex, columnName) {
+    const row = document.querySelector(`#tableBody tr[data-row-index="${rowIndex}"]`);
+    if (!row) return null;
+    return Array.from(row.querySelectorAll('input[type="checkbox"]'))
+        .find(checkbox => checkbox.dataset.col === columnName) || null;
+}
+
 function updateRowVisualState() {
     const tbody = document.getElementById('tableBody');
     const rows = tbody.querySelectorAll('tr');
-    
-    rows.forEach((row, index) => {
-        if (selectedRows.has(index)) {
+
+    rows.forEach(row => {
+        if (selectedRows.has(Number(row.dataset.rowIndex))) {
             row.classList.add('selected-row');
         } else {
             row.classList.remove('selected-row');
@@ -84,18 +103,10 @@ function handleCheckboxChange(rowIndex, columnName, checked, event) {
         // 複数選択時: 選択されている全行を同じ値に変更
         selectedRows.forEach(selectedRowIndex => {
             updateCell(selectedRowIndex, columnName, checked);
-            // UIも更新 - 畳まれた列を考慮して正確なカラム位置を特定
-            const tbody = document.getElementById('tableBody');
-            const rows = tbody.querySelectorAll('tr');
-            const targetRow = rows[selectedRowIndex];
-            const checkboxes = targetRow.querySelectorAll('input[type="checkbox"]');
-            
-            // 表示されているカラムのみを対象にして正確な位置を計算
-            const visibleColumns = getVisibleColumns();
-            const columnIndex = visibleColumns.indexOf(columnName);
-            
-            if (columnIndex !== -1 && checkboxes[columnIndex]) {
-                checkboxes[columnIndex].checked = checked;
+            // UIも更新（行は data-row-index、チェックボックスは data-col で特定。畳まれた列には無い）
+            const checkbox = findCheckbox(selectedRowIndex, columnName);
+            if (checkbox) {
+                checkbox.checked = checked;
             }
         });
         showStatus(`${selectedRows.size}行のカラム「${columnName}」を${checked ? 'True' : 'False'}に変更`);
@@ -103,25 +114,6 @@ function handleCheckboxChange(rowIndex, columnName, checked, event) {
         // 単一行の変更
         updateCell(rowIndex, columnName, checked);
     }
-}
-
-function getVisibleColumns() {
-    // 現在表示されているカラムの一覧を取得（畳まれた列を除外）
-    const visibleColumns = [];
-    
-    if (window.currentColumnsByKind) {
-        const columnsByKind = window.currentColumnsByKind;
-        Object.keys(columnsByKind).forEach(kind => {
-            if (!hiddenKinds.has(kind)) {
-                // 表示されているkindのカラムを追加
-                columnsByKind[kind].forEach(col => {
-                    visibleColumns.push(col);
-                });
-            }
-        });
-    }
-    
-    return visibleColumns;
 }
 
 async function updateTaskUI() {
@@ -303,9 +295,18 @@ async function loadKindsForRename() {
     }
 }
 
+// 種別名は / ? # を含みうるのでクエリで渡す
+function captionsByKindUrl(kind) {
+    return `/get_captions_by_kind?kind=${encodeURIComponent(kind)}`;
+}
+
+function tableCaptionsByKindUrl(kind) {
+    return `/get_table_captions_by_kind?kind=${encodeURIComponent(kind)}`;
+}
+
 async function loadCaptionsByKind(kind) {
     try {
-        const response = await fetch(`/get_captions_by_kind/${kind}`);
+        const response = await fetch(captionsByKindUrl(kind));
         const result = await response.json();
         
         const captionSelect = document.getElementById('captionSelect');
@@ -338,11 +339,11 @@ async function loadCaptionsForAdd(kind) {
     
     try {
         // 全カラム情報を取得
-        const response = await fetch(`/get_captions_by_kind/${kind}`);
+        const response = await fetch(captionsByKindUrl(kind));
         const result = await response.json();
-        
+
         // 現在のテーブルカラム情報を取得
-        const tableResponse = await fetch(`/get_table_captions_by_kind/${kind}`);
+        const tableResponse = await fetch(tableCaptionsByKindUrl(kind));
         const tableResult = await tableResponse.json();
         
         const captionSelect = document.getElementById('captionSelect');
@@ -381,12 +382,12 @@ async function loadCaptionsForRename() {
     try {
         // タスクに応じてAPIを使い分け
         let apiUrl;
-        if (selectedTask === 'column表から削除' || selectedTask === 'column改名') {
-            // 表から削除・改名の場合は表内カラムのみ
-            apiUrl = `/get_table_captions_by_kind/${selectedKind}`;
+        if (selectedTask === 'column表から削除' || selectedTask === 'column改名' || selectedTask === 'kind・column両方改名') {
+            // 表から削除・改名の場合は表内カラムのみ（表に無いカラムは改名できない）
+            apiUrl = tableCaptionsByKindUrl(selectedKind);
         } else {
             // その他の場合は全カラム
-            apiUrl = `/get_captions_by_kind/${selectedKind}`;
+            apiUrl = captionsByKindUrl(selectedKind);
         }
         
         const response = await fetch(apiUrl);
@@ -458,6 +459,7 @@ async function loadExistingProject() {
         if (result.success) {
             document.getElementById('imageDir').value = result.image_dir;
             showStatus('プロジェクトを読み込みました');
+            await updateTaskUI(); // 読み込んだプロジェクトの種別一覧にする
             await refreshTable();
         } else {
             showStatus(result.message, true);
@@ -484,6 +486,7 @@ async function loadDirectory() {
         const result = await response.json();
         if (result.success) {
             showStatus('ディレクトリを読み込みました');
+            await updateTaskUI(); // 読み込んだプロジェクトの種別一覧にする
             await refreshTable();
         } else {
             showStatus(result.message, true);
@@ -704,7 +707,8 @@ async function renderGroupedTable(columns, data) {
             
             const tr = document.createElement('tr');
             tr.style.cursor = 'pointer';
-            
+            tr.dataset.rowIndex = index;
+
             // 削除済み行のスタイル適用
             if (isDead) {
                 tr.classList.add('dead-row');
@@ -833,10 +837,11 @@ async function renderGroupedTable(columns, data) {
                         
                         const checkbox = document.createElement('input');
                         checkbox.type = 'checkbox';
+                        checkbox.dataset.col = col;
                         checkbox.checked = row[col] || false;
                         checkbox.onchange = (e) => handleCheckboxChange(index, col, checkbox.checked, e);
                         td.appendChild(checkbox);
-                        
+
                         kindColumnCount++;
                     }
                 }
@@ -872,7 +877,8 @@ function renderSimpleTable(columns, data) {
     data.forEach((row, index) => {
         const tr = document.createElement('tr');
         tr.style.cursor = 'pointer';
-        
+        tr.dataset.rowIndex = index;
+
         tr.addEventListener('click', (e) => {
             if (e.target.type !== 'checkbox') {
                 toggleRowSelection(index, e);
@@ -897,6 +903,7 @@ function renderSimpleTable(columns, data) {
             } else {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
+                checkbox.dataset.col = col;
                 checkbox.checked = row[col] || false;
                 checkbox.onchange = (e) => handleCheckboxChange(index, col, checkbox.checked, e);
                 td.appendChild(checkbox);
@@ -910,12 +917,14 @@ function renderSimpleTable(columns, data) {
 }
 
 async function updateCell(rowIndex, columnName, value) {
+    // rowIndex は表データでの位置。サーバーへはその行の index（DataFrame の行番号）を送る
+    const row = currentData[rowIndex];
     try {
         const response = await fetch('/update_cell', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                row_index: rowIndex,
+                row_index: row ? row.index : rowIndex,
                 column_name: columnName,
                 value: value
             })
@@ -1085,7 +1094,7 @@ async function renameKind() {
             await loadKindsForRename(); // kind改名では改名用のリストを再読み込み
             await refreshTable();
         } else {
-            showStatus('種別名変更に失敗しました', true);
+            showStatus('種別名変更に失敗しました' + failureReason(result), true);
         }
     } catch (error) {
         showStatus('種別名変更エラー: ' + error.message, true);
@@ -1145,7 +1154,7 @@ async function renameBoth() {
             await loadKindsForRename(); // 改名用のリストを再読み込み
             await refreshTable();
         } else {
-            showStatus('両方改名に失敗しました', true);
+            showStatus('両方改名に失敗しました' + failureReason(result), true);
         }
     } catch (error) {
         showStatus('両方改名エラー: ' + error.message, true);
@@ -1199,7 +1208,7 @@ async function renameColumn() {
             await updateTaskUI(); // タスクUIも更新
             await refreshTable();
         } else {
-            showStatus('カラム名変更に失敗しました', true);
+            showStatus('カラム名変更に失敗しました' + failureReason(result), true);
         }
     } catch (error) {
         showStatus('カラム名変更エラー: ' + error.message, true);
@@ -1293,8 +1302,8 @@ async function saveData() {
         const result = await response.json();
         if (result.success) {
             showStatus('データを保存しました');
-            // 保存後はサーバー側でload_dataが実行されるため、UI側も更新
-            await loadKinds();
+            // 保存後はサーバー側でload_dataが実行されるため、UI側も更新（選択中のタスクに合った種別一覧にする）
+            await updateTaskUI();
             await refreshTable();
         } else {
             showStatus(result.message, true);
