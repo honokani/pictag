@@ -357,7 +357,8 @@ function choicesHtml(row) {
     const camera = state.viewChoices.camera.map((phrases, g) =>
         `<span class="group">${clear(`camera${g}`)}${phrases.map(p => button(p, p.replace(/^from /, ''), `camera${g}`)).join('')}</span>`);
     const pov = `<span class="group">${clear('pov')}${state.viewChoices.pov.map(c => button(c.phrase, `${c.emoji} ${c.label}`, 'pov')).join('')}</span>`;
-    return `<div class="choices"><span class="choice-label">🎥</span>${camera.join('')}<span class="choice-label">👀</span>${pov}</div>`;
+    return `<div class="choices"><div class="choice-row"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
+        `<div class="choice-row"><span class="choice-label">👀</span>${pov}</div></div>`;
 }
 
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
@@ -567,9 +568,12 @@ async function bulkEdit(op) {
 async function addSection() {
     const name = $('sectionName').value.trim();
     if (!name) return;
+    $('sectionName').value = '';  // 応答を待つ間に次の名前を打っても消さないよう、送った時点で空にする
     const res = await postJson('/add_section', {name});
-    if (!res.success) return setStatus(res.message, 'error');
-    $('sectionName').value = '';
+    if (!res.success) {
+        if (!$('sectionName').value) $('sectionName').value = name;
+        return setStatus(res.message, 'error');
+    }
     setDirty(true);
     await refreshTable();
 }

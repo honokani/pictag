@@ -388,3 +388,13 @@ def test_view_keeps_free_text(page, imgs):
     write(page, "a.png", "view: focus on hands", section="picture")
     choice(page, "a.png", "close-up").click()
     expect(picture_view(page, "a.png")).to_have_text("view: focus on hands, close-up")
+
+
+def test_adding_sections_quickly_keeps_the_next_name(page, imgs):
+    load_dir(page, imgs)
+    page.fill("#sectionName", "dog")
+    page.click("#sectionForm button")
+    page.fill("#sectionName", "cat")  # 1つ目の応答を待たずに次を打つ
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(5)
+    assert section_names(page) == ["picture", "action", "girl", "dog", "cat"]
