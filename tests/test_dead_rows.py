@@ -1,7 +1,7 @@
 """削除済み画像（元フォルダから消えた画像）の扱い"""
 import pytest
 
-from helpers import caption_of, col, make_images
+from helpers import caption_of, make_images
 
 
 @pytest.fixture
@@ -14,10 +14,13 @@ def names(tool):
     return tool.df["サムネイル"].tolist()
 
 
+def girl(tool):
+    return tool.df.set_index("サムネイル")["girl"].to_dict()
+
+
 def test_deleted_image_becomes_dead_and_caption_moves(api, tool, imgs):
     api.load(imgs)
-    api.add("t")
-    api.set(api.row_index("a.png"), "t")
+    api.write(api.row_index("a.png"), "t")
     api.save()
     (imgs / "a.png").rename(imgs.parent / "a.png.bak")
 
@@ -29,7 +32,6 @@ def test_deleted_image_becomes_dead_and_caption_moves(api, tool, imgs):
 
 def test_row_indexes_are_positions_after_remove_all_dead(api, tool, imgs):
     api.load(imgs)
-    api.add("t")
     api.save()
     (imgs / "a.png").rename(imgs.parent / "a.png.bak")
     api.load(imgs)
@@ -39,16 +41,14 @@ def test_row_indexes_are_positions_after_remove_all_dead(api, tool, imgs):
     assert [r["サムネイル"] for r in rows] == ["b.png", "c.png"]
     assert [r["index"] for r in rows] == [0, 1]
 
-    # 画面の 2 行目（c.png）にチェック → c.png だけが変わる
-    api.set(rows[1]["index"], "t")
-    flags = tool.df.set_index("サムネイル")[col("t")].to_dict()
-    assert flags == {"b.png": False, "c.png": True}
+    # 画面の 2 行目（c.png）に入力 → c.png だけが変わる
+    api.write(rows[1]["index"], "t")
+    assert girl(tool) == {"b.png": "", "c.png": "t"}
 
 
 def test_remove_all_dead_does_not_resurrect_after_save(api, tool, imgs):
     api.load(imgs)
-    api.add("t")
-    api.set(api.row_index("b.png"), "t")
+    api.write(api.row_index("b.png"), "t")
     api.save()
     (imgs / "a.png").rename(imgs.parent / "a.png.bak")
     api.load(imgs)
@@ -58,13 +58,12 @@ def test_remove_all_dead_does_not_resurrect_after_save(api, tool, imgs):
     assert names(tool) == ["b.png", "c.png"]
     api.open_project("proj")
     assert names(tool) == ["b.png", "c.png"]
-    assert tool.df.set_index("サムネイル").loc["b.png", col("t")]
+    assert girl(tool)["b.png"] == "t"
 
 
 def test_restored_image_comes_back_alive(api, tool, imgs):
     api.load(imgs)
-    api.add("t")
-    api.set(api.row_index("a.png"), "t")
+    api.write(api.row_index("a.png"), "t")
     api.save()
     (imgs / "a.png").rename(imgs.parent / "a.png.bak")
     api.load(imgs)
@@ -72,5 +71,5 @@ def test_restored_image_comes_back_alive(api, tool, imgs):
 
     api.load(imgs)
     row = tool.df.set_index("サムネイル").loc["a.png"]
-    assert not row["is_dead"] and row[col("t")]
+    assert not row["is_dead"] and row["girl"] == "t"
     assert (tool.captions_dir / "a.txt").read_text(encoding="utf-8") == caption_of("t")

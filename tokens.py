@@ -44,6 +44,8 @@ class TokenCounter:
     def __init__(self, tokenizer=None):
         self.tokenizer = tokenizer
         self.count = lru_cache(maxsize=8192)(self._count)
+        self.started = False
+        self.lock = threading.Lock()
 
     def _count(self, text):
         if self.tokenizer is None:
@@ -65,3 +67,11 @@ class TokenCounter:
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         return thread
+
+    def start_once(self, path, url=TOKENIZER_URL, fetch=download):
+        """取得と読み込みを、最初の1回だけ裏で始める（2回目以降は None）"""
+        with self.lock:
+            if self.started:
+                return None
+            self.started = True
+        return self.load_in_background(path, url, fetch)

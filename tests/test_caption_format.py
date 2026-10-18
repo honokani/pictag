@@ -1,31 +1,17 @@
-"""Krea2 用キャプションの整形（表の1行 → 構造化テキスト）"""
-from caption_format import merge_values, render_caption
+"""段落の入力（文字列）→ Krea2 用キャプション"""
+import pytest
 
-# (大kind, 中kind, 小kind, 値)。辞書の順に並んだ、1行のうち True の項目
-EXAMPLE_ITEMS = [
-    ("picture", "place", "", "classroom"),
-    ("picture", "object", "", "1 girl + 1 guy"),
-    ("picture", "vibes", "", "size difference emphasized"),
-    ("picture", "view", "", "from below"),
-    ("picture", "view", "", "third POV"),
-    ("action", "", "", "girl spreads arms"),
-    ("action", "", "", "guy grabs girl's waist"),
-    ("girl", "looks", "", "full body shot"),
-    ("girl", "looks", "", "standing"),
-    ("girl", "clothes", "", "school uniform"),
-    ("girl", "clothes", "socks", "long"),
-    ("girl", "clothes", "socks", "white"),
-    ("girl", "clothes", "", "sneakers"),
-    ("girl", "body", "hair", "long"),
-    ("girl", "body", "hair", "black"),
-    ("girl", "body", "", "bare hands"),
-    ("guy", "looks", "", "full body shot"),
-    ("guy", "looks", "", "standing"),
-    ("guy", "clothes", "", "school uniform"),
-    ("guy", "clothes", "", "sneakers"),
-    ("guy", "body", "hair", "short"),
-    ("guy", "body", "hair", "black"),
-    ("guy", "body", "", "bare hands"),
+from caption_format import merge_same_tail, parse_line, phrases_of, render_caption
+
+# (段落, 入力)。1行は「キー: 語句, 語句」か、キーなしの文
+OWNER_SECTIONS = [
+    ("picture", "place: classroom\nobject: 1 girl + 1 guy\nvibes: size difference emphasized\n"
+                "view: from below, third POV"),
+    ("action", "girl spreads arms\nguy grabs girl's waist"),
+    ("girl", "looks: full body shot, standing\nclothes: school uniform, long socks, white socks, sneakers\n"
+             "body: long hair, black hair, bare hands"),
+    ("guy", "looks: full body shot, standing\nclothes: school uniform, sneakers\n"
+            "body: short hair, black hair, bare hands"),
 ]
 
 EXAMPLE_TEXT = """picture:
@@ -50,31 +36,50 @@ guy:
 
 
 def test_renders_owner_example():
-    assert render_caption(EXAMPLE_ITEMS) == EXAMPLE_TEXT
+    assert render_caption(OWNER_SECTIONS) == EXAMPLE_TEXT
 
 
-def test_empty_row_renders_empty_caption():
-    assert render_caption([]) == ""
+def test_empty_sections_are_left_out():
+    assert render_caption([("girl", ""), ("dog", "  \n ")]) == ""
+    assert render_caption([("girl", "looks: standing"), ("dog", "")]) == "girl:\n  - looks: standing"
 
 
-def test_small_kind_values_are_joined_before_its_name():
-    assert merge_values("hair", ["long", "black"]) == "long black hair"
+@pytest.mark.parametrize("line, expected", [
+    ("body: long hair,  black hair ,", ("body", ["long hair", "black hair"])),
+    ("body: long hair, long hair", ("body", ["long hair"])),
+    ("- looks: standing", ("looks", ["standing"])),
+    ("girl walks a dog", ("", ["girl walks a dog"])),
+    ("girl raises arms, guy raises arms", ("", ["girl raises arms", "guy raises arms"])),
+    ("red, blue: mixed", ("", ["red", "blue: mixed"])),
+])
+def test_parse_line(line, expected):
+    assert parse_line(line) == expected
 
 
-def test_single_value_under_small_kind():
-    assert render_caption([("girl", "body", "hair", "long")]) == "girl:\n  - body: long hair"
+@pytest.mark.parametrize("phrases, expected", [
+    (["long hair", "black hair", "bare hands"], ["long black hair", "bare hands"]),
+    (["school uniform", "long socks", "sneakers", "white socks"], ["school uniform", "long white socks", "sneakers"]),
+    (["black hair", "black long hair"], ["black long hair"]),
+    (["standing", "hair", "long hair"], ["standing", "hair", "long hair"]),
+])
+def test_merge_same_tail(phrases, expected):
+    assert merge_same_tail(phrases) == expected
 
 
-def test_values_without_mid_kind_are_lines_without_key():
-    items = [("action", "", "", "girl spreads arms"), ("action", "", "", "guy grabs girl's waist")]
-    assert render_caption(items) == "action:\n  - girl spreads arms\n  - guy grabs girl's waist"
+def test_lines_without_key_are_not_merged():
+    assert render_caption([("action", "girl raises arms, guy raises arms")]) == (
+        "action:\n  - girl raises arms, guy raises arms")
 
 
-def test_groups_keep_first_appearance_order():
-    items = [
-        ("girl", "body", "hair", "long"),
-        ("girl", "clothes", "", "school uniform"),
-        ("girl", "body", "", "bare hands"),
-        ("girl", "body", "hair", "black"),
-    ]
-    assert render_caption(items) == "girl:\n  - body: long black hair, bare hands\n  - clothes: school uniform"
+def test_key_without_phrases_and_blank_lines_are_left_out():
+    assert render_caption([("girl", "body:\n\nlooks: standing\n")]) == "girl:\n  - looks: standing"
+
+
+def test_crlf_input():
+    assert render_caption([("girl", "looks: standing\r\nbody: long hair")]) == (
+        "girl:\n  - looks: standing\n  - body: long hair")
+
+
+def test_phrases_of_lists_phrases_before_merging():
+    assert phrases_of("body: long hair, black hair\ngirl walks a dog") == [
+        ("body", "long hair"), ("body", "black hair"), ("", "girl walks a dog")]

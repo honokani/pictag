@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import app as pictag
-from helpers import caption_of, col, make_images
+from helpers import caption_of, make_images
 
 
 @pytest.fixture
@@ -14,8 +14,7 @@ def imgs(tmp_path):
 
 def saved_with_tag(api, imgs):
     api.load(imgs)
-    api.add("t")
-    api.set(api.row_index("a.png"), "t")
+    api.write(api.row_index("a.png"), "t")
     api.save()
 
 
@@ -90,7 +89,7 @@ def test_moved_dir_updates_registration(api, tool, base_dir, imgs, tmp_path):
     assert api.load(moved / "proj")["success"]
     assert tgt_path(base_dir) == str((moved / "proj").resolve())
     row = tool.df.set_index("サムネイル").loc["a.png"]
-    assert not row["is_dead"] and row[col("t")]
+    assert not row["is_dead"] and row["girl"] == "t"
 
 
 def test_open_project_rejects_path_traversal(api, base_dir, imgs):

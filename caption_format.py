@@ -1,13 +1,13 @@
-"""Krea2 用キャプションの整形（表の1行 → 構造化テキスト）
+"""段落の入力（文字列）→ Krea2 用キャプション
 
-1行のうち True の項目を (大kind, 中kind, 小kind, 値) で受け取り、辞書の順を保って次の形にする。
+段落（大kind）ごとの入力は複数行の文字列。各行は「キー: 語句, 語句」か、キーなしの文（カンマで区切ってもよい）。
 
     girl:
+      - looks: full body shot, standing
       - body: long black hair, bare hands
 
-- 大kind ごとに段落を分け、空行でつなぐ
-- 中kind が空の値は、キーなしで1行ずつ並べる
-- 小kind の値はスペースでつなぎ、後ろに小kind の名前を付ける（hair の long と black → long black hair）
+- 空の段落・語句の無い行は出さない。行頭の「-」と前後の空白は無視する
+- キー付きの行は、末尾の語が同じ語句をまとめる（long hair, black hair → long black hair）。キーなしの文はまとめない
 """
 
 
@@ -19,30 +19,57 @@ def group_in_order(pairs):
     return groups.items()
 
 
-def entry_key(name, value):
-    """名前があれば名前でまとめ、空なら値ごとに分けるキー"""
-    return (name, "") if name else ("", value)
+def split_phrases(text):
+    """カンマで区切り、空と重複を除く（順序は保つ）"""
+    return list(dict.fromkeys(p.strip() for p in text.split(',') if p.strip()))
 
 
-def merge_values(small, values):
-    return " ".join([*values, small])
+def parse_line(line):
+    """1行を (キー, [語句]) にする。キーなしの行はキーが空"""
+    line = line.strip().lstrip('-').strip()
+    key, sep, rest = line.partition(':')
+    if sep and key.strip() and ',' not in key:
+        return key.strip(), split_phrases(rest)
+    return '', split_phrases(line)
 
 
-def render_phrases(small_values):
-    """中kind の中身 [(小kind, 値)] を語句にする"""
-    groups = group_in_order((entry_key(small, value), value) for small, value in small_values)
-    return [merge_values(small, values) if small else values[0] for (small, _), values in groups]
+def parse_lines(text):
+    """入力を (キー, [語句]) の列にする（語句の無い行は除く）"""
+    return [(key, phrases) for key, phrases in map(parse_line, text.splitlines()) if phrases]
 
 
-def render_lines(mid_entries):
-    """大kind の中身 [(中kind, 小kind, 値)] を「  - ...」の行にする"""
-    groups = group_in_order((entry_key(mid, value), (small, value)) for mid, small, value in mid_entries)
-    return [
-        f"  - {mid}: {', '.join(render_phrases(entries))}" if mid else f"  - {entries[0][1]}"
-        for (mid, _), entries in groups
-    ]
+def tail_group(phrase):
+    """末尾の語でまとめるためのキー（1語の語句はまとめない）"""
+    words = phrase.split()
+    return ('tail', words[-1].lower()) if len(words) >= 2 else ('single', phrase)
 
 
-def render_caption(items):
-    sections = group_in_order((big, (mid, small, value)) for big, mid, small, value in items)
-    return "\n\n".join("\n".join([f"{big}:", *render_lines(entries)]) for big, entries in sections)
+def merge_group(phrases):
+    if len(phrases) == 1:
+        return phrases[0]
+    modifiers = dict.fromkeys(word for phrase in phrases for word in phrase.split()[:-1])
+    return ' '.join([*modifiers, phrases[0].split()[-1]])
+
+
+def merge_same_tail(phrases):
+    """末尾の語が同じ語句（2語以上）を、最初に出た位置へまとめる"""
+    return [merge_group(group) for _, group in group_in_order((tail_group(p), p) for p in phrases)]
+
+
+def render_line(key, phrases):
+    return f"{key}: {', '.join(merge_same_tail(phrases))}" if key else ', '.join(phrases)
+
+
+def render_section(name, text):
+    lines = [render_line(key, phrases) for key, phrases in parse_lines(text)]
+    return '\n'.join([f'{name}:', *(f'  - {line}' for line in lines)]) if lines else ''
+
+
+def render_caption(sections):
+    """[(段落, 入力)] をキャプションにする"""
+    return '\n\n'.join(filter(None, (render_section(name, text) for name, text in sections)))
+
+
+def phrases_of(text):
+    """入力の語句を (キー, 語句) で並べる（まとめる前の1つずつ）"""
+    return [(key, phrase) for key, phrases in parse_lines(text) for phrase in phrases]

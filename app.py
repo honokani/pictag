@@ -1,16 +1,16 @@
 import os
 import json
 import logging
+from collections import Counter
 from functools import reduce
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file
 import pandas as pd
 from PIL import Image
 
-from caption_format import render_caption
-from kinds import (LEVELS, check_name, column_key, dictionary_columns, empty_kinds, entries_of,
-                   in_table_scope, mid_columns, order_columns, parse_key, register_columns)
-from kinds import add_value as add_to_kinds, remove as remove_from_kinds, rename as rename_in_kinds
+from caption_format import parse_line, render_caption
+from tokens import TOKEN_LIMIT, TokenCounter
+from words import add_phrase, check_section_name, count_words, dictionary_entries, remove_phrase
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -21,15 +21,23 @@ app = Flask(__name__)
 # data_out / data_work の既定の置き場所（起動ディレクトリに依存させない）
 APP_DIR = Path(__file__).resolve().parent
 
-# 表の固定列。それ以外の列名は kinds.column_key の文字列（[大kind, 中kind, 小kind, 値] の JSON）
+# 表の固定列。それ以外の列は段落（大kind）で、値は入力の文字列
 FIXED_COLUMNS = ['サムネイル', 'is_dead']
-KINDS_FILE = 'kinds.json'  # data_work/ 直下。辞書（全プロジェクト共通）
-TABLE_FILE = 'table.json'  # data_out/<フォルダ名>/ 直下。画像 × 列のチェック
+TABLE_FILE = 'table.json'  # data_out/<フォルダ名>/ 直下。画像 × 段落の入力
 SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォルダは SDXL 版のプロジェクト
+DEFAULT_SECTIONS = ['picture', 'action', 'girl']  # どのプロジェクトにも段落が無いときの最初の段落
+TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
+
+# キャプションのトークン数（tokenizer.json は起動時に裏で取得する）
+token_counter = TokenCounter()
 
 def to_flag(value):
     """セル値を bool に揃える（欠損や bool 以外は False）"""
     return bool(value) if pd.api.types.is_bool(value) else False
+
+def to_text(value):
+    """セル値を文字列に揃える（欠損や文字列以外は空）"""
+    return value if isinstance(value, str) else ''
 
 def same_path(a, b):
     """同じディレクトリを指すか（Windows の大文字小文字・区切り文字の違いは無視）"""
@@ -41,40 +49,30 @@ def write_json(path, data):
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8', newline='\n')
     os.replace(tmp, path)
 
-def read_kinds(path):
-    """辞書を読む（無い・壊れているときは空の辞書）"""
-    if not path.exists():
-        return empty_kinds()
-    try:
-        kinds = json.loads(path.read_text(encoding='utf-8'))
-        if isinstance(kinds.get('bigs'), list) and isinstance(kinds.get('mids'), list):
-            return kinds
-        raise ValueError('bigs / mids がありません')
-    except (OSError, ValueError, AttributeError) as e:
-        logger.warning(f"Failed to load kinds: {e}")
-        return empty_kinds()
-
-def tag_keys(df):
+def section_names(df):
     return [c for c in df.columns if c not in FIXED_COLUMNS]
 
+def section_texts(df):
+    """表の全入力を (段落, 入力) で並べる"""
+    sections = section_names(df)
+    return [(s, to_text(r[s])) for r in df.to_dict('records') for s in sections]
+
 def table_to_json(df):
-    """表を JSON にする（列は [大kind, 中kind, 小kind, 値]、チェックは列の番号）"""
-    keys = tag_keys(df)
+    """表を JSON にする（空の入力は書かない）"""
+    sections = section_names(df)
     return {
-        'columns': [list(parse_key(k)) for k in keys],
+        'sections': sections,
         'rows': [{'image': r['サムネイル'], 'is_dead': to_flag(r['is_dead']),
-                  'checked': [i for i, k in enumerate(keys) if to_flag(r[k])]}
+                  'texts': {s: r[s] for s in sections if to_text(r[s])}}
                  for r in df.to_dict('records')],
     }
 
 def table_from_json(data):
-    keys = [column_key(tuple(c)) for c in data['columns']]
-
-    def row(r):
-        checked = set(r['checked'])
-        return {'サムネイル': r['image'], 'is_dead': bool(r['is_dead']), **{k: i in checked for i, k in enumerate(keys)}}
-
-    return pd.DataFrame([row(r) for r in data['rows']], columns=FIXED_COLUMNS + keys)
+    sections = [check_section_name(s) for s in data['sections']]
+    rows = [{'サムネイル': r['image'], 'is_dead': bool(r['is_dead']),
+             **{s: to_text(r['texts'].get(s, '')) for s in sections}}
+            for r in data['rows']]
+    return pd.DataFrame(rows, columns=FIXED_COLUMNS + sections)
 
 def read_table(path):
     """保存済みの表（無ければ空）。読めなければ例外にする（開いて保存すると上書きで消えるため）"""
@@ -82,8 +80,11 @@ def read_table(path):
         return pd.DataFrame()
     try:
         return table_from_json(json.loads(path.read_text(encoding='utf-8')))
-    except (OSError, ValueError, KeyError, TypeError) as e:
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
         raise ValueError(f'表を読めません: {path} ({e})') from e
+
+def normalize_newlines(text):
+    return text.replace('\r\n', '\n').replace('\r', '\n')
 
 class CaptionTool:
     def __init__(self, base_dir=None):
@@ -94,7 +95,7 @@ class CaptionTool:
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
-        self.kinds = empty_kinds()
+        self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数)
         self.last_error = ''  # 直近の失敗理由（API が画面へ返す）
 
     def fail(self, message):
@@ -168,9 +169,6 @@ class CaptionTool:
 
     def load_data(self):
         """既存データを読み込み"""
-        # 辞書（プロジェクト共通）
-        self.kinds = read_kinds(self.data_work_dir / KINDS_FILE)
-
         # tgt_path.txt作成
         tgt_path_file = self.data_out_target / "tgt_path.txt"
         if not tgt_path_file.exists():
@@ -184,11 +182,42 @@ class CaptionTool:
         # 画像ファイル存在チェックと dead/alive 状態管理
         self.manage_dead_alive_status()
 
-        # 表にあって辞書に無い列は辞書へ足し、列を辞書の順に並べる
-        self.kinds = register_columns(self.kinds, self.tag_items())
-        self.set_columns(self.tag_items())
-
         logger.info(f"DataFrame created: {len(self.df)} rows, {len(self.df.columns)} columns")
+
+    def saved_tables(self):
+        """保存済みの他プロジェクトの (段落, 語句の使用回数)。ファイルが変わらなければ読み直さない"""
+        if not self.data_out_dir.exists():
+            return []
+        results = []
+        for path in sorted(self.data_out_dir.glob(f'*/{TABLE_FILE}')):
+            if path.parent.name == self.dir_name:
+                continue  # 今のプロジェクトは画面の表（未保存の入力を含む）を使う
+            mtime = path.stat().st_mtime_ns
+            cached = self.saved_cache.get(path)
+            if cached is None or cached[0] != mtime:
+                try:
+                    df = read_table(path)
+                except ValueError as e:
+                    logger.warning(str(e))
+                    continue
+                cached = (mtime, section_names(df), count_words(section_texts(df)))
+                self.saved_cache[path] = cached
+            results.append(cached[1:])
+        return results
+
+    def known_sections(self):
+        """他プロジェクトにある段落（新規プロジェクトの初期の段落）。どこにも無ければ既定の段落"""
+        sections = list(dict.fromkeys(s for names, _ in self.saved_tables() for s in names))
+        return sections or list(DEFAULT_SECTIONS)
+
+    def usage(self):
+        """使用中の語句の使用回数（他プロジェクトの保存済みの表 + 今の表）"""
+        counter = Counter()
+        for _, words in self.saved_tables():
+            counter.update(words)
+        if 'サムネイル' in self.df.columns:
+            counter.update(count_words(section_texts(self.df)))
+        return counter
 
     def manage_dead_alive_status(self):
         """画像の生存状態を管理し、dead/alive状態を更新"""
@@ -224,33 +253,25 @@ class CaptionTool:
         # 全ての画像ファイル（既存DataFrame + 新規alive + サムネイル）
         all_image_files = existing_files | alive_image_files | thumbnail_files
 
-        # タグ列: 保存済みの表があればその列を保つ（「表から外す」した列を戻さない）
-        # 新規プロジェクトは辞書の全列から始める
-        if has_table:
-            additional_columns = tag_keys(self.df)
-        else:
-            additional_columns = [column_key(item) for item in dictionary_columns(self.kinds)]
-        additional_columns = list(dict.fromkeys(additional_columns))  # 重複除去（順序は保つ）
+        # 段落: 保存済みの表があればその段落を保つ（外した段落を戻さない）
+        # 新規プロジェクトは他プロジェクトにある段落から始める
+        sections = section_names(self.df) if has_table else self.known_sections()
 
         # DataFrameを再構築
-        columns = FIXED_COLUMNS + additional_columns
+        columns = FIXED_COLUMNS + sections
         data = []
 
         for img_file in sorted(all_image_files):
             is_alive = img_file in alive_image_files
             is_dead = not is_alive
 
-            row = {
-                'サムネイル': img_file,
-                'is_dead': is_dead
-            }
-
-            # 既存のタグ列の値を設定
+            # 既存の入力を引き継ぐ
             existing_row = existing_rows.get(img_file, {})
-            for col in additional_columns:
-                row[col] = to_flag(existing_row.get(col, False))
-
-            data.append(row)
+            data.append({
+                'サムネイル': img_file,
+                'is_dead': is_dead,
+                **{s: to_text(existing_row.get(s, '')) for s in sections},
+            })
 
             # サムネイル生成とキャプション移動処理
             if is_alive:
@@ -358,122 +379,79 @@ class CaptionTool:
             logger.error(f"Failed to create thumbnail for {image_path}: {e}")
             return image_path
 
-    def tag_items(self):
-        """表の列 (大kind, 中kind, 小kind, 値) を表の順に"""
-        return [parse_key(k) for k in tag_keys(self.df)]
-
-    def set_columns(self, items, default=False):
-        """表の列を items にする（辞書の順に並べ直す）。新しい列は default で埋める"""
-        if 'サムネイル' not in self.df.columns:
-            self.df = pd.DataFrame(columns=FIXED_COLUMNS)
-        keys = [column_key(item) for item in order_columns(self.kinds, list(dict.fromkeys(items)))]
-        missing = [k for k in keys if k not in self.df.columns]
-        if missing:
-            filler = pd.DataFrame(to_flag(default), index=self.df.index, columns=missing)
-            self.df = pd.concat([self.df, filler], axis=1)
-        self.df = self.df[FIXED_COLUMNS + keys]
-
-    def new_columns_for(self, big, mid, small, value):
-        """値の追加で表に足す列（表に既にある列は除く）
-
-        - 辞書に無い値（中kind の新しい語彙）は、表でその中kind を使っている大kind すべてに足す
-        - 値が空なら、中kind の値を全部その大kind に足す（既存の中kind を別の大kind に付ける）
-        """
-        table = self.tag_items()
-        if not value:
-            if not mid or not entries_of(self.kinds, mid):
-                raise ValueError('値を入力してください')
-            items = [it for it in mid_columns(self.kinds, big, mid) if not small or it[2] == small]
-        else:
-            item = (big, mid, small, value)
-            if item in table:
-                raise ValueError(f'「{value}」は表に既にあります')
-            is_new_word = mid and {'small': small, 'value': value} not in entries_of(self.kinds, mid)
-            sharing = dict.fromkeys(it[0] for it in table if it[1] == mid) if is_new_word else {}
-            items = [item, *((b, mid, small, value) for b in sharing if b != big)]
-        items = [it for it in items if it not in table]
-        if not items:
-            raise ValueError('追加する列がありません')
-        return items
-
-    def add_value(self, big, mid, small, value, default_value=False):
-        """値を辞書に足し、表に列を作る"""
+    def add_section(self, name):
+        """段落を表の末尾に足す（入力は空）"""
         self.last_error = ''
         if self.image_dir is None:
             return self.fail('先にプロジェクトを読み込んでください')
         try:
-            big = check_name(big)
-            mid, small, value = (check_name(name) if (name or '').strip() else '' for name in (mid, small, value))
-            if small and not mid:
-                raise ValueError('キーなしの行に小kind は付けられません')
-            items = self.new_columns_for(big, mid, small, value)
+            name = check_section_name(name)
         except ValueError as e:
             return self.fail(str(e))
-
-        self.kinds = reduce(add_to_kinds, items, self.kinds)
-        self.set_columns([*self.tag_items(), *items], default_value)
-        logger.info(f"Added columns: {items}")
+        if name in self.df.columns:
+            return self.fail(f'段落「{name}」は既にあります')
+        self.df[name] = ''
+        logger.info(f"Added section: {name}")
         return True
 
-    def rename(self, level, target, new_name):
-        """辞書と表の名前を変える（共有の語彙なら、それを使う大kind すべての列が変わる）"""
+    def rename_section(self, old, new):
+        """段落の名前を変える（入力はそのまま）"""
         self.last_error = ''
+        if old not in section_names(self.df):
+            return self.fail(f'段落「{old}」がありません')
         try:
-            kinds, relabel = rename_in_kinds(self.kinds, level, target, new_name)
+            new = check_section_name(new)
         except ValueError as e:
             return self.fail(str(e))
-
-        items = self.tag_items()
-        renamed = [relabel(it) for it in items]
-        if len(set(renamed)) != len(renamed):
-            return self.fail('改名すると表の列が重複します')
-        self.df = self.df.rename(columns={column_key(a): column_key(b) for a, b in zip(items, renamed) if a != b})
-        self.kinds = kinds
-        if 'サムネイル' in self.df.columns:
-            self.set_columns(self.tag_items())
-        logger.info(f"Renamed {level} of {target} -> '{new_name}'")
+        if new != old and new in self.df.columns:
+            return self.fail(f'段落「{new}」は既にあります')
+        self.df = self.df.rename(columns={old: new})
+        logger.info(f"Renamed section: {old} -> {new}")
         return True
 
-    def remove_from_table(self, level, target):
-        """表から外す（選んだ大kind の中だけ。辞書には残る）"""
+    def remove_section(self, name):
+        """段落を表から外す（その段落の入力も消える）"""
         self.last_error = ''
-        if level not in LEVELS:
-            return self.fail(f'不明な階層です: {level}')
-        items = self.tag_items()
-        keep = [it for it in items if not in_table_scope(level, target, it)]
-        if len(keep) == len(items):
-            return self.fail('外す列がありません')
-        self.set_columns(keep)
-        logger.info(f"Removed from table: {level} {target}")
+        if name not in section_names(self.df):
+            return self.fail(f'段落「{name}」がありません')
+        self.df = self.df.drop(columns=[name])
+        logger.info(f"Removed section: {name}")
         return True
 
-    def remove_from_dictionary(self, level, target):
-        """辞書から消し、表からも外す"""
+    def is_row(self, row_index):
+        return type(row_index) is int and row_index in self.df.index
+
+    def update_text(self, row_index, section, text):
+        """入力を書き換える（表にある行・段落に、文字列だけ書く）"""
+        if section not in section_names(self.df) or not self.is_row(row_index) or not isinstance(text, str):
+            return False
+        self.df.at[row_index, section] = normalize_newlines(text)
+        return True
+
+    def edit_rows(self, rows, section, text, edit):
+        """複数行の段落に、入力1行分（キー: 語句, 語句）の語句をまとめて足す・消す"""
         self.last_error = ''
-        try:
-            kinds, removed = remove_from_kinds(self.kinds, level, target)
-        except ValueError as e:
-            return self.fail(str(e))
-        self.kinds = kinds
-        if 'サムネイル' in self.df.columns:
-            self.set_columns([it for it in self.tag_items() if not removed(it)])
-        logger.info(f"Removed from dictionary: {level} {target}")
+        if section not in section_names(self.df):
+            return self.fail(f'段落「{section}」がありません')
+        if not isinstance(rows, list) or not rows or not all(self.is_row(r) for r in rows):
+            return self.fail('行の指定が正しくありません')
+        key, phrases = parse_line(text if isinstance(text, str) else '')
+        if not phrases:
+            return self.fail('語句を入力してください')
+        for r in dict.fromkeys(rows):
+            self.df.at[r, section] = reduce(lambda t, p: edit(t, key, p), phrases, to_text(self.df.at[r, section]))
         return True
 
-    def update_cell(self, row_index, column_name, value):
-        """セル更新（表にある行・タグ列に bool だけ書く。それ以外を .at に渡すと行や列が勝手に増える）"""
-        if column_name in FIXED_COLUMNS or column_name not in self.df.columns:
-            return False
+    def row_view(self, index, record, sections):
+        """画面に渡す1行（入力・キャプション・トークン数）"""
+        caption = render_caption([(s, to_text(record[s])) for s in sections])
+        return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
+                'texts': {s: to_text(record[s]) for s in sections},
+                'caption': caption, 'tokens': token_counter.count(caption)}
 
-        if type(row_index) is not int or row_index not in self.df.index or not isinstance(value, bool):
-            return False
-
-        self.df.at[row_index, column_name] = value
-        return True
-
-    def caption_of(self, record, keys, items):
-        """表の1行の Krea2 用キャプション"""
-        return render_caption([item for key, item in zip(keys, items) if to_flag(record[key])])
+    def row_views(self, indexes):
+        sections = section_names(self.df)
+        return [self.row_view(i, self.df.loc[i].to_dict(), sections) for i in dict.fromkeys(indexes)]
 
     def save_data(self):
         """データ保存"""
@@ -487,29 +465,24 @@ class CaptionTool:
             if original_len != len(self.df):
                 logger.warning(f"Removed {original_len - len(self.df)} duplicate rows before saving")
 
-        # 表と辞書（プロジェクト共通）
+        # 表
         write_json(self.data_out_target / TABLE_FILE, table_to_json(self.df))
-        write_json(self.data_work_dir / KINDS_FILE, self.kinds)
 
         # captionsディレクトリ作成
         self.captions_dir.mkdir(exist_ok=True)
 
         # txtファイル保存（改行は LF。削除済み画像は captions_dead へ）
-        keys = tag_keys(self.df)
-        items = [parse_key(k) for k in keys]
+        sections = section_names(self.df)
         for record in self.df.to_dict('records'):
             folder = self.captions_dead_dir if to_flag(record['is_dead']) else self.captions_dir
             txt_path = folder / f"{Path(record['サムネイル']).stem}.txt"
-            txt_path.write_text(self.caption_of(record, keys, items), encoding='utf-8', newline='\n')
+            caption = render_caption([(s, to_text(record[s])) for s in sections])
+            txt_path.write_text(caption, encoding='utf-8', newline='\n')
 
-        logger.info(f"Data saved: {len(self.df)} rows, {len(keys)} columns")
+        logger.info(f"Data saved: {len(self.df)} rows, {len(sections)} sections")
 
 # グローバルインスタンス
 caption_tool = CaptionTool()
-
-def target_of(data):
-    """API の {big, mid, small, value} を対象のタプルにする"""
-    return tuple((data.get(name) or '').strip() for name in LEVELS)
 
 @app.route('/')
 def index():
@@ -595,19 +568,17 @@ def load_directory():
 def get_table_data():
     """テーブルデータ取得
 
-    columns: 列ごとの {key, big, mid, small, value}。data: 行ごとの {index, サムネイル, is_dead, <key>: bool}
+    sections: 段落の並び。data: 行ごとの {index, サムネイル, is_dead, texts, caption, tokens}
     サムネイル列は画像ファイル名（URL はフロントで /thumbnail/<名前>, /image/<名前> を組み立てる）
+    tokens はトークナイザーの準備ができるまで null
     """
     df = caption_tool.df
     if 'サムネイル' not in df.columns:
-        return jsonify({'columns': [], 'data': []})
+        return jsonify({'sections': [], 'data': [], 'token_limit': TOKEN_LIMIT})
 
-    keys = tag_keys(df)
-    columns = [{'key': k, **dict(zip(LEVELS, parse_key(k)))} for k in keys]
-    data = [{'index': int(index), 'サムネイル': r['サムネイル'], 'is_dead': to_flag(r['is_dead']),
-             **{k: to_flag(r[k]) for k in keys}}
-            for index, r in zip(df.index, df.to_dict('records'))]
-    return jsonify({'columns': columns, 'data': data})
+    sections = section_names(df)
+    data = [caption_tool.row_view(index, record, sections) for index, record in zip(df.index, df.to_dict('records'))]
+    return jsonify({'sections': sections, 'data': data, 'token_limit': TOKEN_LIMIT})
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
@@ -635,47 +606,56 @@ def serve_image(filename):
 
 @app.route('/get_dictionary')
 def get_dictionary():
-    """辞書（大kind → 中kind → 小kind → 値）取得"""
-    return jsonify({'kinds': caption_tool.kinds})
+    """使用中の語句（全プロジェクトの入力から作る。使用回数の多い順）"""
+    return jsonify({'words': dictionary_entries(caption_tool.usage())})
 
-@app.route('/add_value', methods=['POST'])
-def add_value():
-    """値の追加API（{big, mid, small, value, default_value}。value が空なら中kind の値を全部付ける）"""
+@app.route('/update_text', methods=['POST'])
+def update_text():
+    """入力の更新（{row_index, section, text}）。更新後のキャプションとトークン数を返す"""
     data = request.get_json() or {}
-    success = caption_tool.add_value(data.get('big'), data.get('mid'), data.get('small'), data.get('value'),
-                                     data.get('default_value', False))
-    return jsonify({'success': success, 'error': caption_tool.last_error})
-
-@app.route('/update_cell', methods=['POST'])
-def update_cell():
-    """セル更新"""
-    data = request.get_json()
     row_index = data.get('row_index')
-    column_name = data.get('column_name')
-    value = data.get('value')
+    if not caption_tool.update_text(row_index, data.get('section'), data.get('text')):
+        return jsonify({'success': False})
+    row = caption_tool.row_views([row_index])[0]
+    return jsonify({'success': True, 'caption': row['caption'], 'tokens': row['tokens']})
 
-    success = caption_tool.update_cell(row_index, column_name, value)
-    return jsonify({'success': success})
-
-@app.route('/rename', methods=['POST'])
-def rename():
-    """改名API（{level, big, mid, small, value, new_name}）"""
+@app.route('/add_phrase', methods=['POST'])
+def add_phrase_to_rows():
+    """複数行への一括入力（{rows, section, text}。text は「キー: 語句, 語句」かキーなしの文）"""
     data = request.get_json() or {}
-    success = caption_tool.rename(data.get('level'), target_of(data), data.get('new_name'))
+    rows = data.get('rows')
+    if not caption_tool.edit_rows(rows, data.get('section'), data.get('text'), add_phrase):
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
+
+@app.route('/remove_phrase', methods=['POST'])
+def remove_phrase_from_rows():
+    """複数行から語句をまとめて消す（{rows, section, text}）"""
+    data = request.get_json() or {}
+    rows = data.get('rows')
+    if not caption_tool.edit_rows(rows, data.get('section'), data.get('text'), remove_phrase):
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
+
+@app.route('/add_section', methods=['POST'])
+def add_section():
+    """段落の追加API（{name}）"""
+    data = request.get_json() or {}
+    success = caption_tool.add_section(data.get('name'))
     return jsonify({'success': success, 'message': caption_tool.last_error})
 
-@app.route('/remove_from_table', methods=['POST'])
-def remove_from_table():
-    """表から外すAPI（{level, big, mid, small, value}）"""
+@app.route('/rename_section', methods=['POST'])
+def rename_section():
+    """段落の改名API（{old, new}）"""
     data = request.get_json() or {}
-    success = caption_tool.remove_from_table(data.get('level'), target_of(data))
+    success = caption_tool.rename_section(data.get('old'), data.get('new'))
     return jsonify({'success': success, 'message': caption_tool.last_error})
 
-@app.route('/remove_from_dictionary', methods=['POST'])
-def remove_from_dictionary():
-    """辞書から削除API（{level, big, mid, small, value}）"""
+@app.route('/remove_section', methods=['POST'])
+def remove_section():
+    """段落を表から外すAPI（{name}）"""
     data = request.get_json() or {}
-    success = caption_tool.remove_from_dictionary(data.get('level'), target_of(data))
+    success = caption_tool.remove_section(data.get('name'))
     return jsonify({'success': success, 'message': caption_tool.last_error})
 
 @app.route('/remove_all_dead', methods=['POST'])
@@ -735,4 +715,8 @@ def server_options(env):
     return {'host': env.get('PICTAG_HOST', '127.0.0.1'), 'port': 5000, 'debug': True}
 
 if __name__ == '__main__':
-    app.run(**server_options(os.environ))
+    options = server_options(os.environ)
+    # トークナイザーは裏で取得する。debug のリローダーでは親プロセスで取得しない（子プロセスと二重になるため）
+    if not options['debug'] or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        token_counter.start_once(caption_tool.data_work_dir / TOKENIZER_FILE)
+    app.run(**options)

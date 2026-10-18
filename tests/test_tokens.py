@@ -3,10 +3,8 @@ import os
 from pathlib import Path
 
 import pytest
-from tokenizers import Tokenizer
-from tokenizers.models import WordLevel
-from tokenizers.pre_tokenizers import Whitespace
 
+from helpers import word_tokenizer
 from tokens import TOKEN_LIMIT, TokenCounter, ensure_file
 
 # 依頼者の例（原文ママ）。実物のトークナイザーで 132 トークン
@@ -33,13 +31,6 @@ OWNER_EXAMPLE = "\n".join([
     '  - body: black/short hair, bare hands',
     '',
 ])
-
-
-def word_tokenizer():
-    """空白と記号で区切るだけの小さなトークナイザー（テスト用）"""
-    tokenizer = Tokenizer(WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
-    tokenizer.pre_tokenizer = Whitespace()
-    return tokenizer
 
 
 def test_limit_is_caption_part_of_512_tokens():
@@ -95,6 +86,22 @@ def test_background_load_counts_after_fetch(tmp_path):
     counter = TokenCounter()
     counter.load_in_background(tmp_path / "data_work" / "tokenizer.json", "http://example.invalid",
                                fetch=lambda url, p: p.write_bytes(source.read_bytes())).join(timeout=10)
+    assert counter.count("long hair") == 2
+
+
+def test_start_once_fetches_only_once(tmp_path):
+    source = tmp_path / "source.json"
+    word_tokenizer().save(str(source))
+    calls = []
+
+    def fetch(url, path):
+        calls.append(url)
+        path.write_bytes(source.read_bytes())
+
+    counter = TokenCounter()
+    counter.start_once(tmp_path / "tokenizer.json", "http://example.invalid", fetch=fetch).join(timeout=10)
+    assert counter.start_once(tmp_path / "tokenizer.json", "http://example.invalid", fetch=fetch) is None
+    assert calls == ["http://example.invalid"]
     assert counter.count("long hair") == 2
 
 

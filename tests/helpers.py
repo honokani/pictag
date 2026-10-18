@@ -4,41 +4,28 @@ import shutil
 from pathlib import Path
 
 from PIL import Image
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
 
-from kinds import column_key
+from caption_format import render_caption
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
-FIXED_COLUMNS = ("サムネイル", "is_dead")
 
-# 値だけ指定したときの大kind・中kind
-BIG, MID = "g", "m"
-
-
-def item(value, big=BIG, mid=MID, small=""):
-    """列 (大kind, 中kind, 小kind, 値)"""
-    return (big, mid, small, value)
+# 段落を指定しないときの段落（新規プロジェクトの既定の段落にある）
+SECTION = "girl"
 
 
-def col(value, **names):
-    """列の文字列キー（表の列名）"""
-    return column_key(item(value, **names))
+def caption_of(text, section=SECTION):
+    """1つの段落だけに入力したときのキャプション"""
+    return render_caption([(section, text)])
 
 
-def to_key(column):
-    """列のタプル・値の名前（既定の大kind・中kind）・固定列名を、表の列名にする"""
-    if isinstance(column, tuple):
-        return column_key(column)
-    return column if column in FIXED_COLUMNS else col(column)
-
-
-def target(it):
-    """API に渡す対象 {big, mid, small, value}"""
-    return dict(zip(("big", "mid", "small", "value"), it))
-
-
-def caption_of(*values):
-    """既定の大kind・中kind の値だけにチェックしたときのキャプション"""
-    return f"{BIG}:\n  - {MID}: {', '.join(values)}"
+def word_tokenizer():
+    """空白と記号で区切るだけの小さなトークナイザー（テスト用）"""
+    tokenizer = Tokenizer(WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    return tokenizer
 
 
 def make_images(directory, specs):
@@ -85,20 +72,34 @@ class Api:
     def open_project(self, name):
         return self.post("/load_existing_project", {"project_name": name})
 
-    def add(self, value, big=BIG, mid=MID, small="", default=False):
-        return self.post("/add_value", {"big": big, "mid": mid, "small": small, "value": value, "default_value": default})
+    def write(self, row_index, text, section=SECTION):
+        return self.post("/update_text", {"row_index": row_index, "section": section, "text": text})
 
-    def set(self, row_index, column, value=True):
-        return self.post("/update_cell", {"row_index": row_index, "column_name": to_key(column), "value": value})
+    def add_section(self, name):
+        return self.post("/add_section", {"name": name})
+
+    def bulk_add(self, rows, text, section=SECTION):
+        return self.post("/add_phrase", {"rows": rows, "section": section, "text": text})
+
+    def bulk_remove(self, rows, text, section=SECTION):
+        return self.post("/remove_phrase", {"rows": rows, "section": section, "text": text})
 
     def save(self):
         return self.post("/save_data")
 
-    def rows(self):
+    def table(self):
         r = self.c.get("/get_table_data")
         assert r.status_code == 200, r.data
-        return r.get_json()["data"]
+        return r.get_json()
+
+    def rows(self):
+        return self.table()["data"]
 
     def row_index(self, image_name):
-        """画像名から行の index を引く（フロントが update_cell に送る値）"""
+        """画像名から行の index を引く（フロントが update_text に送る値）"""
         return next(r["index"] for r in self.rows() if r["サムネイル"] == image_name)
+
+    def words(self):
+        r = self.c.get("/get_dictionary")
+        assert r.status_code == 200, r.data
+        return {(w["section"], w["key"], w["phrase"]): w["count"] for w in r.get_json()["words"]}
