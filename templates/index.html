@@ -39,6 +39,19 @@
         </form>
     </section>
 
+    <section id="markTools" class="bar tools" hidden>
+        <span class="group">絞り込み
+            <select id="filterOne" aria-label="排他のマークで絞り込み"></select>
+            <select id="filterMany" aria-label="複数のマークで絞り込み"></select>
+        </span>
+        <button id="selectVisibleButton" type="button" title="Ctrl+A">表示中をすべて選択</button>
+        <span class="key-help">選択行に: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■</span>
+        <span class="group clear-marks">
+            <button type="button" class="hold" data-column="mark" title="1秒長押しで、全行の A〜D を消す">A〜D をクリア</button>
+            <button type="button" class="hold" data-column="marks" title="1秒長押しで、全行の ★●▲■ を消す">★●▲■ をクリア</button>
+        </span>
+    </section>
+
     <main>
         <table id="grid">
             <thead><tr id="gridHead"></tr></thead>

@@ -16,7 +16,7 @@ def imgs(tmp_path):
 
 
 def sections(tool):
-    return [c for c in tool.df.columns if c not in ("サムネイル", "is_dead")]
+    return pictag.section_names(tool.df)
 
 
 def texts(tool, section="girl"):

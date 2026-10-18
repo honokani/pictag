@@ -10,7 +10,7 @@ from functools import reduce
 
 from caption_format import parse_line, phrases_of
 
-RESERVED_SECTIONS = {'サムネイル', 'is_dead'}  # 表の固定列と同じ名前は使えない
+RESERVED_SECTIONS = {'サムネイル', 'is_dead', 'mark', 'marks'}  # 表の固定列と同じ名前は使えない
 
 # 確定タグ: 段落ごとのキーの並び（空の欄にも出す）。subject は人物などの段落（girl / guy / dog …）すべてに使う
 DEFAULT_TEMPLATES = {'picture': ['place', 'characters', 'vibes', 'view', 'extra'], 'subject': ['looks', 'clothes', 'body']}
