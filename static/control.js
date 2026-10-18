@@ -12,14 +12,17 @@ function showStatus(message, isError = false) {
     }, 3000);
 }
 
-function showImageModal(imagePath, imageName) {
-    // 元画像パスを構築（サムネイルパスから元画像パスを推定）
-    let originalPath = imagePath;
-    if (imagePath.includes('/thumbnail/t_')) {
-        originalPath = imagePath.replace('/thumbnail/t_', '/thumbnail/');
-    }
-    
-    document.getElementById('modalImage').src = originalPath;
+// 画像URL（サムネイル列の値は画像ファイル名）
+function thumbnailUrl(imageName) {
+    return `/thumbnail/${encodeURIComponent(imageName)}`;
+}
+
+function imageUrl(imageName) {
+    return `/image/${encodeURIComponent(imageName)}`;
+}
+
+function showImageModal(imageName) {
+    document.getElementById('modalImage').src = imageUrl(imageName);
     document.getElementById('imageModalTitle').textContent = imageName;
     
     const modal = new bootstrap.Modal(document.getElementById('imageModal'));
@@ -747,16 +750,15 @@ async function renderGroupedTable(columns, data) {
                     
                 } else if (col === 'サムネイル') {
                     const img = document.createElement('img');
-                    img.src = row[col];
+                    img.src = thumbnailUrl(row[col]);
                     img.className = 'thumbnail-cell';
                     img.alt = 'thumbnail';
-                    
+
                     img.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        const imageName = data[index]['サムネイル'];
-                        showImageModal(row[col], imageName);
+                        showImageModal(row[col]);
                     });
-                    
+
                     td.appendChild(img);
                     td.style.borderRight = '2px solid #dee2e6';
                     
@@ -882,14 +884,13 @@ function renderSimpleTable(columns, data) {
             
             if (col === 'サムネイル') {
                 const img = document.createElement('img');
-                img.src = row[col];
+                img.src = thumbnailUrl(row[col]);
                 img.className = 'thumbnail-cell';
                 img.alt = 'thumbnail';
-                
+
                 img.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const imageName = data[index]['サムネイル'];
-                    showImageModal(row[col], imageName);
+                    showImageModal(row[col]);
                 });
                 
                 td.appendChild(img);

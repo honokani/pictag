@@ -13,27 +13,29 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 class CaptionTool:
-    def __init__(self):
+    def __init__(self, base_dir=None):
+        # data_out / data_work の置き場所
+        self.base_dir = Path(base_dir) if base_dir is not None else Path(".")
+        self.data_out_dir = self.base_dir / "data_out"
+        self.data_work_dir = self.base_dir / "data_work"
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
         self.caption_info_df = pd.DataFrame(columns=['caption', 'kind'])
-        
+
     def setup_directories(self, image_dir):
         """ディレクトリ構造をセットアップ"""
         self.image_dir = Path(image_dir)
         self.dir_name = self.image_dir.name
-        
+
         # data_out構造作成
-        self.data_out_dir = Path("data_out")
         self.data_out_target = self.data_out_dir / self.dir_name
-        self.data_out_dir.mkdir(exist_ok=True)
+        self.data_out_dir.mkdir(parents=True, exist_ok=True)
         self.data_out_target.mkdir(exist_ok=True)
-        
+
         # data_work構造作成
-        self.data_work_dir = Path("data_work")
         self.data_work_target = self.data_work_dir / self.dir_name
-        self.data_work_dir.mkdir(exist_ok=True)
+        self.data_work_dir.mkdir(parents=True, exist_ok=True)
         self.data_work_target.mkdir(exist_ok=True)
         
         # captions と captions_dead ディレクトリ作成
@@ -96,8 +98,8 @@ class CaptionTool:
         
         # 元画像ファイル一覧取得
         if self.image_dir.exists():
-            alive_image_files = {f.name for f in self.image_dir.iterdir() 
-                                if f.suffix.lower() in image_extensions}
+            alive_image_files = {f.name for f in self.image_dir.iterdir()
+                                if f.is_file() and f.suffix.lower() in image_extensions}
         else:
             alive_image_files = set()
         
@@ -150,8 +152,8 @@ class CaptionTool:
             
             # サムネイル生成とキャプション移動処理
             if is_alive:
-                if img_file not in thumbnail_files:
-                    self.create_thumbnail(self.image_dir / img_file)
+                # 生成済みでも元画像が更新されていれば作り直す
+                self.create_thumbnail(self.image_dir / img_file)
                 
                 # deadからの復帰処理
                 stem = Path(img_file).stem
@@ -225,27 +227,48 @@ class CaptionTool:
                     self.caption_info_df = pd.concat([self.caption_info_df, new_entry], ignore_index=True)
                 logger.info(f"Added existing column '{col}' as undef kind to caption info")
     
+    def thumbnail_file(self, image_name):
+        """サムネイルのパス（生成済みかは問わない）"""
+        return self.data_work_target / f"t_{image_name}"
+
+    def is_known_image(self, image_name):
+        """表に載っている画像か（画像配信はこれに限る）"""
+        if self.image_dir is None or 'サムネイル' not in self.df.columns:
+            return False
+        return bool((self.df['サムネイル'] == image_name).any())
+
     def create_thumbnail(self, image_path):
-        """サムネイル作成"""
-        thumb_path = self.data_work_target / f"t_{image_path.name}"
-        
-        if thumb_path.exists():
+        """サムネイル作成。表示に使うパスを返す
+
+        サムネイルの mtime は元画像の mtime に揃えておき、一致しなければ（元画像を差し替えたら）作り直す
+        """
+        thumb_path = self.thumbnail_file(image_path.name)
+
+        if not image_path.exists():
+            # 元画像が無い（削除済み）: 残っているサムネイルを使う
+            return thumb_path if thumb_path.exists() else image_path
+
+        source_stat = image_path.stat()
+        if thumb_path.exists() and thumb_path.stat().st_mtime_ns == source_stat.st_mtime_ns:
             return thumb_path
-        
+
         try:
             with Image.open(image_path) as img:
                 # サイズチェック
                 width, height = img.size
                 if max(width, height) <= 600:
-                    # リサイズ不要、元ファイルパス返す
+                    # リサイズ不要、元ファイルパス返す（小さく差し替えられた画像の古いサムネイルは消す）
+                    if thumb_path.exists():
+                        thumb_path.unlink()
                     return image_path
-                
+
                 # リサイズ実行
                 img.thumbnail((600, 600), Image.Resampling.LANCZOS)
                 img.save(thumb_path, quality=85, optimize=True)
+                os.utime(thumb_path, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns))
                 logger.info(f"Created thumbnail: {thumb_path}")
                 return thumb_path
-                
+
         except Exception as e:
             logger.error(f"Failed to create thumbnail for {image_path}: {e}")
             return image_path
@@ -466,8 +489,8 @@ def index():
 @app.route('/get_existing_projects')
 def get_existing_projects():
     """既存プロジェクト一覧取得"""
-    data_out_dir = Path("data_out")
-    
+    data_out_dir = caption_tool.data_out_dir
+
     if not data_out_dir.exists():
         return jsonify({'projects': []})
     
@@ -500,7 +523,7 @@ def load_existing_project():
     if not project_name:
         return jsonify({'success': False, 'message': 'Project name required'})
     
-    data_out_dir = Path("data_out") / project_name
+    data_out_dir = caption_tool.data_out_dir / project_name
     tgt_path_file = data_out_dir / "tgt_path.txt"
     
     if not tgt_path_file.exists():
@@ -541,16 +564,12 @@ def get_table_data():
     if caption_tool.df.empty:
         return jsonify({'columns': [], 'data': []})
     
+    # サムネイル列は画像ファイル名（URL はフロントで /thumbnail/<名前>, /image/<名前> を組み立てる）
     table_data = []
     for index, row in caption_tool.df.iterrows():
         row_data = {'index': index}
         for col in caption_tool.df.columns:
-            if col == 'サムネイル':
-                image_path = caption_tool.image_dir / row[col]
-                thumb_path = caption_tool.create_thumbnail(image_path)
-                row_data[col] = f"/thumbnail/{thumb_path.name}"
-            else:
-                row_data[col] = row[col]
+            row_data[col] = row[col]
         table_data.append(row_data)
     
     return jsonify({
@@ -560,17 +579,26 @@ def get_table_data():
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
-    """サムネイル画像配信"""
-    if filename.startswith('t_'):
-        thumb_path = caption_tool.data_work_target / filename
-        if thumb_path.exists():
-            return send_file(thumb_path)
-    
-    original_name = filename.replace('t_', '') if filename.startswith('t_') else filename
-    original_path = caption_tool.image_dir / original_name
-    if original_path.exists():
-        return send_file(original_path)
-    
+    """サムネイル画像配信（filename は元画像名。サムネイルが無い小さい画像は元画像）"""
+    if not caption_tool.is_known_image(filename):
+        return "Image not found", 404
+
+    for path in [caption_tool.thumbnail_file(filename), caption_tool.image_dir / filename]:
+        if path.exists():
+            return send_file(path.resolve())
+
+    return "Image not found", 404
+
+@app.route('/image/<filename>')
+def serve_image(filename):
+    """元画像配信（元画像が無い削除済み画像はサムネイル）"""
+    if not caption_tool.is_known_image(filename):
+        return "Image not found", 404
+
+    for path in [caption_tool.image_dir / filename, caption_tool.thumbnail_file(filename)]:
+        if path.exists():
+            return send_file(path.resolve())
+
     return "Image not found", 404
 
 @app.route('/get_kinds')
