@@ -29,6 +29,8 @@ FIXED_COLUMNS = ['サムネイル', 'is_dead']
 TABLE_FILE = 'table.json'  # data_out/<フォルダ名>/ 直下。画像 × 段落の入力
 SHARED_FILE = 'shared.json'  # data_work/ 直下。共用辞書（freeze した語句・単語と確定タグ）
 SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォルダは SDXL 版のプロジェクト
+CAPTION_EXT = '.caption'  # 書き出すキャプションの拡張子（captions/<画像名>.caption）
+HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡張子のファイルは hint（読むだけ）
 FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
 DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl']  # 新規プロジェクトの段落（guy や dog は必要なときに足す）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
@@ -95,6 +97,11 @@ def read_table(path):
 def normalize_newlines(text):
     return text.replace('\r\n', '\n').replace('\r', '\n')
 
+def read_hints(image_dir, image_names):
+    """画像と同じ名前の .txt（画像フォルダにあるもの）を hint として読む。{画像名: 中身}"""
+    paths = {name: image_dir / f"{Path(name).stem}{HINT_EXT}" for name in image_names}
+    return {name: path.read_text(encoding='utf-8', errors='replace') for name, path in paths.items() if path.is_file()}
+
 def read_shared(path):
     """共用辞書を読む（無い・壊れているときは既定の確定タグだけ）"""
     shared = empty_shared()
@@ -118,6 +125,7 @@ class CaptionTool:
         self.dir_name = None
         self.df = pd.DataFrame()
         self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
+        self.hints = {}  # 画像名 → hint（画像フォルダの同じ名前の .txt）
         self.shared = read_shared(self.data_work_dir / SHARED_FILE)
         self.last_error = ''  # 直近の失敗理由（API が画面へ返す）
 
@@ -204,6 +212,9 @@ class CaptionTool:
 
         # 画像ファイル存在チェックと dead/alive 状態管理
         self.manage_dead_alive_status()
+
+        # hint（読むだけ。保存やキャプションには使わない）
+        self.hints = read_hints(self.image_dir, self.df['サムネイル'].tolist())
 
         logger.info(f"DataFrame created: {len(self.df)} rows, {len(self.df.columns)} columns")
 
@@ -313,14 +324,14 @@ class CaptionTool:
             if is_alive:
                 # deadからの復帰処理
                 stem = Path(img_file).stem
-                dead_caption_path = self.captions_dead_dir / f"{stem}.txt"
+                dead_caption_path = self.captions_dead_dir / f"{stem}{CAPTION_EXT}"
                 if dead_caption_path.exists():
                     self.move_caption_from_dead_to_alive(img_file)
 
             else:
                 # aliveからdeadへの移動処理
                 stem = Path(img_file).stem
-                alive_caption_path = self.captions_dir / f"{stem}.txt"
+                alive_caption_path = self.captions_dir / f"{stem}{CAPTION_EXT}"
                 if alive_caption_path.exists():
                     self.move_caption_from_alive_to_dead(img_file)
 
@@ -338,8 +349,8 @@ class CaptionTool:
         """キャプションファイルをdeadからaliveに移動"""
         try:
             stem = Path(image_name).stem
-            dead_caption_path = self.captions_dead_dir / f"{stem}.txt"
-            alive_caption_path = self.captions_dir / f"{stem}.txt"
+            dead_caption_path = self.captions_dead_dir / f"{stem}{CAPTION_EXT}"
+            alive_caption_path = self.captions_dir / f"{stem}{CAPTION_EXT}"
 
             if dead_caption_path.exists():
                 # ファイル移動（上書き）
@@ -354,8 +365,8 @@ class CaptionTool:
         """キャプションファイルをaliveからdeadに移動"""
         try:
             stem = Path(image_name).stem
-            alive_caption_path = self.captions_dir / f"{stem}.txt"
-            dead_caption_path = self.captions_dead_dir / f"{stem}.txt"
+            alive_caption_path = self.captions_dir / f"{stem}{CAPTION_EXT}"
+            dead_caption_path = self.captions_dead_dir / f"{stem}{CAPTION_EXT}"
 
             if alive_caption_path.exists():
                 # ファイル移動（上書き）
@@ -518,6 +529,7 @@ class CaptionTool:
         caption = render_caption([(s, texts[s]) for s in sections])
         return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
                 'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
+                'hint': self.hints.get(record['サムネイル'], ''),
                 'caption': caption, 'tokens': token_counter.count(caption)}
 
     def row_views(self, indexes):
@@ -546,9 +558,9 @@ class CaptionTool:
         sections = section_names(self.df)
         for record in self.df.to_dict('records'):
             folder = self.captions_dead_dir if to_flag(record['is_dead']) else self.captions_dir
-            txt_path = folder / f"{Path(record['サムネイル']).stem}.txt"
+            caption_path = folder / f"{Path(record['サムネイル']).stem}{CAPTION_EXT}"
             texts, _ = self.row_texts(record, sections)
-            txt_path.write_text(render_caption([(s, texts[s]) for s in sections]), encoding='utf-8', newline='\n')
+            caption_path.write_text(render_caption([(s, texts[s]) for s in sections]), encoding='utf-8', newline='\n')
 
         logger.info(f"Data saved: {len(self.df)} rows, {len(sections)} sections")
 

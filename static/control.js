@@ -14,6 +14,7 @@ const state = {
     templates: {},        // 確定タグ {picture: [...], subject: [...]}
     fixedSections: [],    // 固定の段落（外せない・改名できない）
     autoKeys: [],         // 自動で作るキー（characters。入力欄には出さない）
+    hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count}]
     words: [],            // キーなしの文の単語 [{section, word, count}]
@@ -337,8 +338,12 @@ function headHtml() {
             ? `<th data-section="${escapeHtml(s)}"><span class="section-name fixed">${escapeHtml(s)}</span></th>`
             : `<th data-section="${escapeHtml(s)}"><span class="section-name" title="ダブルクリックで改名">${escapeHtml(s)}</span>` +
               `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${escapeHtml(s)} を外す">×</button></th>`)),
+        ...(state.hasHints ? ['<th class="hint-head" title="画像と同じ名前の .txt（読むだけ。保存には影響しない）">hint</th>'] : []),
     ].join('');
 }
+
+// hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）
+const hintHtml = row => `<td class="hint"><textarea readonly rows="5" aria-label="hint">${escapeHtml(row.hint || '')}</textarea></td>`;
 
 function metaHtml(row) {
     const known = row.tokens !== null && row.tokens !== undefined;
@@ -384,7 +389,7 @@ function rowHtml(row) {
     const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row)}</td>`).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt=""></td>` +
-        `<td class="meta">${metaHtml(row)}</td>${cells}</tr>`;
+        `<td class="meta">${metaHtml(row)}</td>${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
 }
 
 const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}"]`);
@@ -414,6 +419,7 @@ async function refreshTable() {
     state.sections = body.sections;
     state.rows = body.data;
     state.byIndex = new Map(body.data.map(r => [r.index, r]));
+    state.hasHints = body.data.some(r => r.hint);
     state.tokenLimit = body.token_limit;
     state.templates = body.templates;
     state.fixedSections = body.fixed_sections;
@@ -735,8 +741,14 @@ function wire() {
         } else if (td.classList.contains('meta')) {
             selectRow(index, event);
         } else if (td.classList.contains('cell') && !td.querySelector('textarea')) {
+            // ボタンのある欄（picture）は文字の部分だけで編集を始める（ボタンの間や余白の誤クリックで開かない）
+            if (td.querySelector('.choices') && !event.target.closest('.text')) return;
             startEdit(td);
         }
+    });
+    // hint はフォーカスしたら全体を選ぶ（すぐコピーできるように）
+    $('gridBody').addEventListener('focusin', event => {
+        if (event.target.closest('td.hint')) event.target.select();
     });
     $('gridHead').addEventListener('click', event => {
         const button = event.target.closest('.remove-section');

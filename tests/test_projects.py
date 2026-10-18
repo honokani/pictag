@@ -53,7 +53,7 @@ def test_open_project_with_missing_image_dir_keeps_captions(api, tool, imgs, bas
 
     res = api.open_project("proj")
     assert res["success"] is False
-    assert (base_dir / "data_out" / "proj" / "captions" / "a.txt").read_text(encoding="utf-8") == caption_of("t")
+    assert (base_dir / "data_out" / "proj" / "captions" / "a.caption").read_text(encoding="utf-8") == caption_of("t")
     assert list((base_dir / "data_out" / "proj" / "captions_dead").iterdir()) == []
 
 
@@ -77,7 +77,7 @@ def test_same_name_other_dir_is_rejected_while_registered_dir_exists(api, tool, 
     assert res["success"] is False
     assert str(imgs.resolve()) in res["message"]
     assert tgt_path(base_dir) == str(imgs.resolve())
-    assert (base_dir / "data_out" / "proj" / "captions" / "a.txt").read_text(encoding="utf-8") == caption_of("t")
+    assert (base_dir / "data_out" / "proj" / "captions" / "a.caption").read_text(encoding="utf-8") == caption_of("t")
 
 
 def test_moved_dir_updates_registration(api, tool, base_dir, imgs, tmp_path):

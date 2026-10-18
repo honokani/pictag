@@ -88,7 +88,7 @@ def test_load_shows_rows_sections_and_template_keys(page, imgs):
     expect(page.locator('#projectSelect option[value="proj"]')).to_be_attached()
 
     # 確定タグのキーは空の欄にも薄く出る（action は確定タグなし）
-    expect(cell(page, "a.png", "picture").locator(".ln.empty")).to_have_text(["place:", "characters:", "vibes:", "view:"])
+    expect(cell(page, "a.png", "picture").locator(".ln.empty")).to_have_text(["place:", "characters:", "vibes:", "view:", "extra:"])
     expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
     expect(cell(page, "a.png", "action").locator(".ln")).to_have_count(0)
 
@@ -129,7 +129,7 @@ def test_edit_updates_tokens_and_preview_then_saves(page, imgs, tool):
     page.click("#saveButton")
     expect(page.locator("#status")).to_have_text("保存しました")
     expect(page.locator("#saveButton")).to_have_text("保存")
-    assert (tool.captions_dir / "a.txt").read_text(encoding="utf-8") == caption
+    assert (tool.captions_dir / "a.caption").read_text(encoding="utf-8") == caption
 
 
 def test_ctrl_s_saves(page, imgs, tool):
@@ -137,7 +137,7 @@ def test_ctrl_s_saves(page, imgs, tool):
     write(page, "b.png", "looks: standing")
     page.keyboard.press("Control+s")
     expect(page.locator("#status")).to_have_text("保存しました")
-    assert (tool.captions_dir / "b.txt").read_text(encoding="utf-8") == caption_of("looks: standing")
+    assert (tool.captions_dir / "b.caption").read_text(encoding="utf-8") == caption_of("looks: standing")
 
 
 def test_suggestion_completes_phrase_of_the_line_key(page, imgs):
@@ -398,3 +398,33 @@ def test_adding_sections_quickly_keeps_the_next_name(page, imgs):
     page.click("#sectionForm button")
     expect(page.locator("#gridHead .section-name")).to_have_count(5)
     assert section_names(page) == ["picture", "action", "girl", "dog", "cat"]
+
+
+def test_clicking_beside_view_buttons_does_not_open_editor(page, imgs):
+    load_dir(page, imgs)
+    pov_row = cell(page, "a.png", "picture").locator(".choice-row").last
+    box = pov_row.bounding_box()
+    pov_row.click(position={"x": box["width"] - 4, "y": box["height"] / 2})  # third-person の右の余白
+    expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(0)
+
+    cell(page, "a.png", "picture").locator(".text").click()
+    expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(1)
+
+
+def test_hint_column_shows_same_name_txt_read_only(page, imgs, tool):
+    (imgs / "a.txt").write_text("1girl, solo, smile", encoding="utf-8")
+    load_dir(page, imgs)
+    expect(page.locator("#gridHead th.hint-head")).to_have_text("hint")
+    hint = row(page, "a.png").locator("td.hint textarea")
+    expect(hint).to_have_value("1girl, solo, smile")
+    expect(hint).to_have_attribute("readonly", "")
+    hint.click()
+    assert hint.evaluate("el => [el.selectionStart, el.selectionEnd]") == [0, len("1girl, solo, smile")]
+    expect(row(page, "a.png").locator("td.cell textarea")).to_have_count(0)  # 入力欄は開かない
+    expect(row(page, "b.png").locator("td.hint textarea")).to_have_value("")
+
+
+def test_no_hint_column_without_txt_files(page, imgs):
+    load_dir(page, imgs)
+    expect(page.locator("#gridHead th.hint-head")).to_have_count(0)
+    expect(page.locator("td.hint")).to_have_count(0)

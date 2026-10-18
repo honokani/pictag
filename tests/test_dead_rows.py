@@ -26,8 +26,8 @@ def test_deleted_image_becomes_dead_and_caption_moves(api, tool, imgs):
 
     api.load(imgs)
     assert tool.df.set_index("サムネイル").loc["a.png", "is_dead"]
-    assert (tool.captions_dead_dir / "a.txt").read_text(encoding="utf-8") == caption_of("t")
-    assert not (tool.captions_dir / "a.txt").exists()
+    assert (tool.captions_dead_dir / "a.caption").read_text(encoding="utf-8") == caption_of("t")
+    assert not (tool.captions_dir / "a.caption").exists()
 
 
 def test_row_indexes_are_positions_after_remove_all_dead(api, tool, imgs):
@@ -72,4 +72,4 @@ def test_restored_image_comes_back_alive(api, tool, imgs):
     api.load(imgs)
     row = tool.df.set_index("サムネイル").loc["a.png"]
     assert not row["is_dead"] and row["girl"] == "t"
-    assert (tool.captions_dir / "a.txt").read_text(encoding="utf-8") == caption_of("t")
+    assert (tool.captions_dir / "a.caption").read_text(encoding="utf-8") == caption_of("t")

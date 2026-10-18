@@ -13,7 +13,7 @@ from caption_format import parse_line, phrases_of
 RESERVED_SECTIONS = {'サムネイル', 'is_dead'}  # 表の固定列と同じ名前は使えない
 
 # 確定タグ: 段落ごとのキーの並び（空の欄にも出す）。subject は人物などの段落（girl / guy / dog …）すべてに使う
-DEFAULT_TEMPLATES = {'picture': ['place', 'characters', 'vibes', 'view'], 'subject': ['looks', 'clothes', 'body']}
+DEFAULT_TEMPLATES = {'picture': ['place', 'characters', 'vibes', 'view', 'extra'], 'subject': ['looks', 'clothes', 'body']}
 AUTO_KEYS = ['characters']  # 自動で作るキー（入力欄には出さない）
 
 WORD = re.compile(r'[^\s,.;:!?"()\[\]]+')  # 単語（girl's のアポストロフィは残す）

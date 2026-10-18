@@ -47,10 +47,10 @@ def test_save_writes_krea2_captions_with_lf(api, tool, imgs):
     api.write(row, "body: long hair, black hair")
     api.save()
 
-    assert (tool.captions_dir / "a.txt").read_bytes() == (
+    assert (tool.captions_dir / "a.caption").read_bytes() == (
         b"picture:\n  - place: classroom\n  - characters: 1 girl\n\naction:\n  - girl walks a dog\n\n"
         b"girl:\n  - body: long black hair")
-    assert (tool.captions_dir / "b.txt").read_bytes() == b""
+    assert (tool.captions_dir / "b.caption").read_bytes() == b""
 
 
 def test_save_writes_readable_json(api, imgs, base_dir):
@@ -77,7 +77,7 @@ def test_unreadable_table_is_not_opened(api, tool, imgs, base_dir):
     assert (base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8") == "{broken"
 
 
-DEFAULT_TEMPLATES = {"picture": ["place", "characters", "vibes", "view"], "subject": ["looks", "clothes", "body"]}
+DEFAULT_TEMPLATES = {"picture": ["place", "characters", "vibes", "view", "extra"], "subject": ["looks", "clothes", "body"]}
 
 
 def test_words_of_sentences_are_in_dictionary(api, imgs):
@@ -125,3 +125,31 @@ def test_shared_dictionary_is_used_by_other_projects(api, tmp_path):
 
     api.load(make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)}))
     assert api.phrases() == {("girl", "body", "long hair"): 0}
+
+
+def test_caption_files_use_caption_extension(api, tool, imgs):
+    api.load(imgs)
+    api.write(0, "looks: standing")
+    api.save()
+    assert sorted(p.name for p in tool.captions_dir.iterdir()) == ["a.caption", "b.caption"]
+
+
+def test_hint_comes_from_same_name_txt_next_to_the_image(api, tool, imgs, base_dir):
+    (imgs / "a.txt").write_text("1girl, solo, smile\n", encoding="utf-8")
+    api.load(imgs)
+    a, b = api.rows()
+    assert a["hint"] == "1girl, solo, smile\n"
+    assert b["hint"] == ""
+
+    # hint は保存にもキャプションにも入らない
+    api.save()
+    table = json.loads((base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8"))
+    assert "hint" not in json.dumps(table)
+    assert (tool.captions_dir / "a.caption").read_text(encoding="utf-8") == ""
+    assert (imgs / "a.txt").read_text(encoding="utf-8") == "1girl, solo, smile\n"
+
+
+def test_unreadable_bytes_in_hint_do_not_break_loading(api, imgs):
+    (imgs / "a.txt").write_bytes(b"\xff\xfe broken \x80")
+    assert api.load(imgs)["success"]
+    assert "broken" in api.rows()[0]["hint"]
