@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from helpers import make_images
+from helpers import col, make_images
 
 
 @pytest.fixture
@@ -22,12 +22,12 @@ def strict_json(data):
 
 def test_update_cell_sets_value(loaded, tool):
     assert loaded.set(loaded.row_index("b.png"), "A")["success"]
-    assert tool.df.set_index("サムネイル")["A"].to_dict() == {"a.png": False, "b.png": True}
+    assert tool.df.set_index("サムネイル")[col("A")].to_dict() == {"a.png": False, "b.png": True}
 
 
 def test_update_cell_rejects_unknown_column(loaded, tool):
     assert loaded.set(0, "ZZZ")["success"] is False
-    assert "ZZZ" not in tool.df.columns
+    assert col("ZZZ") not in tool.df.columns
 
 
 @pytest.mark.parametrize("column", ["サムネイル", "is_dead"])
@@ -45,11 +45,11 @@ def test_update_cell_rejects_unknown_row(loaded, tool):
 @pytest.mark.parametrize("value", ["yes", 1, None])
 def test_update_cell_rejects_non_bool(loaded, tool, value):
     assert loaded.set(0, "A", value)["success"] is False
-    assert tool.df["A"].tolist() == [False, False]
+    assert tool.df[col("A")].tolist() == [False, False]
 
 
 def test_table_data_is_strict_json_after_bad_updates(loaded, client):
     loaded.set(0, "ZZZ")
     loaded.set(99, "A")
     body = strict_json(client.get("/get_table_data").data)
-    assert [r["A"] for r in body["data"]] == [False, False]
+    assert [r[col("A")] for r in body["data"]] == [False, False]

@@ -5,7 +5,40 @@ from pathlib import Path
 
 from PIL import Image
 
+from kinds import column_key
+
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+FIXED_COLUMNS = ("サムネイル", "is_dead")
+
+# 値だけ指定したときの大kind・中kind
+BIG, MID = "g", "m"
+
+
+def item(value, big=BIG, mid=MID, small=""):
+    """列 (大kind, 中kind, 小kind, 値)"""
+    return (big, mid, small, value)
+
+
+def col(value, **names):
+    """列の文字列キー（表の列名）"""
+    return column_key(item(value, **names))
+
+
+def to_key(column):
+    """列のタプル・値の名前（既定の大kind・中kind）・固定列名を、表の列名にする"""
+    if isinstance(column, tuple):
+        return column_key(column)
+    return column if column in FIXED_COLUMNS else col(column)
+
+
+def target(it):
+    """API に渡す対象 {big, mid, small, value}"""
+    return dict(zip(("big", "mid", "small", "value"), it))
+
+
+def caption_of(*values):
+    """既定の大kind・中kind の値だけにチェックしたときのキャプション"""
+    return f"{BIG}:\n  - {MID}: {', '.join(values)}"
 
 
 def make_images(directory, specs):
@@ -31,7 +64,7 @@ def image_of(response):
 
 
 def copy_legacy_fixture(kind, base_dir):
-    """旧版で作った dump（tests/fixtures/legacy_v0/<kind>）を base_dir へ配置する"""
+    """旧版（SDXL 版）で作った dump（tests/fixtures/legacy_v0/<kind>）を base_dir へ配置する"""
     shutil.copytree(FIXTURES_DIR / "legacy_v0" / kind, base_dir, dirs_exist_ok=True)
 
 
@@ -52,11 +85,11 @@ class Api:
     def open_project(self, name):
         return self.post("/load_existing_project", {"project_name": name})
 
-    def add(self, column, kind="k", default=False):
-        return self.post("/add_column", {"column_name": column, "kind": kind, "default_value": default})
+    def add(self, value, big=BIG, mid=MID, small="", default=False):
+        return self.post("/add_value", {"big": big, "mid": mid, "small": small, "value": value, "default_value": default})
 
     def set(self, row_index, column, value=True):
-        return self.post("/update_cell", {"row_index": row_index, "column_name": column, "value": value})
+        return self.post("/update_cell", {"row_index": row_index, "column_name": to_key(column), "value": value})
 
     def save(self):
         return self.post("/save_data")

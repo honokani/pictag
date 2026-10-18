@@ -1,7 +1,7 @@
 """削除済み画像（元フォルダから消えた画像）の扱い"""
 import pytest
 
-from helpers import make_images
+from helpers import caption_of, col, make_images
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def test_deleted_image_becomes_dead_and_caption_moves(api, tool, imgs):
 
     api.load(imgs)
     assert tool.df.set_index("サムネイル").loc["a.png", "is_dead"]
-    assert (tool.captions_dead_dir / "a.txt").read_text(encoding="utf-8") == "t"
+    assert (tool.captions_dead_dir / "a.txt").read_text(encoding="utf-8") == caption_of("t")
     assert not (tool.captions_dir / "a.txt").exists()
 
 
@@ -41,7 +41,7 @@ def test_row_indexes_are_positions_after_remove_all_dead(api, tool, imgs):
 
     # 画面の 2 行目（c.png）にチェック → c.png だけが変わる
     api.set(rows[1]["index"], "t")
-    flags = tool.df.set_index("サムネイル")["t"].to_dict()
+    flags = tool.df.set_index("サムネイル")[col("t")].to_dict()
     assert flags == {"b.png": False, "c.png": True}
 
 
@@ -58,7 +58,7 @@ def test_remove_all_dead_does_not_resurrect_after_save(api, tool, imgs):
     assert names(tool) == ["b.png", "c.png"]
     api.open_project("proj")
     assert names(tool) == ["b.png", "c.png"]
-    assert tool.df.set_index("サムネイル").loc["b.png", "t"]
+    assert tool.df.set_index("サムネイル").loc["b.png", col("t")]
 
 
 def test_restored_image_comes_back_alive(api, tool, imgs):
@@ -72,5 +72,5 @@ def test_restored_image_comes_back_alive(api, tool, imgs):
 
     api.load(imgs)
     row = tool.df.set_index("サムネイル").loc["a.png"]
-    assert not row["is_dead"] and row["t"]
-    assert (tool.captions_dir / "a.txt").read_text(encoding="utf-8") == "t"
+    assert not row["is_dead"] and row[col("t")]
+    assert (tool.captions_dir / "a.txt").read_text(encoding="utf-8") == caption_of("t")

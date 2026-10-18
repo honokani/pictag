@@ -1,7 +1,14 @@
-"""カラム（タグ）とタグ辞書の操作"""
+"""表の列（大kind × 中kind × 小kind × 値）の操作"""
 import pytest
 
-from helpers import make_images
+from helpers import col, item, make_images, target
+from kinds import column_key, dictionary_columns, parse_key
+
+GIRL_LONG = ("girl", "body", "hair", "long")
+GIRL_HANDS = ("girl", "body", "", "bare hands")
+GUY_LONG = ("guy", "body", "hair", "long")
+GUY_HANDS = ("guy", "body", "", "bare hands")
+DOG_BROWN = ("dog", "fur", "", "brown")
 
 
 @pytest.fixture
@@ -9,37 +16,24 @@ def imgs(tmp_path):
     return make_images(tmp_path / "imgs" / "proj", {"a.png": (100, 100), "b.png": (100, 100)})
 
 
-def tag_columns(tool):
-    return [c for c in tool.df.columns if c not in ("サムネイル", "is_dead")]
+def table_items(tool):
+    return [parse_key(c) for c in tool.df.columns if c not in ("サムネイル", "is_dead")]
 
 
-def captions(tool):
-    return tool.caption_info_df["caption"].tolist()
+def add(api, it, default=False):
+    big, mid, small, value = it
+    return api.add(value, big=big, mid=mid, small=small, default=default)
 
 
-def test_remove_from_table_persists_after_save(api, tool, imgs):
-    api.load(imgs)
-    api.add("A")
-    api.add("B")
-    assert api.post("/remove_column_from_table", {"column_name": "B"})["success"]
-
-    api.save()
-    assert tag_columns(tool) == ["A"]
-    api.open_project("proj")
-    assert tag_columns(tool) == ["A"]
-    # 辞書には残る（column追加 の候補になる）
-    assert "B" in captions(tool)
-
-
-def test_new_project_starts_with_all_dictionary_captions(api, tool, tmp_path):
+def test_new_project_starts_with_all_dictionary_columns(api, tool, tmp_path):
     api.load(make_images(tmp_path / "imgs" / "proj_a", {"a.png": (100, 100)}))
-    api.add("A", kind="k1")
-    api.add("B", kind="k2")
+    add(api, GIRL_LONG)
+    add(api, DOG_BROWN)
     api.save()
 
     api.load(make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)}))
-    assert tag_columns(tool) == ["A", "B"]
-    assert not tool.df[["A", "B"]].to_numpy().any()
+    assert table_items(tool) == [GIRL_LONG, DOG_BROWN]
+    assert not tool.df[[column_key(GIRL_LONG), column_key(DOG_BROWN)]].to_numpy().any()
 
 
 def test_existing_project_does_not_gain_columns_added_elsewhere(api, tool, tmp_path):
@@ -51,110 +45,142 @@ def test_existing_project_does_not_gain_columns_added_elsewhere(api, tool, tmp_p
     api.save()
 
     api.open_project("proj_a")
-    assert tag_columns(tool) == ["A"]
+    assert table_items(tool) == [item("A")]
 
 
-def test_columns_in_dump_survive_missing_dictionary(api, tool, imgs, base_dir):
+def test_new_value_of_a_shared_mid_is_added_for_every_big_using_it(api, tool, imgs):
+    api.load(imgs)
+    add(api, GIRL_LONG)
+    add(api, GUY_LONG)  # 辞書にある値 → guy の列だけ増える
+    add(api, GIRL_HANDS)  # 新しい値 → body を使う girl と guy の両方に増える
+    assert table_items(tool) == [GIRL_LONG, GIRL_HANDS, GUY_LONG, GUY_HANDS]
+
+
+def test_columns_are_kept_in_dictionary_order(api, tool, imgs):
+    api.load(imgs)
+    add(api, GIRL_LONG)
+    add(api, DOG_BROWN)
+    add(api, GIRL_HANDS)
+    assert table_items(tool) == [GIRL_LONG, GIRL_HANDS, DOG_BROWN]
+
+
+def test_adding_an_existing_mid_to_another_big_brings_all_its_values(api, tool, imgs):
+    api.load(imgs)
+    api.add("full body shot", big="girl", mid="looks")
+    api.add("standing", big="girl", mid="looks")
+    assert api.add("", big="dog", mid="looks")["success"]
+    assert table_items(tool)[2:] == [("dog", "looks", "", "full body shot"), ("dog", "looks", "", "standing")]
+
+
+def test_default_value_fills_new_columns(api, tool, imgs):
+    api.load(imgs)
+    api.add("A", default=True)
+    assert tool.df[col("A")].tolist() == [True, True]
+
+
+def test_value_already_in_table_is_rejected(api, tool, imgs):
     api.load(imgs)
     api.add("A")
-    api.add("B")
-    api.set(api.row_index("a.png"), "B")
-    api.save()
-    (base_dir / "data_work" / "df_captioninfo.dump").rename(base_dir / "data_work" / "moved_away.dump")
-
-    api.open_project("proj")
-    assert tag_columns(tool) == ["A", "B"]
-    assert tool.df.set_index("サムネイル").loc["a.png", "B"]
-    info = tool.caption_info_df.set_index("caption")["kind"].to_dict()
-    assert info == {"A": "undef", "B": "undef"}
+    res = api.add("A")
+    assert res["success"] is False and res["error"]
+    assert table_items(tool) == [item("A")]
 
 
-def test_rename_column_keeps_values(api, tool, imgs):
+@pytest.mark.parametrize("payload", [
+    {"big": "", "mid": "m", "value": "A"},
+    {"big": "g", "mid": "m", "value": "two\nlines"},
+    {"big": "g", "mid": "", "small": "hair", "value": "A"},
+    {"big": "g", "mid": "new mid", "value": ""},
+])
+def test_invalid_add_is_rejected_with_reason(api, tool, imgs, payload):
     api.load(imgs)
-    api.add("A")
-    api.set(api.row_index("a.png"), "A")
-    assert api.post("/rename_column", {"old_column": "A", "new_column": "A2", "kind": "k"})["success"]
-    api.save()
-    assert tag_columns(tool) == ["A2"]
-    assert tool.df.set_index("サムネイル").loc["a.png", "A2"]
+    res = api.post("/add_value", payload)
+    assert res["success"] is False and res["error"]
+    assert table_items(tool) == []
 
 
-def test_rename_column_to_existing_column_is_rejected(api, tool, client, imgs):
-    api.load(imgs)
-    api.add("A")
-    api.add("C")
-    res = api.post("/rename_column", {"old_column": "C", "new_column": "A", "kind": "k"})
-    assert res["success"] is False
-    assert res.get("message")
-    assert tag_columns(tool) == ["A", "C"]
-    assert client.get("/get_table_data").status_code == 200
-
-
-def test_rename_column_to_dictionary_caption_is_rejected(api, tool, imgs):
-    api.load(imgs)
-    api.add("X")
-    api.post("/remove_column_from_table", {"column_name": "X"})
-    api.add("C")
-    res = api.post("/rename_column", {"old_column": "C", "new_column": "X", "kind": "k"})
-    assert res["success"] is False
-    assert captions(tool).count("X") == 1
-
-
-def test_rename_both_to_existing_column_is_rejected(api, tool, imgs):
-    api.load(imgs)
-    api.add("A", kind="k1")
-    api.add("C", kind="k1")
-    res = api.post("/rename_both", {"old_kind": "k1", "new_kind": "k2", "old_column": "C", "new_column": "A"})
-    assert res["success"] is False
-    assert tag_columns(tool) == ["A", "C"]
-
-
-def test_readd_dictionary_caption_with_same_kind(api, tool, imgs):
-    api.load(imgs)
-    api.add("X", kind="kA")
-    api.post("/remove_column_from_table", {"column_name": "X"})
-    assert api.add("X", kind="kA")["success"]
-    assert tag_columns(tool) == ["X"]
-    assert captions(tool).count("X") == 1
-
-
-def test_add_existing_caption_with_other_kind_is_rejected(api, tool, imgs):
-    api.load(imgs)
-    api.add("X", kind="kA")
-    api.post("/remove_column_from_table", {"column_name": "X"})
-    res = api.add("X", kind="kB")
-    assert res["success"] is False
-    assert "kA" in res["error"]
-    assert tag_columns(tool) == []
-    assert tool.caption_info_df.to_dict("records") == [{"caption": "X", "kind": "kA"}]
-
-
-@pytest.mark.parametrize("column", ["new_column", "index", "サムネイル", "is_dead"])
-def test_reserved_column_names_are_rejected(api, tool, imgs, column):
-    api.load(imgs)
-    assert api.add(column)["success"] is False
-    assert column not in captions(tool)
-
-
-def test_reserved_kind_name_is_rejected(api, tool, imgs):
-    api.load(imgs)
-    assert api.add("A", kind="new_kind")["success"] is False
-    api.add("A", kind="k")
-    assert api.post("/rename_kind", {"old_kind": "k", "new_kind": "new_kind"})["success"] is False
-    assert api.post("/rename_column", {"old_column": "A", "new_column": "new_column", "kind": "k"})["success"] is False
-    assert api.post("/rename_both", {"old_kind": "k", "new_kind": "new_kind", "old_column": "A", "new_column": "A"})["success"] is False
-    assert tool.caption_info_df.to_dict("records") == [{"caption": "A", "kind": "k"}]
-
-
-def test_add_column_needs_loaded_project(api, tool):
+def test_add_needs_loaded_project(api, tool):
     assert api.add("A")["success"] is False
-    assert captions(tool) == []
+    assert dictionary_columns(tool.kinds) == []
 
 
-def test_add_columns_on_project_without_images(api, tool, tmp_path):
+def test_add_on_project_without_images(api, tool, tmp_path):
     empty = tmp_path / "imgs" / "empty"
     empty.mkdir(parents=True)
     api.load(empty)
     api.add("A")
     api.add("B")
-    assert list(tool.df.columns) == ["サムネイル", "is_dead", "A", "B"]
+    assert table_items(tool) == [item("A"), item("B")]
+
+
+def test_remove_from_table_persists_after_save_and_stays_in_dictionary(api, tool, imgs):
+    api.load(imgs)
+    api.add("A")
+    api.add("B")
+    assert api.post("/remove_from_table", {"level": "value", **target(item("B"))})["success"]
+
+    api.save()
+    api.open_project("proj")
+    assert table_items(tool) == [item("A")]
+    assert item("B") in dictionary_columns(tool.kinds)
+
+
+def test_remove_a_whole_big_from_table(api, tool, imgs):
+    api.load(imgs)
+    add(api, GIRL_LONG)
+    add(api, DOG_BROWN)
+    assert api.post("/remove_from_table", {"level": "big", "big": "dog"})["success"]
+    assert table_items(tool) == [GIRL_LONG]
+
+
+def test_rename_value_keeps_checks_for_every_big(api, tool, imgs):
+    api.load(imgs)
+    api.add("lng", big="girl", mid="body", small="hair")
+    api.add("lng", big="guy", mid="body", small="hair")
+    api.set(api.row_index("a.png"), ("guy", "body", "hair", "lng"))
+
+    res = api.post("/rename", {"level": "value", **target(("girl", "body", "hair", "lng")), "new_name": "long"})
+    assert res["success"], res
+    assert table_items(tool) == [GIRL_LONG, GUY_LONG]
+    assert tool.df.set_index("サムネイル").loc["a.png", column_key(GUY_LONG)]
+
+
+def test_rename_to_an_existing_name_is_rejected_with_reason(api, tool, imgs):
+    api.load(imgs)
+    api.add("A")
+    api.add("C")
+    res = api.post("/rename", {"level": "value", **target(item("C")), "new_name": "A"})
+    assert res["success"] is False and res["message"]
+    assert table_items(tool) == [item("A"), item("C")]
+
+
+def test_remove_from_dictionary_drops_columns_of_every_big(api, tool, imgs):
+    api.load(imgs)
+    add(api, GIRL_LONG)
+    add(api, GUY_LONG)
+    assert api.post("/remove_from_dictionary", {"level": "value", **target(GIRL_LONG)})["success"]
+    assert table_items(tool) == []
+    assert dictionary_columns(tool.kinds) == []
+
+
+def test_columns_survive_missing_dictionary(api, tool, imgs, base_dir):
+    api.load(imgs)
+    api.add("A")
+    api.add("B")
+    api.set(api.row_index("a.png"), "B")
+    api.save()
+    (base_dir / "data_work" / "kinds.json").rename(base_dir / "data_work" / "moved_away.json")
+
+    api.open_project("proj")
+    assert table_items(tool) == [item("A"), item("B")]
+    assert tool.df.set_index("サムネイル").loc["a.png", col("B")]
+    assert dictionary_columns(tool.kinds) == [item("A"), item("B")]
+
+
+def test_table_data_describes_columns(api, client, imgs):
+    api.load(imgs)
+    add(api, GIRL_LONG)
+    body = client.get("/get_table_data").get_json()
+    key = column_key(GIRL_LONG)
+    assert body["columns"] == [{"key": key, "big": "girl", "mid": "body", "small": "hair", "value": "long"}]
+    assert [r[key] for r in body["data"]] == [False, False]

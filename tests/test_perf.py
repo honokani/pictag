@@ -11,7 +11,7 @@ def test_save_with_many_images_and_tags(api, tool, tmp_path):
     imgs = make_images(tmp_path / "imgs" / "proj", {f"img{i:05d}.png": (8, 8) for i in range(N_IMAGES)})
     api.load(imgs)
     for j in range(N_TAGS):
-        api.add(f"tag{j}", kind=f"k{j % 5}")
+        api.add(f"tag{j}", mid=f"m{j % 5}")
 
     t = time.perf_counter()
     api.save()
