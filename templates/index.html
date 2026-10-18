@@ -30,13 +30,11 @@
         <label class="group"><input id="showDead" type="checkbox" checked> 削除済み画像を表示</label>
         <button id="removeDeadButton" type="button">削除済みを完全削除</button>
         <button id="freezeButton" type="button" title="今使っている語句・単語を共用辞書に入れます（使われなくなっても候補に残ります）">共用辞書に入れる</button>
-        <form id="bulkForm" class="group bulk">
-            <span id="selectionInfo">選択 0 行</span>
-            <select id="bulkSection" aria-label="一括入力の段落"></select>
-            <input id="bulkText" type="text" placeholder="例: looks: standing" autocomplete="off" aria-label="一括入力の語句">
-            <button type="submit" value="add">選択行に追加</button>
-            <button type="submit" value="remove">選択行から削除</button>
-        </form>
+        <!-- 2段目（選択中は一括入力が並ぶ）を1行に収めて、選択で表がずれないようにここに置く -->
+        <span id="markTools-clear" class="group clear-marks">
+            <button type="button" class="hold" data-column="mark" title="1秒長押しで、全行の A〜D を消す">A〜D をクリア</button>
+            <button type="button" class="hold" data-column="marks" title="1秒長押しで、全行の ★●▲■ を消す">★●▲■ をクリア</button>
+        </span>
     </section>
 
     <section id="markTools" class="bar tools" hidden>
@@ -45,11 +43,17 @@
             <select id="filterMany" aria-label="複数のマークで絞り込み"></select>
         </span>
         <button id="selectVisibleButton" type="button" title="Ctrl+A">表示中をすべて選択</button>
-        <span class="key-help">選択行に: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■</span>
-        <span class="group clear-marks">
-            <button type="button" class="hold" data-column="mark" title="1秒長押しで、全行の A〜D を消す">A〜D をクリア</button>
-            <button type="button" class="hold" data-column="marks" title="1秒長押しで、全行の ★●▲■ を消す">★●▲■ をクリア</button>
-        </span>
+        <span id="keyHelp" class="key-help">選択行に: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■</span>
+        <!-- 行を選んでいる間だけ、キーの案内の代わりに出す -->
+        <form id="bulkForm" class="group bulk" hidden>
+            <span id="selectionInfo" title="選択行に: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■">選択 0 行</span>
+            <select id="bulkSection" aria-label="一括入力の段落"></select>
+            <select id="bulkKey" aria-label="一括入力のキー"></select>
+            <input id="bulkText" type="text" placeholder="語句（例: standing）" autocomplete="off" aria-label="一括入力の語句">
+            <button type="submit" value="add">選択行に追加</button>
+            <button type="submit" value="remove">選択行から削除</button>
+            <button type="button" id="deselectButton" class="hold" title="1秒長押しで、選択を解除">選択解除</button>
+        </form>
     </section>
 
     <main>

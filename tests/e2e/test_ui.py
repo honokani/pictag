@@ -227,7 +227,8 @@ def test_bulk_add_and_remove_on_selected_rows(page, imgs):
     expect(page.locator("#selectionInfo")).to_have_text("選択 3 行")
 
     page.select_option("#bulkSection", "girl")
-    page.fill("#bulkText", "looks: standing")
+    page.select_option("#bulkKey", "looks")
+    page.fill("#bulkText", "standing")
     page.click("text=選択行に追加")
     expect(page.locator("#status")).to_have_text("3 行に追加しました")
     for name in ["a.png", "b.png", "c.png"]:
@@ -235,7 +236,7 @@ def test_bulk_add_and_remove_on_selected_rows(page, imgs):
 
     row(page, "b.png").locator("td.meta").click(modifiers=["Control"])
     expect(page.locator("#selectionInfo")).to_have_text("選択 2 行")
-    page.fill("#bulkText", "looks: standing")
+    page.fill("#bulkText", "standing")
     page.click("text=選択行から削除")
     expect(filled(page, "a.png")).to_have_count(0)
     expect(filled(page, "b.png")).to_have_text(["looks: standing"])
@@ -244,6 +245,7 @@ def test_bulk_add_and_remove_on_selected_rows(page, imgs):
 
 def test_bulk_section_choice_survives_save(page, imgs):
     load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
     page.select_option("#bulkSection", "girl")
     page.click("#saveButton")
     expect(page.locator("#status")).to_have_text("保存しました")
@@ -428,3 +430,74 @@ def test_no_hint_column_without_txt_files(page, imgs):
     load_dir(page, imgs)
     expect(page.locator("#gridHead th.hint-head")).to_have_count(0)
     expect(page.locator("td.hint")).to_have_count(0)
+
+
+def option_values(page, selector):
+    return page.locator(f"{selector} option").evaluate_all("els => els.map(e => e.value)")
+
+
+def test_editing_selects_the_row(page, imgs):
+    load_dir(page, imgs)
+    cell(page, "b.png").click()
+    expect(row(page, "b.png")).to_have_class("selected")
+    expect(page.locator("#selectionInfo")).to_have_text("選択 1 行")
+
+
+def test_bulk_form_replaces_key_help_only_while_selected(page, imgs):
+    load_dir(page, imgs)
+    expect(page.locator("#keyHelp")).to_be_visible()
+    expect(page.locator("#bulkForm")).to_be_hidden()
+    row(page, "a.png").locator("td.meta").click()
+    expect(page.locator("#bulkForm")).to_be_visible()
+    expect(page.locator("#keyHelp")).to_be_hidden()
+
+
+def test_bulk_keys_follow_the_section(page, imgs):
+    load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "picture")
+    assert option_values(page, "#bulkKey") == ["place", "vibes", "view", "extra", ""]
+    page.select_option("#bulkSection", "girl")
+    assert option_values(page, "#bulkKey") == ["looks", "clothes", "body", ""]
+    page.select_option("#bulkSection", "action")
+    assert option_values(page, "#bulkKey") == [""]
+
+
+def test_bulk_phrase_suggestions_follow_the_key(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    wait_for_phrase(page, "long hair")
+    row(page, "a.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "girl")
+    page.select_option("#bulkKey", "body")
+    page.locator("#bulkText").press_sequentially("lh")
+    expect(page.locator("#suggestions li.active")).to_contain_text("long hair")
+    page.locator("#bulkText").press("Enter")
+    assert page.locator("#bulkText").input_value() == "long hair, "
+    page.click("text=選択行に追加")
+    expect(filled(page, "a.png")).to_have_text(["body: long hair"])
+
+
+def test_deselect_needs_a_long_press(page, imgs):
+    load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
+    row(page, "c.png").locator("td.meta").click(modifiers=["Shift"])
+    page.click("#deselectButton")
+    expect(page.locator("#status")).to_have_text("1秒長押しすると、選択を解除します")
+    expect(page.locator("#selectionInfo")).to_have_text("選択 3 行")
+
+    page.locator("#deselectButton").hover()
+    page.mouse.down()
+    page.wait_for_timeout(1300)
+    page.mouse.up()
+    expect(page.locator("#status")).to_have_text("選択を解除しました")
+    expect(page.locator("#keyHelp")).to_be_visible()
+    expect(page.locator("#gridBody tr.selected")).to_have_count(0)
+
+
+def test_selecting_rows_does_not_shift_the_table(page, imgs):
+    load_dir(page, imgs)
+    before = page.locator("#grid").bounding_box()["y"]
+    row(page, "a.png").locator("td.meta").click()
+    expect(page.locator("#bulkForm")).to_be_visible()
+    assert page.locator("#grid").bounding_box()["y"] == before

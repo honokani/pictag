@@ -238,7 +238,17 @@ function lineStartCandidates(section, ctx) {
     ]);
 }
 
-const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates};
+// 一括入力でキーなしを選んだとき: 文と単語（1文字以上打ったときだけ）
+function keylessCandidates(section, ctx) {
+    if (!ctx.query) return [];
+    return keepBest([
+        ...state.phrases.filter(p => !p.key)
+            .map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})),
+        ...wordCandidates(section, ctx),
+    ]);
+}
+
+const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates};
 
 function candidates(section, ctx) {
     return CANDIDATE_SOURCES[ctx.mode](section, ctx)
@@ -248,8 +258,8 @@ function candidates(section, ctx) {
         .slice(0, 20);
 }
 
-function showSuggestions(el, section) {
-    const ctx = contextOf(el);
+function showSuggestions(el, section, contextFor = contextOf) {
+    const ctx = contextFor(el);
     const items = candidates(section, ctx);
     if (!items.length) {
         hideSuggestions();
@@ -325,6 +335,7 @@ function refreshWords() {
             .then(body => {
                 state.phrases = body.phrases;
                 state.words = body.words;
+                fillBulkKeys();
             })
             .catch(e => console.warn('辞書を読めません', e));
     }, 100);
@@ -421,6 +432,7 @@ function renderTable() {
     const bulkSection = $('bulkSection').value;  // 描き直しても一括入力の段落は選んだままにする
     $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;
+    fillBulkKeys();
     $('emptyNote').hidden = state.loaded;
     $('tools').hidden = !state.loaded;
     $('markTools').hidden = !state.loaded;
@@ -463,6 +475,12 @@ function startEdit(td) {
     commitEdit();
     const index = Number(td.closest('tr').dataset.index);
     const section = td.dataset.section;
+    // 編集する行を選択状態にする（選択中の行の中なら選択はそのまま）
+    if (!state.selected.has(index)) {
+        state.selected = new Set([index]);
+        state.anchor = index;
+        paintSelection();
+    }
     const keys = editKeys(section);
     const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
     const el = document.createElement('textarea');
@@ -586,6 +604,9 @@ function paintSelection() {
 
 function updateSelectionInfo() {
     $('selectionInfo').textContent = `選択 ${state.selected.size} 行`;
+    // 行を選んでいる間は、キーの案内の代わりに一括入力を出す
+    $('bulkForm').hidden = state.selected.size === 0;
+    $('keyHelp').hidden = state.selected.size > 0;
 }
 
 // ---- 操作 ----
@@ -593,9 +614,11 @@ function updateSelectionInfo() {
 async function bulkEdit(op) {
     commitEdit();
     const rows = visibleIndexes().filter(i => state.selected.has(i));
-    const text = $('bulkText').value.trim();
+    const phrases = $('bulkText').value.trim();
+    const key = $('bulkKey').value;
     if (!rows.length) return setStatus('行を選んでください', 'error');
-    if (!text) return setStatus('語句を入力してください', 'error');
+    if (!phrases) return setStatus('語句を入力してください', 'error');
+    const text = key ? `${key}: ${phrases}` : phrases;
     await settled();
     const res = await postJson(op === 'add' ? '/add_phrase' : '/remove_phrase', {rows, section: $('bulkSection').value, text});
     if (!res.success) return setStatus(res.message || '一括入力できませんでした', 'error');
@@ -796,28 +819,74 @@ function handleMarkKey(event) {
 }
 
 // 長押し（1秒）でマークの列を全行クリア。短く押しただけなら案内だけ出す
-function holdToClear(button) {
+// 長押し（1秒）で run を行う。短く押しただけなら hint を出すだけ（誤操作を防ぐ）
+function holdToRun(button, run, hint) {
     let timer = null;
     const cancel = () => {
         if (timer === null) return;
         clearTimeout(timer);
         timer = null;
         button.classList.remove('holding');
-        setStatus('1秒長押しすると、全行のマークを消します');
+        setStatus(hint);
     };
     button.addEventListener('pointerdown', () => {
         button.classList.add('holding');
-        timer = setTimeout(guarded(async () => {
+        timer = setTimeout(() => {
             timer = null;
             button.classList.remove('holding');
-            const res = await postJson('/clear_marks', {column: button.dataset.column});
-            if (!res.success) return setStatus(res.message, 'error');
-            setDirty(true);
-            await refreshTable();
-            setStatus(`全行の ${button.dataset.column === 'mark' ? 'A〜D' : '★●▲■'} を消しました`, 'ok');
-        }), 1000);
+            guarded(run)();
+        }, 1000);
     });
     ['pointerup', 'pointerleave', 'pointercancel'].forEach(name => button.addEventListener(name, cancel));
+}
+
+async function clearMarks(column) {
+    const res = await postJson('/clear_marks', {column});
+    if (!res.success) return setStatus(res.message, 'error');
+    setDirty(true);
+    await refreshTable();
+    setStatus(`全行の ${column === 'mark' ? 'A〜D' : '★●▲■'} を消しました`, 'ok');
+}
+
+async function deselectAll() {
+    state.selected = new Set();
+    state.anchor = null;
+    paintSelection();
+    setStatus('選択を解除しました', 'ok');
+}
+
+// 一括入力のキー: 段落の確定タグ、辞書でその段落に使われたキー、（キーなし）
+function bulkKeys(section) {
+    const template = editKeys(section);
+    const used = [...new Set(state.phrases.filter(p => p.section === section && p.key).map(p => p.key))];
+    const keys = [...template, ...used.filter(k => !template.includes(k))];
+    return template.length ? [...keys, ''] : ['', ...keys];
+}
+
+function fillBulkKeys() {
+    const keep = $('bulkKey').value;
+    const keys = bulkKeys($('bulkSection').value);
+    $('bulkKey').innerHTML = keys.map(k => `<option value="${escapeHtml(k)}">${k ? escapeHtml(k) : '（キーなし）'}</option>`).join('');
+    if (keys.includes(keep)) $('bulkKey').value = keep;
+}
+
+// 一括入力の語句の欄の文脈: キーは選んだもの。キーなしなら文と単語
+function bulkContext(el) {
+    const key = $('bulkKey').value;
+    const value = el.value;
+    const caret = el.selectionStart;
+    const before = value.slice(0, caret);
+    const base = {caret, restEmpty: value.slice(caret).trim() === '', current: key ? splitPhrases(value) : []};
+    if (key) {
+        const segment = before.lastIndexOf(',') + 1;
+        const raw = before.slice(segment);
+        const query = raw.trimStart();
+        return {...base, mode: 'phrase', key, query, queryStart: segment + (raw.length - query.length)};
+    }
+    const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
+    if (lastBreak >= 0) return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1};
+    const query = before.trimStart();
+    return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
 }
 
 function openImage(name) {
@@ -846,14 +915,21 @@ function wire() {
         event.preventDefault();
         guarded(bulkEdit)(event.submitter ? event.submitter.value : 'add');
     });
-    $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value));
+    $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value, bulkContext));
+    $('bulkSection').addEventListener('change', () => {
+        fillBulkKeys();
+        hideSuggestions();
+    });
+    $('bulkKey').addEventListener('change', hideSuggestions);
     $('bulkText').addEventListener('keydown', handleSuggestKey);
     $('bulkText').addEventListener('blur', hideSuggestions);
 
     $('filterOne').addEventListener('change', applyFilter);
     $('filterMany').addEventListener('change', applyFilter);
     $('selectVisibleButton').addEventListener('click', selectVisible);
-    document.querySelectorAll('#markTools .hold').forEach(holdToClear);
+    document.querySelectorAll('.clear-marks .hold').forEach(button =>
+        holdToRun(button, () => clearMarks(button.dataset.column), '1秒長押しすると、全行のマークを消します'));
+    holdToRun($('deselectButton'), deselectAll, '1秒長押しすると、選択を解除します');
     document.addEventListener('keydown', handleMarkKey);
 
     $('gridBody').addEventListener('click', event => {

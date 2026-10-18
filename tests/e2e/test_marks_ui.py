@@ -86,7 +86,8 @@ def test_filter_then_select_visible_and_bulk_add(page, imgs):
     expect(page.locator("#selectionInfo")).to_have_text("選択 2 行")
 
     page.select_option("#bulkSection", "picture")
-    page.fill("#bulkText", "view: from above")
+    page.select_option("#bulkKey", "view")
+    page.fill("#bulkText", "from above")
     page.click("text=選択行に追加")
     page.select_option("#filterOne", "")
     for name, expected in [("a.png", 1), ("b.png", 0), ("c.png", 1)]:
@@ -107,7 +108,7 @@ def test_clear_needs_a_long_press(page, imgs):
     load_dir(page, imgs)
     mark(page, "a.png", "A").click()
     mark(page, "a.png", "★").click()
-    clear_one = page.locator('#markTools .hold[data-column="mark"]')
+    clear_one = page.locator('.clear-marks .hold[data-column="mark"]')
 
     clear_one.click()  # 短く押しただけでは消えない
     expect(page.locator("#status")).to_have_text("1秒長押しすると、全行のマークを消します")
