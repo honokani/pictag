@@ -15,6 +15,7 @@ const state = {
     fixedSections: [],    // 固定の段落（外せない・改名できない）
     autoKeys: [],         // 自動で作るキー（characters。入力欄には出さない）
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
+    foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
@@ -412,8 +413,53 @@ function matchesFilter(row) {
     return okOne && okMany;
 }
 
-// hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）
-const hintHtml = row => `<td class="hint"><textarea readonly rows="5" aria-label="hint">${escapeHtml(row.hint || '')}</textarea></td>`;
+// hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）。全文を出し（高さは中身に合わせる）、右上のボタンで畳める
+function hintHtml(row) {
+    if (!row.hint) return '<td class="hint"></td>';
+    if (state.foldedHints.has(row['サムネイル'])) {
+        return '<td class="hint folded"><button type="button" class="hint-toggle" title="この画像の hint を開く">＋ hint</button></td>';
+    }
+    return '<td class="hint"><button type="button" class="hint-toggle" title="この画像の hint を畳む">－</button>' +
+        `<textarea readonly rows="1" aria-label="hint">${escapeHtml(row.hint)}</textarea></td>`;
+}
+
+// hint の高さを中身に合わせる（CSS の field-sizing が効かないブラウザ向け。先に全部読んでから書き、描き直しを1回にする）
+function fitHints(root) {
+    if (!root || CSS.supports('field-sizing', 'content')) return;
+    const areas = [...root.querySelectorAll('td.hint textarea')];
+    const heights = areas.map(el => el.scrollHeight);
+    areas.forEach((el, i) => {
+        if (heights[i]) el.style.height = `${heights[i] + 2}px`;  // 見えていない（0）ときは触らない
+    });
+}
+
+const foldedHintsKey = () => `pictag:folded-hints:${state.projectName}`;
+
+function loadFoldedHints() {
+    try {
+        state.foldedHints = new Set(JSON.parse(localStorage.getItem(foldedHintsKey()) || '[]'));
+    } catch {
+        state.foldedHints = new Set();
+    }
+}
+
+function saveFoldedHints() {
+    try {
+        localStorage.setItem(foldedHintsKey(), JSON.stringify([...state.foldedHints]));
+    } catch {
+        // 覚えられなくても、畳む・開くはできる
+    }
+}
+
+function toggleHint(button) {
+    const tr = button.closest('tr');
+    const name = tr.dataset.name;
+    if (state.foldedHints.has(name)) state.foldedHints.delete(name);
+    else state.foldedHints.add(name);
+    saveFoldedHints();
+    tr.querySelector('td.hint').outerHTML = hintHtml(state.byIndex.get(Number(tr.dataset.index)));
+    fitHints(tr);
+}
 
 // token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
 function metaHtml(row) {
@@ -505,6 +551,7 @@ function renderTable() {
     $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
     fitPictureColumn();
     fitThumbnails();
+    fitHints($('gridBody'));
     const bulkSection = $('bulkSection').value;  // 描き直しても一括入力の段落は選んだままにする
     $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;
@@ -520,13 +567,16 @@ function renderTable() {
 function rerenderRows() {
     commitEdit();
     $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
+    fitHints($('gridBody'));
 }
 
 function replaceRow(row) {
     state.byIndex.set(row.index, row);
     state.rows = state.rows.map(r => (r.index === row.index ? row : r));
     const tr = rowElement(row.index);
-    if (tr) tr.outerHTML = rowHtml(row);
+    if (!tr) return;
+    tr.outerHTML = rowHtml(row);
+    fitHints(rowElement(row.index));
 }
 
 async function refreshTable() {
@@ -770,6 +820,7 @@ const confirmDiscard = () => !state.dirty || window.confirm('保存していな�
 
 async function opened(name) {
     state.projectName = name;
+    loadFoldedHints();
     state.selected = new Set();
     state.anchor = null;
     state.dirty = false;
@@ -1041,6 +1092,11 @@ function wire() {
     document.addEventListener('keydown', handleMarkKey);
 
     $('gridBody').addEventListener('click', event => {
+        const hintToggle = event.target.closest('.hint-toggle');
+        if (hintToggle) {
+            toggleHint(hintToggle);
+            return;
+        }
         const choice = event.target.closest('.choice');
         if (choice) {
             guarded(choose)(choice);
@@ -1066,7 +1122,7 @@ function wire() {
     });
     // hint はフォーカスしたら全体を選ぶ（すぐコピーできるように）
     $('gridBody').addEventListener('focusin', event => {
-        if (event.target.closest('td.hint')) event.target.select();
+        if (event.target.matches('td.hint textarea')) event.target.select();
     });
     $('gridHead').addEventListener('click', event => {
         const button = event.target.closest('.remove-section');

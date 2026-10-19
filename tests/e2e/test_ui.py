@@ -501,7 +501,25 @@ def test_hint_column_shows_same_name_txt_read_only(page, imgs, tool):
     hint.click()
     assert hint.evaluate("el => [el.selectionStart, el.selectionEnd]") == [0, len("1girl, solo, smile")]
     expect(row(page, "a.png").locator("td.cell textarea")).to_have_count(0)  # 入力欄は開かない
-    expect(row(page, "b.png").locator("td.hint textarea")).to_have_value("")
+    expect(row(page, "b.png").locator("td.hint textarea")).to_have_count(0)  # hint の無い画像は空の欄を出さない
+
+
+def test_hint_shows_the_whole_text_and_can_be_folded(page, imgs):
+    long_hint = ", ".join(f"tag{i}" for i in range(150))
+    (imgs / "a.txt").write_text(long_hint, encoding="utf-8")
+    load_dir(page, imgs)
+    hint = row(page, "a.png").locator("td.hint textarea")
+    expect(hint).to_have_value(long_hint)
+    assert hint.evaluate("el => el.scrollHeight <= el.clientHeight + 1")  # 全文が見える（中でスクロールしない）
+
+    row(page, "a.png").locator(".hint-toggle").click()  # 畳む
+    expect(row(page, "a.png").locator("td.hint textarea")).to_have_count(0)
+    expect(row(page, "a.png").locator(".hint-toggle")).to_have_text("＋ hint")
+
+    load_dir(page, imgs)  # 読み込み直しても畳んだまま
+    expect(row(page, "a.png").locator("td.hint textarea")).to_have_count(0)
+    row(page, "a.png").locator(".hint-toggle").click()  # 開く
+    expect(row(page, "a.png").locator("td.hint textarea")).to_have_value(long_hint)
 
 
 def test_no_hint_column_without_txt_files(page, imgs):
