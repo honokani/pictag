@@ -11,6 +11,7 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from subjects import CAMERA_GROUPS, characters_of, name_for_new, pov_choices
+from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_section_name, count_sentence_words, count_words, empty_shared, freeze,
                    phrase_entries, remove_phrase, set_choice, word_entries)
@@ -24,8 +25,8 @@ app = Flask(__name__)
 # data_out / data_work の既定の置き場所（起動ディレクトリに依存させない）
 APP_DIR = Path(__file__).resolve().parent
 
-# 表の固定列。それ以外の列は段落（大kind）で、値は入力の文字列
-FIXED_COLUMNS = ['サムネイル', 'is_dead']
+# 表の固定列（mark / marks はマーキング。キャプションには書き出さない）。それ以外の列は段落（大kind）で、値は入力の文字列
+FIXED_COLUMNS = ['サムネイル', 'is_dead', 'mark', 'marks']
 TABLE_FILE = 'table.json'  # data_out/<フォルダ名>/ 直下。画像 × 段落の入力
 SHARED_FILE = 'shared.json'  # data_work/ 直下。共用辞書（freeze した語句・単語と確定タグ）
 SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォルダは SDXL 版のプロジェクト
@@ -74,6 +75,7 @@ def table_to_json(df):
     return {
         'sections': sections,
         'rows': [{'image': r['サムネイル'], 'is_dead': to_flag(r['is_dead']),
+                  **{column: r[column] for column in ('mark', 'marks') if to_text(r[column])},
                   'texts': {s: r[s] for s in sections if to_text(r[s])}}
                  for r in df.to_dict('records')],
     }
@@ -81,6 +83,7 @@ def table_to_json(df):
 def table_from_json(data):
     sections = [check_section_name(s) for s in data['sections']]
     rows = [{'サムネイル': r['image'], 'is_dead': bool(r['is_dead']),
+             'mark': r.get('mark') if r.get('mark') in ONE else '', 'marks': clean_many(r.get('marks', '')),
              **{s: to_text(r['texts'].get(s, '')) for s in sections}}
             for r in data['rows']]
     return pd.DataFrame(rows, columns=FIXED_COLUMNS + sections)
@@ -317,6 +320,8 @@ class CaptionTool:
             data.append({
                 'サムネイル': img_file,
                 'is_dead': is_dead,
+                'mark': to_text(existing_row.get('mark', '')),
+                'marks': clean_many(existing_row.get('marks', '')),
                 **{s: to_text(existing_row.get(s, '')) for s in sections},
             })
 
@@ -514,6 +519,40 @@ class CaptionTool:
             self.df.at[r, section] = set_choice(to_text(self.df.at[r, section]), key, phrase, group, on)
         return True
 
+    def mark_rows(self, rows, column, change, check):
+        """複数行のマークを書き換える（check でマークを検証してから）"""
+        self.last_error = ''
+        if not isinstance(rows, list) or not rows or not all(self.is_row(r) for r in rows):
+            return self.fail('行の指定が正しくありません')
+        try:
+            check()
+        except ValueError as e:
+            return self.fail(str(e))
+        for r in dict.fromkeys(rows):
+            self.df.at[r, column] = change(to_text(self.df.at[r, column]))
+        return True
+
+    def set_mark(self, rows, mark):
+        """排他のマーク（A〜D。空なら外す）を複数行に付ける"""
+        return self.mark_rows(rows, 'mark', lambda _: mark, lambda: check_one(mark))
+
+    def set_marks(self, rows, mark, on):
+        """複数のマーク（★●▲■）を複数行に付ける・外す"""
+        def check():
+            check_many(mark)
+            if not isinstance(on, bool):
+                raise ValueError('付けるか外すかの指定が正しくありません')
+        return self.mark_rows(rows, 'marks', lambda marks: toggle_many(marks, mark, on), check)
+
+    def clear_marks(self, column):
+        """マークの列（mark / marks）を全行で消す"""
+        self.last_error = ''
+        if column not in ('mark', 'marks'):
+            return self.fail(f'マークの列ではありません: {column}')
+        if 'サムネイル' in self.df.columns:
+            self.df[column] = ''
+        return True
+
     def row_texts(self, record, sections):
         """キャプションに使う入力と characters。picture に characters（入力のある人物の段落から）を入れる"""
         texts = {s: to_text(record[s]) for s in sections}
@@ -530,6 +569,7 @@ class CaptionTool:
         return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
                 'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
                 'hint': self.hints.get(record['サムネイル'], ''),
+                'mark': to_text(record['mark']), 'marks': to_text(record['marks']),
                 'caption': caption, 'tokens': token_counter.count(caption)}
 
     def row_views(self, indexes):
@@ -657,7 +697,8 @@ def get_table_data():
     """
     df = caption_tool.df
     common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS,
-              'auto_keys': AUTO_KEYS, 'view_choices': {'camera': CAMERA_GROUPS, 'pov': pov_choices(caption_tool.subjects())}}
+              'auto_keys': AUTO_KEYS, 'view_choices': {'camera': CAMERA_GROUPS, 'pov': pov_choices(caption_tool.subjects())},
+              'mark_choices': {'one': ONE, 'many': MANY}}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})
 
@@ -725,6 +766,31 @@ def set_choice_on_rows():
     if not caption_tool.choose(rows, data.get('section'), data.get('key'), data.get('phrase'), data.get('group'), data.get('on')):
         return jsonify({'success': False, 'message': caption_tool.last_error})
     return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
+
+@app.route('/set_mark', methods=['POST'])
+def set_mark():
+    """排他のマーク（{rows, mark}。mark は A〜D、空なら外す）"""
+    data = request.get_json() or {}
+    rows = data.get('rows')
+    if not caption_tool.set_mark(rows, data.get('mark')):
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
+
+@app.route('/set_marks', methods=['POST'])
+def set_marks():
+    """複数のマーク（{rows, mark, on}。mark は ★●▲■）"""
+    data = request.get_json() or {}
+    rows = data.get('rows')
+    if not caption_tool.set_marks(rows, data.get('mark'), data.get('on')):
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
+
+@app.route('/clear_marks', methods=['POST'])
+def clear_marks():
+    """マークの列を全行で消す（{column}。mark か marks）"""
+    data = request.get_json() or {}
+    success = caption_tool.clear_marks(data.get('column'))
+    return jsonify({'success': success, 'message': caption_tool.last_error})
 
 @app.route('/add_phrase', methods=['POST'])
 def add_phrase_to_rows():

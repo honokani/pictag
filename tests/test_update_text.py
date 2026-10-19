@@ -41,7 +41,7 @@ def test_update_text_rejects_unknown_section(loaded, tool):
     assert "zzz" not in tool.df.columns
 
 
-@pytest.mark.parametrize("section", ["サムネイル", "is_dead"])
+@pytest.mark.parametrize("section", ["サムネイル", "is_dead", "mark", "marks"])
 def test_update_text_rejects_fixed_columns(loaded, tool, section):
     before = tool.df.copy()
     assert loaded.write(0, "x", section=section)["success"] is False

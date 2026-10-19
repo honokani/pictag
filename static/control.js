@@ -15,6 +15,8 @@ const state = {
     fixedSections: [],    // 固定の段落（外せない・改名できない）
     autoKeys: [],         // 自動で作るキー（characters。入力欄には出さない）
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
+    markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
+    filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count}]
     words: [],            // キーなしの文の単語 [{section, word, count}]
@@ -236,7 +238,17 @@ function lineStartCandidates(section, ctx) {
     ]);
 }
 
-const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates};
+// 一括入力でキーなしを選んだとき: 文と単語（1文字以上打ったときだけ）
+function keylessCandidates(section, ctx) {
+    if (!ctx.query) return [];
+    return keepBest([
+        ...state.phrases.filter(p => !p.key)
+            .map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})),
+        ...wordCandidates(section, ctx),
+    ]);
+}
+
+const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates};
 
 function candidates(section, ctx) {
     return CANDIDATE_SOURCES[ctx.mode](section, ctx)
@@ -246,8 +258,8 @@ function candidates(section, ctx) {
         .slice(0, 20);
 }
 
-function showSuggestions(el, section) {
-    const ctx = contextOf(el);
+function showSuggestions(el, section, contextFor = contextOf) {
+    const ctx = contextFor(el);
     const items = candidates(section, ctx);
     if (!items.length) {
         hideSuggestions();
@@ -323,6 +335,7 @@ function refreshWords() {
             .then(body => {
                 state.phrases = body.phrases;
                 state.words = body.words;
+                fillBulkKeys();
             })
             .catch(e => console.warn('辞書を読めません', e));
     }, 100);
@@ -334,12 +347,30 @@ function headHtml() {
     return [
         '<th>サムネイル</th>',
         '<th>画像 / トークン</th>',
+        '<th>マーク</th>',
         ...state.sections.map(s => (state.fixedSections.includes(s)
             ? `<th data-section="${escapeHtml(s)}"><span class="section-name fixed">${escapeHtml(s)}</span></th>`
             : `<th data-section="${escapeHtml(s)}"><span class="section-name" title="ダブルクリックで改名">${escapeHtml(s)}</span>` +
               `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${escapeHtml(s)} を外す">×</button></th>`)),
         ...(state.hasHints ? ['<th class="hint-head" title="画像と同じ名前の .txt（読むだけ。保存には影響しない）">hint</th>'] : []),
     ].join('');
+}
+
+// マークの欄: 排他（A〜D のどれか1つ）と複数（★●▲■）のボタン
+function marksHtml(row) {
+    const button = (kind, mark, on) =>
+        `<button type="button" class="mark-btn${on ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}">${mark}</button>`;
+    const one = state.markChoices.one.map(m => button('one', m, row.mark === m)).join('');
+    const many = state.markChoices.many.map(m => button('many', m, (row.marks || '').includes(m))).join('');
+    return `<td class="marks"><div class="mark-row">${one}</div><div class="mark-row">${many}</div></td>`;
+}
+
+// マークの絞り込みに合うか
+function matchesFilter(row) {
+    const {one, many} = state.filter;
+    const okOne = !one || (one === 'none' ? !row.mark : row.mark === one);
+    const okMany = !many || (many === 'none' ? !row.marks : (row.marks || '').includes(many));
+    return okOne && okMany;
 }
 
 // hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）
@@ -385,11 +416,12 @@ function cellHtml(section, row) {
 
 function rowHtml(row) {
     const name = row['サムネイル'];
-    const classes = [row.is_dead ? 'dead' : '', state.selected.has(row.index) ? 'selected' : ''].filter(Boolean).join(' ');
+    const classes = [row.is_dead ? 'dead' : '', state.selected.has(row.index) ? 'selected' : '',
+        matchesFilter(row) ? '' : 'filtered'].filter(Boolean).join(' ');
     const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row)}</td>`).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt=""></td>` +
-        `<td class="meta">${metaHtml(row)}</td>${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
+        `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
 }
 
 const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}"]`);
@@ -400,8 +432,10 @@ function renderTable() {
     const bulkSection = $('bulkSection').value;  // 描き直しても一括入力の段落は選んだままにする
     $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;
+    fillBulkKeys();
     $('emptyNote').hidden = state.loaded;
     $('tools').hidden = !state.loaded;
+    $('markTools').hidden = !state.loaded;
     setDirty(state.dirty);
     updateSelectionInfo();
 }
@@ -425,6 +459,8 @@ async function refreshTable() {
     state.fixedSections = body.fixed_sections;
     state.autoKeys = body.auto_keys;
     state.viewChoices = body.view_choices;
+    if (state.markChoices.one.length === 0) fillMarkFilters(body.mark_choices);
+    state.markChoices = body.mark_choices;
     state.selected = new Set([...state.selected].filter(i => state.byIndex.has(i)));
     if (!state.byIndex.has(state.anchor)) state.anchor = null;
     state.loaded = true;
@@ -439,6 +475,12 @@ function startEdit(td) {
     commitEdit();
     const index = Number(td.closest('tr').dataset.index);
     const section = td.dataset.section;
+    // 編集する行を選択状態にする（選択中の行の中なら選択はそのまま）
+    if (!state.selected.has(index)) {
+        state.selected = new Set([index]);
+        state.anchor = index;
+        paintSelection();
+    }
     const keys = editKeys(section);
     const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
     const el = document.createElement('textarea');
@@ -520,7 +562,19 @@ async function choose(button) {
 
 function visibleIndexes() {
     const showDead = $('showDead').checked;
-    return state.rows.filter(r => showDead || !r.is_dead).map(r => r.index);
+    return state.rows.filter(r => (showDead || !r.is_dead) && matchesFilter(r)).map(r => r.index);
+}
+
+function selectVisible() {
+    state.selected = new Set(visibleIndexes());
+    paintSelection();
+}
+
+// 見えなくなった行を選択から外す
+function dropHiddenFromSelection() {
+    const visible = new Set(visibleIndexes());
+    state.selected = new Set([...state.selected].filter(i => visible.has(i)));
+    paintSelection();
 }
 
 function selectRow(index, event) {
@@ -550,6 +604,9 @@ function paintSelection() {
 
 function updateSelectionInfo() {
     $('selectionInfo').textContent = `選択 ${state.selected.size} 行`;
+    // 行を選んでいる間は、キーの案内の代わりに一括入力を出す
+    $('bulkForm').hidden = state.selected.size === 0;
+    $('keyHelp').hidden = state.selected.size > 0;
 }
 
 // ---- 操作 ----
@@ -557,9 +614,11 @@ function updateSelectionInfo() {
 async function bulkEdit(op) {
     commitEdit();
     const rows = visibleIndexes().filter(i => state.selected.has(i));
-    const text = $('bulkText').value.trim();
+    const phrases = $('bulkText').value.trim();
+    const key = $('bulkKey').value;
     if (!rows.length) return setStatus('行を選んでください', 'error');
-    if (!text) return setStatus('語句を入力してください', 'error');
+    if (!phrases) return setStatus('語句を入力してください', 'error');
+    const text = key ? `${key}: ${phrases}` : phrases;
     await settled();
     const res = await postJson(op === 'add' ? '/add_phrase' : '/remove_phrase', {rows, section: $('bulkSection').value, text});
     if (!res.success) return setStatus(res.message || '一括入力できませんでした', 'error');
@@ -688,13 +747,150 @@ async function removeDead() {
 }
 
 function toggleDead() {
-    const show = $('showDead').checked;
-    $('grid').classList.toggle('hide-dead', !show);
-    if (!show) {
-        const visible = new Set(visibleIndexes());
-        state.selected = new Set([...state.selected].filter(i => visible.has(i)));
-        paintSelection();
+    $('grid').classList.toggle('hide-dead', !$('showDead').checked);
+    dropHiddenFromSelection();
+}
+
+// ---- マーキング ----
+
+function fillMarkFilters(choices) {
+    const options = (all, marks) => [`<option value="">${all}</option>`,
+        ...marks.map(m => `<option value="${m}">${m}</option>`), '<option value="none">なし</option>'].join('');
+    $('filterOne').innerHTML = options('排他: すべて', choices.one);
+    $('filterMany').innerHTML = options('複数: すべて', choices.many);
+}
+
+function applyFilter() {
+    state.filter = {one: $('filterOne').value, many: $('filterMany').value};
+    for (const tr of $('gridBody').rows) {
+        tr.classList.toggle('filtered', !matchesFilter(state.byIndex.get(Number(tr.dataset.index))));
     }
+    dropHiddenFromSelection();
+}
+
+// 対象の行: 押した行が選択中なら選択中の（見えている）全行、そうでなければその行だけ
+function targetRows(index) {
+    return state.selected.has(index) ? visibleIndexes().filter(i => state.selected.has(i)) : [index];
+}
+
+async function sendMarks(url, payload) {
+    commitEdit();
+    await settled();
+    const res = await postJson(url, payload);
+    if (!res.success) return setStatus(res.message || 'マークを付けられませんでした', 'error');
+    res.rows.forEach(replaceRow);
+    setDirty(true);
+}
+
+// 排他のマーク: 対象の行がみなそのマークなら外し、そうでなければ付ける
+function markOne(rows, mark) {
+    const all = rows.every(i => state.byIndex.get(i).mark === mark);
+    return sendMarks('/set_mark', {rows, mark: all ? '' : mark});
+}
+
+// 複数のマーク: 対象の行がみなその記号を持っていれば外し、そうでなければ付ける
+function markMany(rows, mark) {
+    const all = rows.every(i => (state.byIndex.get(i).marks || '').includes(mark));
+    return sendMarks('/set_marks', {rows, mark, on: !all});
+}
+
+function clickMark(button) {
+    const rows = targetRows(Number(button.closest('tr').dataset.index));
+    return button.dataset.kind === 'one' ? markOne(rows, button.dataset.mark) : markMany(rows, button.dataset.mark);
+}
+
+// キーボード（入力欄の外で）: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■。Ctrl+A で表示中をすべて選択
+function handleMarkKey(event) {
+    const typing = event.target instanceof Element && event.target.closest('input, textarea, select');
+    if (typing || !state.loaded) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        selectVisible();
+        return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey || !/^[0-8]$/.test(event.key)) return;
+    const rows = visibleIndexes().filter(i => state.selected.has(i));
+    if (!rows.length) return setStatus('先に行を選んでください', 'error');
+    event.preventDefault();
+    const n = Number(event.key);
+    if (n === 0) guarded(sendMarks)('/set_mark', {rows, mark: ''});
+    else if (n <= 4) guarded(markOne)(rows, state.markChoices.one[n - 1]);
+    else guarded(markMany)(rows, state.markChoices.many[n - 5]);
+}
+
+// 長押し（1秒）でマークの列を全行クリア。短く押しただけなら案内だけ出す
+const HOLD_MS = 1000;  // 長押しで実行するまでの時間（ボタンの中の帯もこの時間で満タンになる）
+
+// 長押し（1秒）で run を行う。押している間はボタンの中で帯が伸び、満タンで実行。短く押しただけなら hint を出すだけ
+function holdToRun(button, run, hint) {
+    button.style.setProperty('--hold-ms', `${HOLD_MS}ms`);
+    let timer = null;
+    const cancel = () => {
+        if (timer === null) return;
+        clearTimeout(timer);
+        timer = null;
+        button.classList.remove('holding');
+        setStatus(hint);
+    };
+    button.addEventListener('pointerdown', () => {
+        button.classList.add('holding');
+        timer = setTimeout(() => {
+            timer = null;
+            button.classList.remove('holding');
+            guarded(run)();
+        }, HOLD_MS);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(name => button.addEventListener(name, cancel));
+}
+
+async function clearMarks(column) {
+    const res = await postJson('/clear_marks', {column});
+    if (!res.success) return setStatus(res.message, 'error');
+    setDirty(true);
+    await refreshTable();
+    setStatus(`全行の ${column === 'mark' ? 'A〜D' : '★●▲■'} を消しました`, 'ok');
+}
+
+async function deselectAll() {
+    state.selected = new Set();
+    state.anchor = null;
+    paintSelection();
+    setStatus('選択を解除しました', 'ok');
+}
+
+// 一括入力のキー: 段落の確定タグ、辞書でその段落に使われたキー、（キーなし）
+function bulkKeys(section) {
+    const template = editKeys(section);
+    const used = [...new Set(state.phrases.filter(p => p.section === section && p.key).map(p => p.key))];
+    const keys = [...template, ...used.filter(k => !template.includes(k))];
+    return template.length ? [...keys, ''] : ['', ...keys];
+}
+
+function fillBulkKeys() {
+    // 前に選んでいたキーが新しい段落にもあれば残す（最初の1回は先頭のキー）
+    const keep = $('bulkKey').options.length ? $('bulkKey').value : null;
+    const keys = bulkKeys($('bulkSection').value);
+    $('bulkKey').innerHTML = keys.map(k => `<option value="${escapeHtml(k)}">${k ? escapeHtml(k) : '（キーなし）'}</option>`).join('');
+    if (keys.includes(keep)) $('bulkKey').value = keep;
+}
+
+// 一括入力の語句の欄の文脈: キーは選んだもの。キーなしなら文と単語
+function bulkContext(el) {
+    const key = $('bulkKey').value;
+    const value = el.value;
+    const caret = el.selectionStart;
+    const before = value.slice(0, caret);
+    const base = {caret, restEmpty: value.slice(caret).trim() === '', current: key ? splitPhrases(value) : []};
+    if (key) {
+        const segment = before.lastIndexOf(',') + 1;
+        const raw = before.slice(segment);
+        const query = raw.trimStart();
+        return {...base, mode: 'phrase', key, query, queryStart: segment + (raw.length - query.length)};
+    }
+    const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
+    if (lastBreak >= 0) return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1};
+    const query = before.trimStart();
+    return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
 }
 
 function openImage(name) {
@@ -723,14 +919,32 @@ function wire() {
         event.preventDefault();
         guarded(bulkEdit)(event.submitter ? event.submitter.value : 'add');
     });
-    $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value));
+    $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value, bulkContext));
+    $('bulkSection').addEventListener('change', () => {
+        fillBulkKeys();
+        hideSuggestions();
+    });
+    $('bulkKey').addEventListener('change', hideSuggestions);
     $('bulkText').addEventListener('keydown', handleSuggestKey);
     $('bulkText').addEventListener('blur', hideSuggestions);
+
+    $('filterOne').addEventListener('change', applyFilter);
+    $('filterMany').addEventListener('change', applyFilter);
+    $('selectVisibleButton').addEventListener('click', selectVisible);
+    document.querySelectorAll('.clear-marks .hold').forEach(button =>
+        holdToRun(button, () => clearMarks(button.dataset.column), '1秒長押しすると、全行のマークを消します'));
+    holdToRun($('deselectButton'), deselectAll, '1秒長押しすると、選択を解除します');
+    document.addEventListener('keydown', handleMarkKey);
 
     $('gridBody').addEventListener('click', event => {
         const choice = event.target.closest('.choice');
         if (choice) {
             guarded(choose)(choice);
+            return;
+        }
+        const markButton = event.target.closest('.mark-btn');
+        if (markButton) {
+            guarded(clickMark)(markButton);
             return;
         }
         const td = event.target.closest('td');
