@@ -13,7 +13,7 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from subjects import CAMERA_GROUPS, characters_of, name_for_new, pov_choices
+from subjects import CAMERA_EMOJI, CAMERA_GROUPS, characters_of, name_for_new, pov_choices
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
@@ -38,7 +38,7 @@ SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォ�
 CAPTION_EXT = '.caption'  # 書き出すキャプションの拡張子（captions/<画像名>.caption）
 HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡張子のファイルは hint（読むだけ）
 FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
-DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl']  # 新規プロジェクトの段落（guy や dog は必要なときに足す）
+DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl', 'guy']  # 新規プロジェクトの段落（dog などは必要なときに足す。空の段落は出力しない）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
 LOCAL_ADDRESSES = {'127.0.0.1', '::1'}  # フォルダを選ぶ窓は、このPCから開いたときだけ（窓はこのPCに出る）
 
@@ -872,7 +872,8 @@ def get_table_data():
     """
     df = caption_tool.df
     common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS,
-              'auto_keys': AUTO_KEYS, 'view_choices': {'camera': CAMERA_GROUPS, 'pov': pov_choices(caption_tool.subjects())},
+              'auto_keys': AUTO_KEYS,
+              'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'pov': pov_choices(caption_tool.subjects())},
               'mark_choices': {'one': ONE, 'many': MANY}}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})

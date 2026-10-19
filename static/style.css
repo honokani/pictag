@@ -122,6 +122,12 @@ td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width:
 .choice { padding: 0 5px; border-radius: 3px; border-color: #ccc; color: #444; line-height: 1.6; }
 .choice.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 .choice.clear { color: #999; }
+.choices .choice:not(.clear) { font-size: 14px; line-height: 1.4; }  /* 絵文字が小さくならないように */
+/* 👀 の人物のボタン: 女性はピンク、男性は青（押していなくても薄く色を付ける） */
+.choice.female { background: #fde8f1; border-color: #f2a7c6; }
+.choice.female.on { background: #d81b60; border-color: #d81b60; color: #fff; }
+.choice.male { background: #e3eefc; border-color: #9fbff0; }
+.choice.male.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 

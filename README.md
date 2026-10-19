@@ -5,9 +5,9 @@
 
 ## 特徴
 - Flask ベースの軽量 Web アプリ。画像ディレクトリを読み込み、サムネイルを自動で作ります
-- 段落は、固定の picture / action と、人物などの段落（girl。guy や dog は必要なときに足す）です
+- 段落は、固定の picture / action と、人物などの段落（新規は girl と guy。dog などは必要なときに足す）です。空の段落は書き出しません
 - 確定タグ（picture は place / characters / vibes / view / extra、人物などは looks / clothes / body）は、空の欄にも薄く出ます。characters は入力のある人物の段落から自動で作ります（1 girl + 2 guys (guy A, guy B)）。同じ人物の段落を足すと A, B, … が付きます
-- view はボタンでも選べます（🎥 front / side / behind・above / below・close-up、👀 人物ごとの POV・third-person。各組の ☓ で外す）
+- view はボタンでも選べます。🎥 は向き（🧍 front・🚶 side・🔙 behind）、高さ（🦅 above・🐛 below）、ショットの大きさ（🔍 close-up・🖼️ portrait・👕 medium shot・🏞️ long shot）の組から1つずつ。👀 は人物ごとの POV（👧 A のように絵文字と A, B。女性はピンク、男性は青）か 👥 third-person。各組の ☓ で外します。語句はボタンにマウスを載せると見えます
 - 画像フォルダに画像と同じ名前の .txt があれば、右端の hint 列に出します（読むだけ。保存やキャプションには影響しません）
 - 入力欄で打つと、辞書から fzf のようなあいまい検索で候補が出ます。キーの後ろでは語句を、action などのキーの無い文では単語を補完します
 - 辞書は全プロジェクトの入力から作ります。新しい語句は使った時点で入り、どの画像からも消えると消えます。「共用辞書に入れる」で今の辞書を共用辞書に入れると、使われなくなっても候補に残ります

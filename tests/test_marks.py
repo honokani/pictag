@@ -95,7 +95,7 @@ def test_table_data_has_marks_and_choices(api, imgs):
     body = api.table()
     assert body["mark_choices"] == {"one": ["A", "B", "C", "D"], "many": ["★", "●", "▲", "■"]}
     assert [(r["mark"], r["marks"]) for r in body["data"]] == [("A", ""), ("", ""), ("", "")]
-    assert body["sections"] == ["picture", "action", "girl"]
+    assert body["sections"] == ["picture", "action", "girl", "guy"]
 
 
 @pytest.mark.parametrize("name", ["mark", "marks"])

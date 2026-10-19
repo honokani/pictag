@@ -99,7 +99,7 @@ def test_browse_cancelled_leaves_things_as_they_are(page, monkeypatch):
 
 def test_load_shows_rows_sections_and_template_keys(page, imgs):
     load_dir(page, imgs)
-    assert section_names(page) == ["picture", "action", "girl"]
+    assert section_names(page) == ["picture", "action", "girl", "guy"]
     expect(page.locator("#gridBody tr")).to_have_count(3)
     expect(tokens_of(page, "a.png")).to_have_text("0 / 507")
     expect(page.locator('#projectSelect option[value="proj"]')).to_be_attached()
@@ -273,8 +273,8 @@ def test_sections_add_rename_remove(page, imgs):
     load_dir(page, imgs)
     page.fill("#sectionName", "dog")
     page.click("#sectionForm button")
-    expect(page.locator("#gridHead .section-name")).to_have_count(4)
-    assert section_names(page) == ["picture", "action", "girl", "dog"]
+    expect(page.locator("#gridHead .section-name")).to_have_count(5)
+    assert section_names(page) == ["picture", "action", "girl", "guy", "dog"]
     # 足した段落も人物用の確定タグを使う
     expect(cell(page, "a.png", "dog").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
 
@@ -284,7 +284,7 @@ def test_sections_add_rename_remove(page, imgs):
 
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator('#gridHead th[data-section="dog A"] .remove-section').click()
-    expect(page.locator("#gridHead .section-name")).to_have_count(3)
+    expect(page.locator("#gridHead .section-name")).to_have_count(4)
 
 
 def test_dead_rows_toggle_and_remove(page, imgs):
@@ -349,8 +349,9 @@ def picture_view(page, name):
     return cell(page, name, "picture").locator(".ln", has_text="view:")
 
 
-def choice(page, name, label):
-    return cell(page, name, "picture").locator(".choice", has_text=label)
+def choice(page, name, phrase):
+    """view のボタン（語句で指す。ボタンの表示は絵文字）"""
+    return cell(page, name, "picture").locator(f'.choice[data-phrase="{phrase}"]')
 
 
 def test_picture_shows_characters_automatically(page, imgs):
@@ -370,33 +371,59 @@ def test_adding_girl_twice_names_them_a_and_b(page, imgs):
     load_dir(page, imgs)
     page.fill("#sectionName", "girl")
     page.click("#sectionForm button")
-    expect(page.locator("#gridHead .section-name")).to_have_count(4)
-    assert section_names(page) == ["picture", "action", "girl A", "girl B"]
-    expect(choice(page, "a.png", "girl B")).to_have_text("👧 girl B")
+    expect(page.locator("#gridHead .section-name")).to_have_count(5)
+    assert section_names(page) == ["picture", "action", "girl A", "guy", "girl B"]
+    expect(choice(page, "a.png", "girl B POV")).to_have_text("👧 B")
 
 
 def test_view_buttons_toggle_and_clear(page, imgs):
     load_dir(page, imgs)
-    choice(page, "a.png", "behind").click()
+    choice(page, "a.png", "from behind").click()
     expect(picture_view(page, "a.png")).to_have_text("view: from behind")
-    expect(choice(page, "a.png", "behind")).to_have_class("choice on")
-    choice(page, "a.png", "front").click()
+    expect(choice(page, "a.png", "from behind")).to_have_class("choice on")
+    choice(page, "a.png", "from front").click()
     expect(picture_view(page, "a.png")).to_have_text("view: from front")
-    choice(page, "a.png", "above").click()
-    choice(page, "a.png", "girl").click()
+    choice(page, "a.png", "from above").click()
+    choice(page, "a.png", "girl POV").click()
     expect(picture_view(page, "a.png")).to_have_text("view: from front, from above, girl POV")
 
     cell(page, "a.png", "picture").locator('.choice.clear[data-group="camera0"]').click()
     expect(picture_view(page, "a.png")).to_have_text("view: from above, girl POV")
-    choice(page, "a.png", "girl").click()
+    choice(page, "a.png", "girl POV").click()
     expect(picture_view(page, "a.png")).to_have_text("view: from above")
+
+
+def test_view_buttons_show_emoji_and_shot_sizes_are_one_group(page, imgs):
+    load_dir(page, imgs)
+    expect(choice(page, "a.png", "from front")).to_have_text("🧍")
+    expect(choice(page, "a.png", "medium shot")).to_have_attribute("title", "medium shot")  # 語句はマウスを載せると見える
+    choice(page, "a.png", "medium shot").click()
+    choice(page, "a.png", "third-person POV").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: medium shot, third-person POV")
+    choice(page, "a.png", "long shot").click()  # ショットの大きさは1つだけ。POV とは同時に選べる
+    expect(picture_view(page, "a.png")).to_have_text("view: third-person POV, long shot")
+
+
+def test_pov_buttons_show_letters_and_are_colored_by_gender(page, imgs):
+    load_dir(page, imgs)
+    expect(choice(page, "a.png", "guy POV")).to_have_text("👨")  # guy は最初からある
+    page.fill("#sectionName", "guy")
+    page.click("#sectionForm button")
+    expect(choice(page, "a.png", "guy B POV")).to_have_text("👨 B")
+    expect(choice(page, "a.png", "third-person POV")).to_have_text("👥")
+
+    girl, guy = choice(page, "a.png", "girl POV"), choice(page, "a.png", "guy A POV")
+    expect(girl).to_have_class("choice female")
+    expect(guy).to_have_class("choice male")
+    background = "el => getComputedStyle(el).backgroundColor"
+    assert girl.evaluate(background) != guy.evaluate(background)
 
 
 def test_view_button_applies_to_selected_rows(page, imgs):
     load_dir(page, imgs)
     row(page, "a.png").locator("td.meta").click()
     row(page, "b.png").locator("td.meta").click(modifiers=["Shift"])
-    choice(page, "a.png", "close-up").click()
+    choice(page, "a.png", "close-up").click()  # 語句で指すので、表示が絵文字でもそのまま
     for name in ["a.png", "b.png"]:
         expect(picture_view(page, name)).to_have_text("view: close-up")
     expect(picture_view(page, "c.png")).to_have_class("ln empty")
@@ -415,8 +442,8 @@ def test_adding_sections_quickly_keeps_the_next_name(page, imgs):
     page.click("#sectionForm button")
     page.fill("#sectionName", "cat")  # 1つ目の応答を待たずに次を打つ
     page.click("#sectionForm button")
-    expect(page.locator("#gridHead .section-name")).to_have_count(5)
-    assert section_names(page) == ["picture", "action", "girl", "dog", "cat"]
+    expect(page.locator("#gridHead .section-name")).to_have_count(6)
+    assert section_names(page) == ["picture", "action", "girl", "guy", "dog", "cat"]
 
 
 def test_clicking_beside_view_buttons_does_not_open_editor(page, imgs):

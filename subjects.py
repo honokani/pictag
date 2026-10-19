@@ -6,13 +6,20 @@ from caption_format import group_in_order
 LETTERED = re.compile(r'^(.*\S) ([A-Z])$')  # guy A の「 A」
 IRREGULAR_PLURALS = {'man': 'men', 'woman': 'women', 'person': 'people', 'child': 'children'}
 
-# POV のボタンの絵文字（段落の名前の A, B を除いた部分で決める）
+# POV のボタンの絵文字（段落の名前の A, B を除いた部分で決める）と色（女性・男性）
 EMOJI = {'girl': '👧', 'woman': '👩', 'guy': '👨', 'man': '👨', 'boy': '👦', 'dog': '🐕', 'cat': '🐈'}
 OTHER_EMOJI = '👤'
-THIRD_PERSON = {'emoji': '👥', 'label': 'third-person', 'phrase': 'third-person POV'}
+FEMALE = {'girl', 'woman'}
+MALE = {'guy', 'man', 'boy'}
+THIRD_PERSON = {'emoji': '👥', 'label': '', 'tone': '', 'phrase': 'third-person POV'}
 
 # view の 🎥 の選択肢。組の中は1つだけ（☓ で組の語句を消す）。view の行には自由記述も書ける
-CAMERA_GROUPS = [['from front', 'from side', 'from behind'], ['from above', 'from below'], ['close-up']]
+# 3つ目の組はショットの大きさ（寄り → 引き）
+CAMERA_GROUPS = [['from front', 'from side', 'from behind'], ['from above', 'from below'],
+                 ['close-up', 'portrait', 'medium shot', 'long shot']]
+# 🎥 のボタンの絵文字（語句はボタンにマウスを載せると見える）。above / below は鳥の目・虫の目
+CAMERA_EMOJI = {'from front': '🧍', 'from side': '🚶', 'from behind': '🔙', 'from above': '🦅', 'from below': '🐛',
+                'close-up': '🔍', 'portrait': '🖼️', 'medium shot': '👕', 'long shot': '🏞️'}
 
 
 def base_name(section):
@@ -53,7 +60,20 @@ def name_for_new(name, sections):
     return renames, f'{base} {following}'
 
 
+def tone_of(base):
+    """POV のボタンの色: female / male / ''（それ以外）"""
+    return 'female' if base in FEMALE else 'male' if base in MALE else ''
+
+
 def pov_choices(subjects):
-    """view の 👀 の選択肢: 人物ごとの POV と、第三者の POV"""
-    return [*({'emoji': EMOJI.get(base_name(s), OTHER_EMOJI), 'label': s, 'phrase': f'{s} POV'} for s in subjects),
-            THIRD_PERSON]
+    """view の 👀 の選択肢: 人物ごとの POV と、第三者の POV
+
+    ボタンは絵文字と A, B の文字（girl A → 👧 A）。絵文字の決まっていない名前は、見分けられるよう名前を残す（👤 alien）
+    """
+    def choice(section):
+        base = base_name(section)
+        lettered = LETTERED.match(section)
+        label = (lettered.group(2) if lettered else '') if base in EMOJI else section
+        return {'emoji': EMOJI.get(base, OTHER_EMOJI), 'label': label, 'tone': tone_of(base), 'phrase': f'{section} POV'}
+
+    return [*map(choice, subjects), THIRD_PERSON]
