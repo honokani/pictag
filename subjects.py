@@ -14,13 +14,14 @@ MALE = {'guy', 'man', 'boy'}
 THIRD_PERSON = {'emoji': '👥', 'label': '', 'tone': '', 'phrase': 'third-person POV'}
 
 # view の 🎥 の選択肢。組の中は1つだけ（☓ で組の語句を消す）。view の行には自由記述も書ける
-# 3つ目の組はショットの大きさ（寄り → 引き）
-CAMERA_GROUPS = [['from front', 'from side', 'from behind'], ['from above', 'from below'],
+# 2つ目の組は高さ（上 → 目の高さ → 下）、3つ目の組はショットの大きさ（寄り → 引き）
+CAMERA_GROUPS = [['from front', 'from side', 'from behind'], ['from above', 'eye level', 'from below'],
                  ['close-up', 'portrait', 'medium shot', 'long shot']]
 # 後ろに対象を書ける語句（close-up face）。ボタンでは、対象の付いたものも同じ語句として扱う
 TARGETED = ['close-up']
-# 🎥 のボタンの絵文字（語句はボタンにマウスを載せると見える）。above / below は鳥の目・虫の目
-CAMERA_EMOJI = {'from front': '🧍', 'from side': '🚶', 'from behind': '🔙', 'from above': '🦅', 'from below': '🐛',
+# 🎥 のボタンの絵文字（語句はボタンにマウスを載せると見える）。above / below は鳥の目・虫の目、eye level は人の目
+CAMERA_EMOJI = {'from front': '🧍', 'from side': '🚶', 'from behind': '🔙',
+                'from above': '🦅', 'eye level': '👁️', 'from below': '🐛',
                 'close-up': '🔍', 'portrait': '🖼️', 'medium shot': '👕', 'long shot': '🏞️'}
 
 

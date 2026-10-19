@@ -65,6 +65,6 @@ def test_pov_tone_by_gender():
 
 
 def test_camera_groups_and_emoji():
-    assert CAMERA_GROUPS == [["from front", "from side", "from behind"], ["from above", "from below"],
+    assert CAMERA_GROUPS == [["from front", "from side", "from behind"], ["from above", "eye level", "from below"],
                              ["close-up", "portrait", "medium shot", "long shot"]]
     assert sorted(CAMERA_EMOJI) == sorted(p for group in CAMERA_GROUPS for p in group)  # どのボタンにも絵文字
