@@ -132,8 +132,21 @@ td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width:
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 
-td.hint { min-width: 220px; width: 100%; }
-td.hint textarea { width: 100%; font-size: 12px; color: #555; background: #fafafa; resize: vertical; }
+/* hint は全文を出す（高さは中身に合わせ、中でスクロールしない）。右上のボタンで畳む */
+td.hint { min-width: 220px; width: 100%; position: relative; }
+td.hint textarea {
+    display: block;
+    width: 100%;
+    padding-right: 26px;  /* 畳むボタンに文字が隠れないように */
+    font-size: 12px;
+    color: #555;
+    background: #fafafa;
+    resize: none;
+    overflow: hidden;
+    field-sizing: content;
+}
+.hint-toggle { position: absolute; top: 6px; right: 8px; padding: 0 5px; font-size: 12px; line-height: 1.4; color: #777; }
+td.hint.folded .hint-toggle { position: static; }
 
 td.marks { width: 63px; }  /* ボタン2つ分（24px × 2 + 間 2px + 左右の余白） */
 .mark-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 2px; }
