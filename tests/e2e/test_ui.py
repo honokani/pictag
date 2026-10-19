@@ -225,9 +225,101 @@ def test_action_suggests_words_inside_a_sentence(page, imgs):
     editor.press_sequentially("girl sp")
     expect(page.locator("#suggestions li.active")).to_contain_text("spread")
     editor.press("Enter")
-    assert editor.input_value() == "girl spread "
+    assert editor.input_value() == "girl spread, "  # 行末なら ", "（欄を離れると行末のカンマは消える）
     editor.press_sequentially("wa")
     expect(page.locator("#suggestions li.active")).to_contain_text("waist")
+
+
+def write_spread(page):
+    """action に spread（2回）と、ほかの単語（1回ずつ）を入れる"""
+    write(page, "a.png", "girl spread arms", section="action")
+    write(page, "c.png", "guy spread legs", section="action")
+    wait_for_word(page, "legs")
+
+
+def test_two_spaces_after_a_word_show_words_and_a_third_hides_them(page, imgs):
+    load_dir(page, imgs)
+    write_spread(page)
+
+    editor = open_editor(page, "b.png", section="action")
+    suggestions = page.locator("#suggestions")
+    shown = page.locator("#suggestions:visible li.active")  # しまった一覧の項目は残るので、見えているものだけ
+    editor.press_sequentially("girl ")
+    expect(suggestions).to_be_hidden()  # スペース1つでは出さない
+    editor.press_sequentially(" ")
+    expect(shown).to_contain_text("spread")  # 打たなくても、よく使う順
+    editor.press_sequentially(" ")
+    expect(suggestions).to_be_hidden()  # 3つ目でしまう
+    editor.press("Backspace")
+    expect(shown).to_contain_text("spread")
+    editor.press("Tab")
+    assert editor.input_value() == "girl spread, "  # 2つのスペースは1つにまとめる
+
+
+def test_two_spaces_inside_a_sentence_insert_a_word_between(page, imgs):
+    load_dir(page, imgs)
+    write_spread(page)
+
+    editor = open_editor(page, "b.png", section="action")
+    editor.fill("girl arms")
+    editor.evaluate("el => el.setSelectionRange(5, 5)")  # girl␣|arms
+    editor.press_sequentially(" ")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("spread")
+    editor.press("Tab")
+    assert editor.input_value() == "girl spread arms"  # 後ろの語とは空白1つで分ける
+
+
+def test_word_chosen_before_a_comma_keeps_that_comma(page, imgs):
+    load_dir(page, imgs)
+    write_spread(page)
+
+    editor = open_editor(page, "b.png", section="action")
+    editor.fill("girl spread, ")
+    editor.evaluate("el => el.setSelectionRange(11, 11)")  # girl spread|,
+    editor.press_sequentially(" ar")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("arms")
+    editor.press("Tab")
+    assert editor.input_value() == "girl spread arms, "  # 後ろにカンマがあれば足さない（重ねない）
+
+
+def test_spaces_do_not_hide_phrase_suggestions_of_a_key(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    wait_for_phrase(page, "long hair")
+
+    editor = open_editor(page, "a.png")
+    editor.fill("")
+    editor.press_sequentially("body:   ")  # キーのある行は、スペース3つでも今のまま出す
+    expect(page.locator("#suggestions li.active")).to_contain_text("long hair")
+
+
+def test_bulk_keyless_text_shows_words_after_two_spaces(page, imgs):
+    load_dir(page, imgs)
+    write_spread(page)
+    row(page, "b.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "action")
+    bulk = page.locator("#bulkText")
+    bulk.press_sequentially("girl  ")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("spread")
+    bulk.press("Tab")
+    assert bulk.input_value() == "girl spread, "
+
+
+def test_leaving_the_editor_tidies_commas_and_spaces(page, imgs):
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png", section="action")
+    editor.fill("\n".join([
+        "a,, b", "c, , d", "e,  ,f",  # カンマの連なりは1つに
+        "g,h", "i,  j", "k , l",      # カンマの後ろは空白1つ
+        ", m  n,",                    # 頭と行末のカンマは消す。語の間の空白は1つ
+    ]))
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png", "action")).to_have_text(["a, b", "c, d", "e, f", "g, h", "i, j", "k, l", "m n"])
+
+    editor = open_editor(page, "a.png")
+    editor.fill("looks:  , standing,,smiling\nbody: long  hair ,  bare hands,")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "body: long hair, bare hands"])
 
 
 def test_freeze_puts_words_into_shared_dictionary(page, imgs, tool):
