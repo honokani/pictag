@@ -1,5 +1,6 @@
 """画面操作（Playwright）"""
 import re
+from datetime import datetime
 
 import pytest
 
@@ -157,6 +158,18 @@ def test_ctrl_s_saves(page, imgs, tool):
     page.keyboard.press("Control+s")
     expect(page.locator("#status")).to_have_text("保存しました")
     assert (tool.captions_dir / "b.caption").read_text(encoding="utf-8") == caption_of("looks: standing")
+
+
+def test_messages_show_the_time(page, imgs):
+    page.clock.set_fixed_time(datetime(2026, 10, 19, 9, 5, 3))
+    load_dir(page, imgs)
+    expect(page.locator("#status")).to_have_text("「proj」を開きました（3 枚）")
+    expect(page.locator("#statusTime")).to_have_text("09:05:03")
+
+    page.clock.set_fixed_time(datetime(2026, 10, 19, 14, 32, 5))
+    page.click("#saveButton")
+    expect(page.locator("#status")).to_have_text("保存しました")
+    expect(page.locator("#statusTime")).to_have_text("14:32:05")  # 出たままでも、いつのメッセージか分かる
 
 
 def test_suggestion_completes_phrase_of_the_line_key(page, imgs):
