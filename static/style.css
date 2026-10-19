@@ -1,0 +1,148 @@
+/* pictag — 演出なし。軽さと読みやすさを優先 */
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    font: 14px/1.5 system-ui, "Segoe UI", "Yu Gothic UI", sans-serif;
+    color: #1f1f1f;
+    background: #f6f6f6;
+}
+
+.bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 12px;
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+}
+
+.app-name { font-size: 16px; }
+.bar label { display: flex; align-items: center; gap: 6px; }
+.bar label.grow { flex: 1 1 320px; }
+.bar label.grow input { flex: 1; }
+.group { display: flex; align-items: center; gap: 6px; }
+.bulk { margin-left: auto; }
+
+input[type=text], select, textarea {
+    font: inherit;
+    padding: 4px 6px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    background: #fff;
+}
+
+#bulkText { width: 260px; }
+
+button {
+    font: inherit;
+    padding: 4px 10px;
+    border: 1px solid #bbb;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+}
+button.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+button:disabled { opacity: .45; cursor: default; }
+
+#status { color: #555; }
+#status.error { color: #c62828; font-weight: 600; }
+#status.ok { color: #2e7d32; }
+
+main { flex: 1; overflow: auto; }
+
+#emptyNote { padding: 24px; color: #777; }
+
+table {
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 100%;
+    background: #fff;
+}
+
+th, td {
+    padding: 4px 6px;
+    border-bottom: 1px solid #e6e6e6;
+    border-right: 1px solid #f0f0f0;
+    text-align: left;
+    vertical-align: top;
+}
+
+th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #eef1f5;
+    white-space: nowrap;
+}
+
+th .section-name { cursor: text; font-weight: 600; }
+th .remove-section { border: none; background: none; padding: 0 4px; color: #888; }
+
+td.thumb { width: 108px; }
+td.thumb img {
+    display: block;
+    width: 96px;
+    height: 96px;
+    object-fit: contain;
+    background: #eee;
+    cursor: zoom-in;
+}
+
+td.meta { width: 150px; cursor: pointer; user-select: none; }
+td.meta .name { font-weight: 600; word-break: break-all; }
+td.meta .tokens { color: #666; font-variant-numeric: tabular-nums; }
+td.meta .tokens.over { color: #c62828; font-weight: 700; }
+
+td.cell { min-width: 220px; max-width: 380px; cursor: text; }
+td.cell .text { white-space: pre-wrap; word-break: break-word; min-height: 1.5em; }
+td.cell .ln.empty { color: #b8b8b8; }
+td.cell .ln.auto { font-style: italic; color: #4a5a7a; }
+td.cell .ln.auto.empty { color: #b8b8b8; }
+
+td.cell[data-section="picture"] { min-width: 420px; }
+.choices { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; font-size: 12px; }
+.choice-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.choices .group { display: inline-flex; gap: 2px; }
+.choice { padding: 0 5px; border-radius: 3px; border-color: #ccc; color: #444; line-height: 1.6; }
+.choice.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+.choice.clear { color: #999; }
+th .section-name.fixed { cursor: default; }
+td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
+
+td.hint { min-width: 220px; max-width: 320px; }
+td.hint textarea { width: 100%; font-size: 12px; color: #555; background: #fafafa; resize: vertical; }
+
+tr.selected td { background: #e3edfc; }
+tr.dead td { color: #9a9a9a; }
+tr.dead img { opacity: .5; }
+#grid.hide-dead tr.dead { display: none; }
+
+.suggestions {
+    position: absolute;
+    z-index: 10;
+    min-width: 260px;
+    max-height: 260px;
+    overflow: auto;
+    margin: 0;
+    padding: 2px 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #aaa;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
+}
+.suggestions li { padding: 2px 8px; cursor: pointer; white-space: nowrap; }
+.suggestions li .count { color: #999; margin-left: 8px; font-size: 12px; }
+.suggestions li.active { background: #1a73e8; color: #fff; }
+.suggestions li.active .count { color: #dfe8fb; }
+
+dialog { max-width: 92vw; max-height: 92vh; padding: 8px 12px; border: 1px solid #999; }
+dialog::backdrop { background: rgba(0, 0, 0, .55); }
+dialog .close { float: right; border: none; font-size: 20px; line-height: 1; }
+dialog img { display: block; max-width: 88vw; max-height: 80vh; margin: 0 auto; }
+#imageTitle { margin: 0 0 6px; font-weight: 600; }

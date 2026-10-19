@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import app as pictag
-from helpers import make_images
+from helpers import caption_of, make_images
 
 
 @pytest.fixture
@@ -14,8 +14,7 @@ def imgs(tmp_path):
 
 def saved_with_tag(api, imgs):
     api.load(imgs)
-    api.add("t")
-    api.set(api.row_index("a.png"), "t")
+    api.write(api.row_index("a.png"), "t")
     api.save()
 
 
@@ -54,7 +53,7 @@ def test_open_project_with_missing_image_dir_keeps_captions(api, tool, imgs, bas
 
     res = api.open_project("proj")
     assert res["success"] is False
-    assert (base_dir / "data_out" / "proj" / "captions" / "a.txt").read_text(encoding="utf-8") == "t"
+    assert (base_dir / "data_out" / "proj" / "captions" / "a.caption").read_text(encoding="utf-8") == caption_of("t")
     assert list((base_dir / "data_out" / "proj" / "captions_dead").iterdir()) == []
 
 
@@ -78,7 +77,7 @@ def test_same_name_other_dir_is_rejected_while_registered_dir_exists(api, tool, 
     assert res["success"] is False
     assert str(imgs.resolve()) in res["message"]
     assert tgt_path(base_dir) == str(imgs.resolve())
-    assert (base_dir / "data_out" / "proj" / "captions" / "a.txt").read_text(encoding="utf-8") == "t"
+    assert (base_dir / "data_out" / "proj" / "captions" / "a.caption").read_text(encoding="utf-8") == caption_of("t")
 
 
 def test_moved_dir_updates_registration(api, tool, base_dir, imgs, tmp_path):
@@ -90,7 +89,7 @@ def test_moved_dir_updates_registration(api, tool, base_dir, imgs, tmp_path):
     assert api.load(moved / "proj")["success"]
     assert tgt_path(base_dir) == str((moved / "proj").resolve())
     row = tool.df.set_index("サムネイル").loc["a.png"]
-    assert not row["is_dead"] and row["t"]
+    assert not row["is_dead"] and row["girl"] == "t"
 
 
 def test_open_project_rejects_path_traversal(api, base_dir, imgs):

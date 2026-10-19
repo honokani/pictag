@@ -1,12 +1,9 @@
 """画面操作（Playwright）"""
-import re
-import time
-from urllib.parse import quote
-
 import pytest
 
 import app as pictag
-from helpers import make_images
+from helpers import caption_of, make_images, word_tokenizer
+from tokens import TokenCounter
 
 sync_api = pytest.importorskip("playwright.sync_api")
 expect = sync_api.expect
@@ -14,221 +11,420 @@ expect = sync_api.expect
 pytestmark = pytest.mark.e2e
 
 
+@pytest.fixture(autouse=True)
+def tokens(monkeypatch):
+    # 実物のトークナイザーは取りに行かず、空白と記号で区切る小さなもので数える
+    monkeypatch.setattr(pictag, "token_counter", TokenCounter(word_tokenizer()))
+
+
+def count(caption):
+    """テスト用のトークナイザーでのトークン数"""
+    return TokenCounter(word_tokenizer()).count(caption)
+
+
+@pytest.fixture
+def imgs(tmp_path):
+    return make_images(tmp_path / "imgs" / "proj", {"a.png": (100, 100), "b.png": (100, 100), "c.png": (800, 800)})
+
+
 # ---- 画面操作のヘルパー ----
 
-def open_app(page):
-    page.goto(page.base_url)
-    expect(page.locator("#kindSelect option").first).to_be_attached()
-
-
 def load_dir(page, imgs):
+    page.goto(page.base_url)
     page.fill("#imageDir", str(imgs))
-    page.click("button:has-text('読み込み')")
-    expect(page.locator("#tableBody tr").first).to_be_visible()
+    page.click("#loadButton")
+    expect(page.locator("#gridBody tr").first).to_be_attached()
 
 
-def row_of(page, image_name):
-    return page.locator("#tableBody tr", has=page.locator(f'img[src="/thumbnail/{quote(image_name)}"]'))
+def row(page, name):
+    return page.locator(f'#gridBody tr[data-name="{name}"]')
 
 
-def checkbox(page, image_name, column):
-    header = page.locator("#tableHeader th").all_inner_texts()
-    return row_of(page, image_name).locator("td").nth(header.index(column)).locator("input[type=checkbox]")
+def cell(page, name, section="girl"):
+    return row(page, name).locator(f'td.cell[data-section="{section}"]')
 
 
-def click_row(page, image_name, modifiers=None):
-    row_of(page, image_name).locator("td").first.click(modifiers=modifiers or [])
+def filled(page, name, section="girl"):
+    """欄の値のある行（確定タグの空のキーは除く）"""
+    return cell(page, name, section).locator(".ln:not(.empty)")
 
 
-def hide_dead(page, visible_rows):
-    page.uncheck("#isDeadVisibleToggle")
-    expect(page.locator("#tableBody tr")).to_have_count(visible_rows)
+def open_editor(page, name, section="girl"):
+    cell(page, name, section).click()
+    return cell(page, name, section).locator("textarea")
 
 
-def option_values(page, selector):
-    return page.locator(f"{selector} option").evaluate_all("els => els.map(e => e.value)")
+def write(page, name, text, section="girl"):
+    """入力欄に書いて確定する（フォーカスを外すと送信する）"""
+    editor = open_editor(page, name, section)
+    editor.fill(text)
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, name, section)).to_have_text(text.split("\n"))
 
 
-ADD_TASK = "column追加"
+def tokens_of(page, name):
+    return row(page, name).locator(".tokens")
 
 
-def choose_task(page, task, kind=None):
-    """タスクを選び、種別の選択肢の作り直しと続くキャプション読み込みが終わってから種別を選ぶ"""
-    page.select_option("#taskSelect", task)
-    has_new_kind = task == ADD_TASK  # 追加以外のタスクは new_kind を出さない
-    assert stable(lambda: ("new_kind" in option_values(page, "#kindSelect")) == has_new_kind)
-    if kind is not None:
-        page.select_option("#kindSelect", kind)
+def section_names(page):
+    return page.locator("#gridHead .section-name").all_inner_texts()
 
 
-def stable(predicate, timeout=5.0, hold=0.4):
-    """predicate が hold 秒続けて真になるまで待つ（非同期の更新が出揃うのを待つ）"""
-    end = time.monotonic() + timeout
-    since = None
-    while time.monotonic() < end:
-        if predicate():
-            since = since or time.monotonic()
-            if time.monotonic() - since >= hold:
-                return True
-        else:
-            since = None
-        time.sleep(0.05)
-    return False
+def wait_for_phrase(page, phrase):
+    page.wait_for_function("phrase => state.phrases.some(p => p.phrase === phrase)", arg=phrase)
 
 
-def flags(column):
-    """サーバー側の今の表（画像名 → 値）"""
-    return pictag.caption_tool.df.set_index("サムネイル")[column].to_dict()
-
-
-# ---- データ ----
-
-@pytest.fixture
-def imgs(api, tmp_path):
-    """a, b, c, d の4枚。タグ smile(expr), solo(people) を保存済み"""
-    imgs = make_images(tmp_path / "imgs" / "proj", {n: (100, 100) for n in ["a.png", "b.png", "c.png", "d.png"]})
-    api.load(imgs)
-    api.add("smile", kind="expr")
-    api.add("solo", kind="people")
-    api.save()
-    return imgs
-
-
-@pytest.fixture
-def imgs_b_dead(api, imgs):
-    """b を元フォルダから消して削除済みにする"""
-    (imgs / "b.png").rename(imgs.parent / "b.png.bak")
-    api.load(imgs)
-    return imgs
+def wait_for_word(page, word):
+    page.wait_for_function("word => state.words.some(w => w.word === word)", arg=word)
 
 
 # ---- テスト ----
 
-def test_kind_list_refreshes_after_opening_project(page, imgs, base_dir, monkeypatch):
-    # サーバーを「プロジェクト未読み込み」に戻してから画面を開く
-    monkeypatch.setattr(pictag, "caption_tool", pictag.CaptionTool(base_dir=base_dir))
-    open_app(page)
-    assert option_values(page, "#kindSelect") == ["new_kind", "undef"]
-
-    page.select_option("#existingProjects", "proj")
-    expect(page.locator("#tableBody tr")).to_have_count(4)
-    expect(page.locator('#kindSelect option[value="expr"]')).to_be_attached()
-    assert option_values(page, "#kindSelect") == ["new_kind", "expr", "people"]
-
-
-def test_selection_highlight_with_dead_rows_hidden(page, imgs_b_dead):
-    open_app(page)
-    load_dir(page, imgs_b_dead)
-    hide_dead(page, 3)
-
-    click_row(page, "c.png")
-    expect(row_of(page, "c.png")).to_have_class(re.compile(r"(^|\s)selected-row(\s|$)"))
-    expect(page.locator("#tableBody tr.selected-row")).to_have_count(1)
-
-
-def test_multiselect_check_with_dead_rows_hidden(page, imgs_b_dead):
-    open_app(page)
-    load_dir(page, imgs_b_dead)
-    hide_dead(page, 3)
-
-    click_row(page, "d.png", ["Control"])
-    click_row(page, "a.png", ["Control"])
-    checkbox(page, "a.png", "smile").check()
-
-    assert stable(lambda: flags("smile") == {"a.png": True, "b.png": False, "c.png": False, "d.png": True})
-    expect(checkbox(page, "d.png", "smile")).to_be_checked()
-    expect(checkbox(page, "c.png", "smile")).not_to_be_checked()
-
-
-def test_shift_range_skips_hidden_dead_rows(page, imgs_b_dead):
-    open_app(page)
-    load_dir(page, imgs_b_dead)
-    hide_dead(page, 3)
-
-    click_row(page, "a.png")
-    click_row(page, "c.png", ["Shift"])
-    expect(page.locator("#tableBody tr.selected-row")).to_have_count(2)
-    checkbox(page, "c.png", "smile").check()
-
-    assert stable(lambda: flags("smile") == {"a.png": True, "b.png": False, "c.png": True, "d.png": False})
-
-
-def test_check_after_remove_all_dead_updates_clicked_row(page, imgs_b_dead):
-    open_app(page)
-    load_dir(page, imgs_b_dead)
-    page.once("dialog", lambda d: d.accept())
-    page.click("button:has-text('削除済みを完全削除')")
-    expect(page.locator("#tableBody tr")).to_have_count(3)
-
-    checkbox(page, "c.png", "smile").check()
-    assert stable(lambda: flags("smile") == {"a.png": False, "c.png": True, "d.png": False})
-
-
-def test_rename_both_lists_only_table_columns(page, api, imgs):
-    api.add("grin", kind="expr")
-    api.post("/remove_column_from_table", {"column_name": "grin"})
-    api.save()
-    open_app(page)
+def test_load_shows_rows_sections_and_template_keys(page, imgs):
     load_dir(page, imgs)
+    assert section_names(page) == ["picture", "action", "girl"]
+    expect(page.locator("#gridBody tr")).to_have_count(3)
+    expect(tokens_of(page, "a.png")).to_have_text("0 / 507")
+    expect(page.locator('#projectSelect option[value="proj"]')).to_be_attached()
 
-    choose_task(page, "kind・column両方改名", kind="expr")
-    assert stable(lambda: option_values(page, "#captionSelect") == ["smile"])
+    # 確定タグのキーは空の欄にも薄く出る（action は確定タグなし）
+    expect(cell(page, "a.png", "picture").locator(".ln.empty")).to_have_text(["place:", "characters:", "vibes:", "view:", "extra:"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
+    expect(cell(page, "a.png", "action").locator(".ln")).to_have_count(0)
 
 
-def test_kind_with_special_characters_lists_captions(page, api, imgs):
-    api.add("Q", kind="what?#%")
-    api.save()
-    open_app(page)
+def test_fixed_sections_have_no_remove_button(page, imgs):
     load_dir(page, imgs)
+    expect(page.locator('#gridHead th[data-section="picture"] .remove-section')).to_have_count(0)
+    expect(page.locator('#gridHead th[data-section="action"] .remove-section')).to_have_count(0)
+    expect(page.locator('#gridHead th[data-section="girl"] .remove-section')).to_have_count(1)
 
-    choose_task(page, "column改名", kind="what?#%")
-    assert stable(lambda: option_values(page, "#captionSelect") == ["Q"])
 
-
-def test_kind_list_after_save_during_rename_task(page, imgs):
-    open_app(page)
+def test_editor_starts_with_template_keys_and_caret_on_first_empty_key(page, imgs, tool):
     load_dir(page, imgs)
-    choose_task(page, "column改名")
-    expect(page.locator('#kindSelect option[value="new_kind"]')).to_have_count(0)
+    editor = open_editor(page, "a.png")
+    assert editor.input_value() == "looks: \nclothes: \nbody: "
+    assert editor.evaluate("el => el.selectionStart") == len("looks: ")
 
-    # 保存後に種別一覧を読み直す（/get_kinds）のを待ってから確かめる
-    with page.expect_response(lambda r: "/get_kinds" in r.url):
-        page.click("button:has-text('保存')")
-    assert stable(lambda: "new_kind" not in option_values(page, "#kindSelect"))
+    editor.press_sequentially("standing")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["looks: standing"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["clothes:", "body:"])
+    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption_of('looks: standing'))} / 507")
+    # 値の無いキーは保存しない
+    assert tool.df.set_index("サムネイル").loc["a.png", "girl"] == "looks: standing"
 
 
-def test_rename_failure_shows_reason(page, imgs):
-    open_app(page)
+def test_edit_updates_tokens_and_preview_then_saves(page, imgs, tool):
     load_dir(page, imgs)
-    choose_task(page, "column改名", kind="people")
-    assert stable(lambda: option_values(page, "#captionSelect") == ["solo"])
-    page.select_option("#captionSelect", "solo")
-    page.fill("#captionText", "smile")
-    page.click("button:has-text('実行')")
-    expect(page.locator("#statusMessage")).to_contain_text("既にあります")
+    text = "looks: standing\nbody: long hair, black hair"
+    write(page, "a.png", text)
+
+    caption = caption_of(text)
+    assert caption == "picture:\n  - characters: 1 girl\n\ngirl:\n  - looks: standing\n  - body: long black hair"
+    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption)} / 507")
+    expect(tokens_of(page, "a.png")).to_have_attribute("title", caption)
+    expect(page.locator("#saveButton")).to_have_text("保存 *")
+
+    page.click("#saveButton")
+    expect(page.locator("#status")).to_have_text("保存しました")
+    expect(page.locator("#saveButton")).to_have_text("保存")
+    assert (tool.captions_dir / "a.caption").read_text(encoding="utf-8") == caption
 
 
-def test_modal_shows_original_image_and_name(page, tmp_path):
-    big = make_images(tmp_path / "imgs" / "big", {"big.png": (900, 900), "small.png": (100, 100)})
-    open_app(page)
-    load_dir(page, big)
-
-    row_of(page, "big.png").locator("img").click()
-    expect(page.locator("#imageModal")).to_be_visible()
-    expect(page.locator("#imageModalTitle")).to_have_text("big.png")
-    page.wait_for_function("() => document.getElementById('modalImage').naturalWidth > 0")
-    assert page.evaluate("document.getElementById('modalImage').naturalWidth") == 900
+def test_ctrl_s_saves(page, imgs, tool):
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: standing")
+    page.keyboard.press("Control+s")
+    expect(page.locator("#status")).to_have_text("保存しました")
+    assert (tool.captions_dir / "b.caption").read_text(encoding="utf-8") == caption_of("looks: standing")
 
 
-def test_modal_reopen_and_close_leaves_no_backdrop(page, tmp_path):
-    big = make_images(tmp_path / "imgs" / "big", {"big.png": (900, 900), "small.png": (100, 100)})
-    open_app(page)
-    load_dir(page, big)
+def test_suggestion_completes_phrase_of_the_line_key(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    wait_for_phrase(page, "long hair")
 
-    for name in ["big.png", "small.png", "big.png"]:
-        row_of(page, name).locator("img").click()
-        expect(page.locator("#imageModal")).to_be_visible()
-        page.click("#imageModal .btn-close")
-        expect(page.locator("#imageModal")).to_be_hidden()
-    expect(page.locator(".modal-backdrop")).to_have_count(0)
-    assert "modal-open" not in (page.get_attribute("body", "class") or "")
+    editor = open_editor(page, "a.png")
+    editor.fill("")
+    editor.press_sequentially("body: lh")
+    expect(page.locator("#suggestions li.active")).to_contain_text("long hair")
+    editor.press("Enter")
+    assert editor.input_value() == "body: long hair, "
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["body: long hair"])
+
+
+def test_suggestion_at_line_start_adds_key_and_phrase(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    wait_for_phrase(page, "long hair")
+
+    editor = open_editor(page, "a.png")
+    editor.fill("")
+    editor.press_sequentially("lh")
+    expect(page.locator("#suggestions li.active")).to_contain_text("body: long hair")
+    editor.press("Tab")
+    assert editor.input_value() == "body: long hair"
+
+
+def test_suggestion_fills_template_key_line(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    wait_for_phrase(page, "long hair")
+
+    editor = open_editor(page, "a.png")  # looks: / clothes: / body: が並んだ状態
+    editor.press_sequentially("lh")  # looks の行に打つ → 候補は looks の語句だけ（無い）
+    expect(page.locator("#suggestions")).to_be_hidden()
+    editor.fill("looks: \nclothes: \nbody: ")
+    editor.evaluate("el => el.setSelectionRange(el.value.length, el.value.length)")
+    editor.press_sequentially("lh")
+    editor.press("Enter")
+    assert editor.input_value() == "looks: \nclothes: \nbody: long hair, "
+
+
+def test_enter_after_accepting_makes_a_new_line(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair, bare hands")
+    wait_for_phrase(page, "bare hands")
+
+    editor = open_editor(page, "a.png")
+    editor.fill("")
+    editor.press_sequentially("body: lh")
+    editor.press("Enter")  # 確定（", " が付き、残りの候補が出る）
+    editor.press("Enter")  # 打ちかけが無いので改行
+    editor.press_sequentially("looks: standing")
+    assert editor.input_value() == "body: long hair, \nlooks: standing"
+
+
+def test_action_suggests_words_inside_a_sentence(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "girl spread arms\nguy grab girl's waist", section="action")
+    wait_for_word(page, "spread")
+
+    editor = open_editor(page, "b.png", section="action")
+    editor.press_sequentially("girl sp")
+    expect(page.locator("#suggestions li.active")).to_contain_text("spread")
+    editor.press("Enter")
+    assert editor.input_value() == "girl spread "
+    editor.press_sequentially("wa")
+    expect(page.locator("#suggestions li.active")).to_contain_text("waist")
+
+
+def test_freeze_puts_words_into_shared_dictionary(page, imgs, tool):
+    load_dir(page, imgs)
+    write(page, "a.png", "body: long hair")
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.click("#freezeButton")
+    expect(page.locator("#status")).to_have_text("共用辞書に 1 件入れました")
+    assert {"section": "girl", "key": "body", "phrase": "long hair"} in tool.shared["phrases"]
+
+
+def test_bulk_add_and_remove_on_selected_rows(page, imgs):
+    load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
+    row(page, "c.png").locator("td.meta").click(modifiers=["Shift"])
+    expect(page.locator("#selectionInfo")).to_have_text("選択 3 行")
+
+    page.select_option("#bulkSection", "girl")
+    page.fill("#bulkText", "looks: standing")
+    page.click("text=選択行に追加")
+    expect(page.locator("#status")).to_have_text("3 行に追加しました")
+    for name in ["a.png", "b.png", "c.png"]:
+        expect(filled(page, name)).to_have_text(["looks: standing"])
+
+    row(page, "b.png").locator("td.meta").click(modifiers=["Control"])
+    expect(page.locator("#selectionInfo")).to_have_text("選択 2 行")
+    page.fill("#bulkText", "looks: standing")
+    page.click("text=選択行から削除")
+    expect(filled(page, "a.png")).to_have_count(0)
+    expect(filled(page, "b.png")).to_have_text(["looks: standing"])
+    expect(filled(page, "c.png")).to_have_count(0)
+
+
+def test_bulk_section_choice_survives_save(page, imgs):
+    load_dir(page, imgs)
+    page.select_option("#bulkSection", "girl")
+    page.click("#saveButton")
+    expect(page.locator("#status")).to_have_text("保存しました")
+    expect(page.locator("#bulkSection")).to_have_value("girl")
+
+
+def test_sections_add_rename_remove(page, imgs):
+    load_dir(page, imgs)
+    page.fill("#sectionName", "dog")
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(4)
+    assert section_names(page) == ["picture", "action", "girl", "dog"]
+    # 足した段落も人物用の確定タグを使う
+    expect(cell(page, "a.png", "dog").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
+
+    page.once("dialog", lambda dialog: dialog.accept("dog A"))
+    page.locator('#gridHead th[data-section="dog"] .section-name').dblclick()
+    expect(page.locator('#gridHead th[data-section="dog A"]')).to_be_attached()
+
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator('#gridHead th[data-section="dog A"] .remove-section').click()
+    expect(page.locator("#gridHead .section-name")).to_have_count(3)
+
+
+def test_dead_rows_toggle_and_remove(page, imgs):
+    load_dir(page, imgs)
+    page.click("#saveButton")
+    expect(page.locator("#status")).to_have_text("保存しました")
+    (imgs / "a.png").rename(imgs.parent / "a.png.bak")
+    page.click("#loadButton")
+    expect(row(page, "a.png")).to_have_class("dead")
+
+    page.uncheck("#showDead")
+    expect(row(page, "a.png")).to_be_hidden()
+    page.check("#showDead")
+    expect(row(page, "a.png")).to_be_visible()
+
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.click("#removeDeadButton")
+    expect(page.locator("#gridBody tr")).to_have_count(2)
+    expect(row(page, "a.png")).to_have_count(0)
+
+
+def test_image_dialog_shows_original(page, imgs):
+    load_dir(page, imgs)
+    row(page, "c.png").locator("td.thumb img").click()
+    expect(page.locator("#imageDialog")).to_be_visible()
+    expect(page.locator("#imageFull")).to_have_attribute("src", "/image/c.png")
+    page.wait_for_function("() => document.getElementById('imageFull').naturalWidth === 800")
+    page.keyboard.press("Escape")
+    expect(page.locator("#imageDialog")).to_be_hidden()
+
+
+def test_text_is_shown_as_text_not_html(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "<b>bold</b>")
+    expect(cell(page, "a.png").locator("b")).to_have_count(0)
+
+
+def test_tokens_over_the_limit_are_marked(page, imgs, monkeypatch):
+    monkeypatch.setattr(pictag, "TOKEN_LIMIT", 5)
+    load_dir(page, imgs)
+    write(page, "a.png", "looks: standing")
+    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption_of('looks: standing'))} / 5")
+    expect(tokens_of(page, "a.png")).to_have_class("tokens over")
+
+
+def test_project_select_opens_saved_project(page, tmp_path):
+    a = make_images(tmp_path / "imgs" / "proj_a", {"a.png": (100, 100)})
+    b = make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)})
+    load_dir(page, a)
+    write(page, "a.png", "looks: standing")
+    page.click("#saveButton")
+    expect(page.locator("#status")).to_have_text("保存しました")
+    page.fill("#imageDir", str(b))
+    page.click("#loadButton")
+    expect(row(page, "b.png")).to_be_attached()
+
+    page.select_option("#projectSelect", "proj_a")
+    expect(filled(page, "a.png")).to_have_text(["looks: standing"])
+
+
+def picture_view(page, name):
+    return cell(page, name, "picture").locator(".ln", has_text="view:")
+
+
+def choice(page, name, label):
+    return cell(page, name, "picture").locator(".choice", has_text=label)
+
+
+def test_picture_shows_characters_automatically(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "looks: standing")
+    characters = cell(page, "a.png", "picture").locator(".ln.auto")
+    expect(characters).to_have_text("characters: 1 girl")
+
+    page.fill("#sectionName", "dog")
+    page.click("#sectionForm button")
+    write(page, "a.png", "looks: sitting", section="dog")
+    expect(characters).to_have_text("characters: 1 girl + 1 dog")
+    expect(cell(page, "b.png", "picture").locator(".ln.auto")).to_have_text("characters:")
+
+
+def test_adding_girl_twice_names_them_a_and_b(page, imgs):
+    load_dir(page, imgs)
+    page.fill("#sectionName", "girl")
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(4)
+    assert section_names(page) == ["picture", "action", "girl A", "girl B"]
+    expect(choice(page, "a.png", "girl B")).to_have_text("👧 girl B")
+
+
+def test_view_buttons_toggle_and_clear(page, imgs):
+    load_dir(page, imgs)
+    choice(page, "a.png", "behind").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from behind")
+    expect(choice(page, "a.png", "behind")).to_have_class("choice on")
+    choice(page, "a.png", "front").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from front")
+    choice(page, "a.png", "above").click()
+    choice(page, "a.png", "girl").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from front, from above, girl POV")
+
+    cell(page, "a.png", "picture").locator('.choice.clear[data-group="camera0"]').click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from above, girl POV")
+    choice(page, "a.png", "girl").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from above")
+
+
+def test_view_button_applies_to_selected_rows(page, imgs):
+    load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
+    row(page, "b.png").locator("td.meta").click(modifiers=["Shift"])
+    choice(page, "a.png", "close-up").click()
+    for name in ["a.png", "b.png"]:
+        expect(picture_view(page, name)).to_have_text("view: close-up")
+    expect(picture_view(page, "c.png")).to_have_class("ln empty")
+
+
+def test_view_keeps_free_text(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "view: focus on hands", section="picture")
+    choice(page, "a.png", "close-up").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: focus on hands, close-up")
+
+
+def test_adding_sections_quickly_keeps_the_next_name(page, imgs):
+    load_dir(page, imgs)
+    page.fill("#sectionName", "dog")
+    page.click("#sectionForm button")
+    page.fill("#sectionName", "cat")  # 1つ目の応答を待たずに次を打つ
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(5)
+    assert section_names(page) == ["picture", "action", "girl", "dog", "cat"]
+
+
+def test_clicking_beside_view_buttons_does_not_open_editor(page, imgs):
+    load_dir(page, imgs)
+    pov_row = cell(page, "a.png", "picture").locator(".choice-row").last
+    box = pov_row.bounding_box()
+    pov_row.click(position={"x": box["width"] - 4, "y": box["height"] / 2})  # third-person の右の余白
+    expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(0)
+
+    cell(page, "a.png", "picture").locator(".text").click()
+    expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(1)
+
+
+def test_hint_column_shows_same_name_txt_read_only(page, imgs, tool):
+    (imgs / "a.txt").write_text("1girl, solo, smile", encoding="utf-8")
+    load_dir(page, imgs)
+    expect(page.locator("#gridHead th.hint-head")).to_have_text("hint")
+    hint = row(page, "a.png").locator("td.hint textarea")
+    expect(hint).to_have_value("1girl, solo, smile")
+    expect(hint).to_have_attribute("readonly", "")
+    hint.click()
+    assert hint.evaluate("el => [el.selectionStart, el.selectionEnd]") == [0, len("1girl, solo, smile")]
+    expect(row(page, "a.png").locator("td.cell textarea")).to_have_count(0)  # 入力欄は開かない
+    expect(row(page, "b.png").locator("td.hint textarea")).to_have_value("")
+
+
+def test_no_hint_column_without_txt_files(page, imgs):
+    load_dir(page, imgs)
+    expect(page.locator("#gridHead th.hint-head")).to_have_count(0)
+    expect(page.locator("td.hint")).to_have_count(0)

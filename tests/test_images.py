@@ -43,6 +43,7 @@ def test_image_route_serves_original(api, client, imgs):
 
 def test_image_route_falls_back_to_thumbnail_for_dead_image(api, client, imgs):
     api.load(imgs)
+    client.get("/thumbnail/big.png")  # 画面に表示してサムネイルができた後に、元画像が消えた
     (imgs / "big.png").rename(imgs.parent / "big.png.bak")
     api.load(imgs)
     assert max(image_of(client.get("/image/big.png")).size) <= 600
@@ -89,6 +90,8 @@ def test_thumbnail_regenerated_when_source_changes(api, client, tool, imgs):
 
 def test_stale_thumbnail_removed_when_source_becomes_small(api, client, tool, imgs):
     api.load(imgs)
+    client.get("/thumbnail/big.png")
+    assert (tool.data_work_target / "t_big.png").exists()
     make_images(imgs, {"big.png": ((100, 100), BLUE)})
     touch_later(imgs / "big.png")
     api.load(imgs)
@@ -100,3 +103,11 @@ def test_directory_named_like_image_is_ignored(api, imgs):
     (imgs / "folder.png").mkdir()
     api.load(imgs)
     assert [r["サムネイル"] for r in api.rows()] == ["a.png", "big.png"]
+
+
+def test_loading_does_not_create_thumbnails_until_shown(api, client, tool, imgs):
+    api.load(imgs)
+    assert not (tool.data_work_target / "t_big.png").exists()
+    assert max(image_of(client.get("/thumbnail/big.png")).size) <= 600
+    assert (tool.data_work_target / "t_big.png").exists()
+    assert [p.name for p in tool.data_work_target.iterdir()] == ["t_big.png"]  # 一時ファイルは残らない

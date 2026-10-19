@@ -1,62 +1,87 @@
 # pictag
 
-画像にタグ（キャプション）を付けて管理するためのWebアプリです。  
-縦に画像、横にタグを並べたグリッド形式で、タグをその場で追加・編集・保存できます。
+画像ごとのキャプションを書いて、Krea 2 の LoRA 学習用の txt に書き出すローカル Web アプリです。  
+縦に画像、横に段落（picture / action / girl など）を並べた表で、段落ごとの入力欄に辞書の語句を引き出しながら書きます。
 
 ## 特徴
-- Flaskベースの軽量Webアプリ
-- 画像ディレクトリを読み込み、自動でサムネイル生成
-- タグ（カラム）を自由に追加・削除・改名
-- タグのグループ化（kind）と管理
-- 編集内容はローカルディレクトリに保存され、再読み込み可能
+- Flask ベースの軽量 Web アプリ。画像ディレクトリを読み込み、サムネイルを自動で作ります
+- 段落は、固定の picture / action と、人物などの段落（girl。guy や dog は必要なときに足す）です
+- 確定タグ（picture は place / characters / vibes / view / extra、人物などは looks / clothes / body）は、空の欄にも薄く出ます。characters は入力のある人物の段落から自動で作ります（1 girl + 2 guys (guy A, guy B)）。同じ人物の段落を足すと A, B, … が付きます
+- view はボタンでも選べます（🎥 front / side / behind・above / below・close-up、👀 人物ごとの POV・third-person。各組の ☓ で外す）
+- 画像フォルダに画像と同じ名前の .txt があれば、右端の hint 列に出します（読むだけ。保存やキャプションには影響しません）
+- 入力欄で打つと、辞書から fzf のようなあいまい検索で候補が出ます。キーの後ろでは語句を、action などのキーの無い文では単語を補完します
+- 辞書は全プロジェクトの入力から作ります。新しい語句は使った時点で入り、どの画像からも消えると消えます。「共用辞書に入れる」で今の辞書を共用辞書に入れると、使われなくなっても候補に残ります
+- 複数の行を選んで、同じ語句をまとめて足す・消すことができます
+- 行ごとに、キャプションのトークン数と上限（507）を表示します。数字にマウスを載せると、書き出す文面が見えます
 
 ## 起動方法
-Python 3.12 以降が必要です。
+[uv](https://docs.astral.sh/uv/) を使います（Python 3.12 以降。手元に無ければ uv が用意します）。
 
 ```bash
-# 仮想環境を作成（任意）
-python -m venv venv
-source venv/bin/activate        # Windows (Git Bash) は source venv/Scripts/activate
-
-pip install -r requirements.txt
-python app.py
-```
-
-uv を使う場合:
-
-```bash
-uv venv
-uv pip install -r requirements.txt
+uv sync                 # 依存を入れる（初回と、依存が変わったとき）
 uv run python app.py
 ```
 
 ブラウザで [http://127.0.0.1:5000](http://127.0.0.1:5000) を開くと利用できます。  
-LAN 内の他の機器から使う場合は `PICTAG_HOST=0.0.0.0 python app.py` で起動します。
+LAN 内の他の機器から使う場合は `PICTAG_HOST=0.0.0.0 uv run python app.py` で起動します。
+
+初回の起動時に、トークン数を数えるトークナイザー（約 7MB）を Hugging Face から取得します。取得できないときはトークン数が「—」になり、ほかの機能はそのまま使えます。
+
+## 使い方
+| 操作 | 内容 |
+|---|---|
+| 既存プロジェクト / 読み込み | プロジェクトを開く（読み込みは画像フォルダのパスを入力） |
+| 入力欄をクリック | その欄を編集する。確定タグのキーが並んだ状態で始まる。1行に `キー: 語句, 語句`（キーなしの文も可）。Esc か欄の外をクリックで確定（値の無いキーは保存しない） |
+| 候補 | ↑↓で選び、Tab か Enter で確定（Enter は打ちかけがあるか↑↓で選んだときだけ。それ以外は改行） |
+| 画像名の欄をクリック | 行を選ぶ（Ctrl: 足し引き、Shift: 最後にクリックした行からの範囲） |
+| 選択行に追加 / 選択行から削除 | 選んだ行の、指定した段落に語句をまとめて足す・消す |
+| 段落を追加 / 見出しをダブルクリック / 見出しの × | 人物などの段落の追加 / 改名 / 表から外す（picture と action は固定） |
+| 共用辞書に入れる | 今使っている語句・単語を共用辞書に入れる |
+| 削除済み画像を表示 / 削除済みを完全削除 | 元フォルダから消えた画像の行を表示するか / 行を消す（あわせて保存） |
+| 保存（Ctrl+S） | 表とキャプション txt を書き出す |
+| サムネイルをクリック | 元画像を表示 |
+| hint をクリック | 全体を選択（そのままコピーできる） |
 
 ## 出力
 保存すると、アプリのフォルダ配下に書き出します（`<フォルダ名>` は読み込んだ画像ディレクトリの名前）。
 
 ```
-data_out/<フォルダ名>/captions/<画像名>.txt       # 学習用キャプション（チェックしたタグをカンマ区切り。拡張子を除いた画像名）
-data_out/<フォルダ名>/captions_dead/<画像名>.txt  # 元フォルダから消えた画像のキャプション
-data_out/<フォルダ名>/df_isflaged.dump           # 画像×タグの表
-data_work/df_captioninfo.dump                    # タグ辞書（全プロジェクト共通）
+data_out/<フォルダ名>/captions/<画像名>.caption   # 学習用キャプション（拡張子を除いた画像名 + .caption。改行は LF）
+data_out/<フォルダ名>/captions_dead/<画像名>.caption  # 元フォルダから消えた画像のキャプション
+data_out/<フォルダ名>/table.json                  # 画像 × 段落の入力
+data_out/<フォルダ名>/tgt_path.txt                # 画像ディレクトリの絶対パス
 data_work/<フォルダ名>/                           # サムネイル
+data_work/shared.json                            # 共用辞書（共用辞書に入れた語句・単語と確定タグ。全プロジェクト共通）
+data_work/tokenizer/qwen3vl_tokenizer.json        # トークン数を数えるトークナイザー
 ```
+
+キャプションは Krea 2 向けの構造化テキストです。段落ごとにまとめ、空の段落は出しません。キー付きの行では、末尾の語が同じ語句をまとめます（`long hair, black hair` → `long black hair`）。
+
+```
+girl:
+  - looks: full body shot, standing
+  - body: long black hair, bare hands
+```
+
+トークンの上限 507 は、musubi-tuner と Krea 公式の実装でキャプションに使える長さです。超えた分は末尾から黙って切られます。
+
+SDXL 版のプロジェクト（`df_isflaged.dump` があるフォルダ）は開けません。SDXL 版は `sdxl` ブランチにあります。
 
 ## テスト
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest
+uv run pytest                 # すべて
+uv run pytest -m "not e2e"    # ブラウザを使うテストを除く
 ```
 
-`tests/e2e/` はブラウザ（インストール済みの Chrome / Edge）で画面を操作するテストです。Bootstrap を CDN から読むため、ネットワーク接続が必要です。ブラウザ以外のテストだけを回すときは `python -m pytest -m "not e2e"`。
+`tests/e2e/` は、ブラウザ（インストール済みの Chrome / Edge）で画面を操作するテストです。
 
 ## ファイル構成
 ```
-app.py         # Flaskサーバー本体
-templates/     # index.htmlなどのUIテンプレート
-static/
- └─ control.js # フロントエンド制御スクリプト
-tests/         # pytest（e2e/ は Playwright）
+app.py             # Flask サーバー本体（表・保存・API）
+caption_format.py  # 段落の入力 → キャプション
+words.py           # 使用中の語句（辞書）、一括入力の足し引き
+tokens.py          # トークン数（Qwen3-VL のトークナイザー）
+templates/         # index.html
+static/            # control.js（画面制御）、style.css
+tests/             # pytest（e2e/ は Playwright）
 ```

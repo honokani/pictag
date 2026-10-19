@@ -4,8 +4,31 @@ import shutil
 from pathlib import Path
 
 from PIL import Image
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+
+from caption_format import phrases_of, render_caption
+from subjects import characters_of
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+
+# 段落を指定しないときの段落（新規プロジェクトの既定の段落にある）
+SECTION = "girl"
+
+
+def caption_of(text, section=SECTION):
+    """1つの段落だけに入力したときのキャプション（人物の段落に入力があれば、picture に characters が付く）"""
+    if section in ("picture", "action") or not phrases_of(text):
+        return render_caption([(section, text)])
+    return render_caption([("picture", f"characters: {characters_of([section])}"), (section, text)])
+
+
+def word_tokenizer():
+    """空白と記号で区切るだけの小さなトークナイザー（テスト用）"""
+    tokenizer = Tokenizer(WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    return tokenizer
 
 
 def make_images(directory, specs):
@@ -31,7 +54,7 @@ def image_of(response):
 
 
 def copy_legacy_fixture(kind, base_dir):
-    """旧版で作った dump（tests/fixtures/legacy_v0/<kind>）を base_dir へ配置する"""
+    """旧版（SDXL 版）で作った dump（tests/fixtures/legacy_v0/<kind>）を base_dir へ配置する"""
     shutil.copytree(FIXTURES_DIR / "legacy_v0" / kind, base_dir, dirs_exist_ok=True)
 
 
@@ -52,20 +75,42 @@ class Api:
     def open_project(self, name):
         return self.post("/load_existing_project", {"project_name": name})
 
-    def add(self, column, kind="k", default=False):
-        return self.post("/add_column", {"column_name": column, "kind": kind, "default_value": default})
+    def write(self, row_index, text, section=SECTION):
+        return self.post("/update_text", {"row_index": row_index, "section": section, "text": text})
 
-    def set(self, row_index, column, value=True):
-        return self.post("/update_cell", {"row_index": row_index, "column_name": column, "value": value})
+    def add_section(self, name):
+        return self.post("/add_section", {"name": name})
+
+    def bulk_add(self, rows, text, section=SECTION):
+        return self.post("/add_phrase", {"rows": rows, "section": section, "text": text})
+
+    def bulk_remove(self, rows, text, section=SECTION):
+        return self.post("/remove_phrase", {"rows": rows, "section": section, "text": text})
 
     def save(self):
         return self.post("/save_data")
 
-    def rows(self):
+    def table(self):
         r = self.c.get("/get_table_data")
         assert r.status_code == 200, r.data
-        return r.get_json()["data"]
+        return r.get_json()
+
+    def rows(self):
+        return self.table()["data"]
 
     def row_index(self, image_name):
-        """画像名から行の index を引く（フロントが update_cell に送る値）"""
+        """画像名から行の index を引く（フロントが update_text に送る値）"""
         return next(r["index"] for r in self.rows() if r["サムネイル"] == image_name)
+
+    def dictionary(self):
+        r = self.c.get("/get_dictionary")
+        assert r.status_code == 200, r.data
+        return r.get_json()
+
+    def phrases(self):
+        """辞書の語句 {(段落, キー, 語句): 使用回数}"""
+        return {(w["section"], w["key"], w["phrase"]): w["count"] for w in self.dictionary()["phrases"]}
+
+    def words(self):
+        """辞書の単語（キーなしの文から） {(段落, 単語): 使用回数}"""
+        return {(w["section"], w["word"]): w["count"] for w in self.dictionary()["words"]}
