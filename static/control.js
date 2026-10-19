@@ -211,6 +211,9 @@ const spacesAfterWord = before => (before.match(/\S( *)$/) || ['', ''])[1].lengt
 // キーなしの文で、語の後にスペースを2つ続けた（打たなくても単語の候補を出す合図。3つ目でしまう）
 const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
 
+// 選んだ単語の後ろに付ける区切り: 行末なら ", "（欄を離れると行末のカンマは消える）。後ろに語が続けば空白、空白かカンマが続けば付けない
+const wordSeparator = after => (!after.trim() ? ', ' : /^[\s,]/.test(after) ? '' : ' ');
+
 // 入力欄のカーソル位置の文脈
 // mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
 function contextOf(el) {
@@ -220,7 +223,8 @@ function contextOf(el) {
     const lineEndAt = value.indexOf('\n', caret);
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
-    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+    const after = value.slice(caret, lineEnd);
+    const base = {caret, after, restEmpty: after.trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
         cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
@@ -344,10 +348,10 @@ function accept(item) {
         const text = {
             key: () => `${item.key}: `,
             phrase: () => item.phrase + (ctx.restEmpty ? ', ' : ''),
-            word: () => item.word + (ctx.restEmpty || calledBySpaces(ctx) ? ' ' : ''),
+            word: () => item.word + wordSeparator(ctx.after),
             line: () => item.phrase,
         }[item.kind]();
-        // 候補を出すために2つ続けたスペースは1つにまとめ、2つ目の位置に「単語 + 空白」を入れる（文の途中でも後ろの語と分かれる）
+        // 候補を出すために2つ続けたスペースは、1つにまとめる
         el.setRangeText(text, calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart, ctx.caret, 'end');
     }
     el.dispatchEvent(new Event('input'));
@@ -1049,8 +1053,9 @@ function bulkContext(el) {
     const value = el.value;
     const caret = el.selectionStart;
     const before = value.slice(0, caret);
+    const after = value.slice(caret);
     const current = key ? splitPhrases(value) : [];
-    const base = {caret, restEmpty: value.slice(caret).trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
+    const base = {caret, after, restEmpty: after.trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
         const raw = before.slice(segment);

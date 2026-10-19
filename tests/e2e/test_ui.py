@@ -225,7 +225,7 @@ def test_action_suggests_words_inside_a_sentence(page, imgs):
     editor.press_sequentially("girl sp")
     expect(page.locator("#suggestions li.active")).to_contain_text("spread")
     editor.press("Enter")
-    assert editor.input_value() == "girl spread "
+    assert editor.input_value() == "girl spread, "  # 行末なら ", "（欄を離れると行末のカンマは消える）
     editor.press_sequentially("wa")
     expect(page.locator("#suggestions li.active")).to_contain_text("waist")
 
@@ -253,7 +253,7 @@ def test_two_spaces_after_a_word_show_words_and_a_third_hides_them(page, imgs):
     editor.press("Backspace")
     expect(shown).to_contain_text("spread")
     editor.press("Tab")
-    assert editor.input_value() == "girl spread "  # 2つのスペースは1つにまとめる
+    assert editor.input_value() == "girl spread, "  # 2つのスペースは1つにまとめる
 
 
 def test_two_spaces_inside_a_sentence_insert_a_word_between(page, imgs):
@@ -267,6 +267,19 @@ def test_two_spaces_inside_a_sentence_insert_a_word_between(page, imgs):
     expect(page.locator("#suggestions:visible li.active")).to_contain_text("spread")
     editor.press("Tab")
     assert editor.input_value() == "girl spread arms"  # 後ろの語とは空白1つで分ける
+
+
+def test_word_chosen_before_a_comma_keeps_that_comma(page, imgs):
+    load_dir(page, imgs)
+    write_spread(page)
+
+    editor = open_editor(page, "b.png", section="action")
+    editor.fill("girl spread, ")
+    editor.evaluate("el => el.setSelectionRange(11, 11)")  # girl spread|,
+    editor.press_sequentially(" ar")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("arms")
+    editor.press("Tab")
+    assert editor.input_value() == "girl spread arms, "  # 後ろにカンマがあれば足さない（重ねない）
 
 
 def test_spaces_do_not_hide_phrase_suggestions_of_a_key(page, imgs):
@@ -289,7 +302,7 @@ def test_bulk_keyless_text_shows_words_after_two_spaces(page, imgs):
     bulk.press_sequentially("girl  ")
     expect(page.locator("#suggestions:visible li.active")).to_contain_text("spread")
     bulk.press("Tab")
-    assert bulk.input_value() == "girl spread "
+    assert bulk.input_value() == "girl spread, "
 
 
 def test_leaving_the_editor_tidies_commas_and_spaces(page, imgs):
