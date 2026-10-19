@@ -161,7 +161,7 @@ def test_tokens_are_null_until_tokenizer_is_ready(api, imgs, monkeypatch):
 
 
 CAMERA = ["from front", "from side", "from behind"]
-VERTICAL = ["from above", "from below"]
+VERTICAL = ["from above", "eye level", "from below"]
 SHOTS = ["close-up", "portrait", "medium shot", "long shot"]
 
 
