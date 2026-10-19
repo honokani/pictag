@@ -3,3 +3,14 @@
 *.jpeg
 *.gif
 *.txt
+
+# 作業データ（個人のデータセット由来）
+/data_out/*
+!/data_out/.gitkeep
+/data_work/
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+.claude/

@@ -1,1362 +1,1002 @@
-let currentData = [];
-let selectedRows = new Set(); // 選択された行のインデックスを管理
+// pictag 画面制御
+// 表は 画像 × 段落（大kind）の入力欄。入力欄では辞書（使用中の語句）から fzf のように語句を引き出す
+'use strict';
 
-function showStatus(message, isError = false) {
-    const statusDiv = document.getElementById('statusMessage');
-    statusDiv.className = `alert ${isError ? 'alert-danger' : 'alert-success'}`;
-    statusDiv.textContent = message;
-    statusDiv.style.display = 'block';
-    
-    setTimeout(() => {
-        statusDiv.style.display = 'none';
-    }, 3000);
+const $ = id => document.getElementById(id);
+
+const state = {
+    loaded: false,
+    projectName: '',
+    sections: [],
+    rows: [],
+    byIndex: new Map(),
+    tokenLimit: 507,
+    templates: {},        // 確定タグ {picture: [...], subject: [...]}
+    fixedSections: [],    // 固定の段落（外せない・改名できない）
+    autoKeys: [],         // 自動で作るキー（characters。入力欄には出さない）
+    hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
+    markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
+    filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
+    viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
+    phrases: [],          // 辞書の語句 [{section, key, phrase, count}]
+    words: [],            // キーなしの文の単語 [{section, word, count}]
+    selected: new Set(),  // 行の index
+    anchor: null,         // Shift 範囲選択の起点（最後にクリックした行）
+    dirty: false,
+    editor: null,         // {index, section, td, el}
+    suggest: null,        // {el, section, ctx, items, active, moved}
+    pending: new Set(),   // 送信中の入力（保存の前に待つ）
+};
+
+// ---- 通信 ----
+
+async function getJson(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url}: ${res.status}`);
+    return res.json();
 }
 
-function showImageModal(imagePath, imageName) {
-    // 元画像パスを構築（サムネイルパスから元画像パスを推定）
-    let originalPath = imagePath;
-    if (imagePath.includes('/thumbnail/t_')) {
-        originalPath = imagePath.replace('/thumbnail/t_', '/thumbnail/');
-    }
-    
-    document.getElementById('modalImage').src = originalPath;
-    document.getElementById('imageModalTitle').textContent = imageName;
-    
-    const modal = new bootstrap.Modal(document.getElementById('imageModal'));
-    modal.show();
-}
-
-function toggleRowSelection(rowIndex, event) {
-    if (event.ctrlKey || event.metaKey) {
-        // Ctrl/Cmd + クリック: 単一行の選択状態を切り替え
-        if (selectedRows.has(rowIndex)) {
-            selectedRows.delete(rowIndex);
-        } else {
-            selectedRows.add(rowIndex);
-        }
-    } else if (event.shiftKey && selectedRows.size > 0) {
-        // Shift + クリック: 範囲選択
-        const lastSelected = Math.max(...selectedRows);
-        const start = Math.min(rowIndex, lastSelected);
-        const end = Math.max(rowIndex, lastSelected);
-        
-        selectedRows.clear();
-        for (let i = start; i <= end; i++) {
-            selectedRows.add(i);
-        }
-    } else {
-        // 通常クリック: 単一選択（前の選択をクリア）
-        selectedRows.clear();
-        selectedRows.add(rowIndex);
-    }
-    
-    updateRowVisualState();
-    updateStatusMessage();
-}
-
-function updateRowVisualState() {
-    const tbody = document.getElementById('tableBody');
-    const rows = tbody.querySelectorAll('tr');
-    
-    rows.forEach((row, index) => {
-        if (selectedRows.has(index)) {
-            row.classList.add('selected-row');
-        } else {
-            row.classList.remove('selected-row');
-        }
+async function postJson(url, payload) {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload || {}),
     });
+    if (!res.ok) throw new Error(`${url}: ${res.status}`);
+    return res.json();
 }
 
-function updateStatusMessage() {
-    if (selectedRows.size > 1) {
-        showStatus(`${selectedRows.size}行選択中`);
+function track(promise) {
+    state.pending.add(promise);
+    promise.finally(() => state.pending.delete(promise));
+    return promise;
+}
+
+const settled = () => Promise.allSettled([...state.pending]);
+
+// 例外は画面に出す
+const guarded = fn => (...args) => fn(...args).catch(e => setStatus(String(e.message || e), 'error'));
+
+// ---- 表示の小物 ----
+
+function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+}
+
+function setStatus(message, kind = '') {
+    $('status').textContent = message;
+    $('status').className = kind;
+}
+
+function setDirty(dirty) {
+    state.dirty = dirty;
+    $('saveButton').textContent = dirty ? '保存 *' : '保存';
+    $('saveButton').disabled = !state.loaded;
+}
+
+function autosize(el) {
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight + 2}px`;
+}
+
+// ---- 入力の解釈（caption_format.py / words.py と同じ規則） ----
+
+function splitPhrases(text) {
+    return [...new Set(text.split(',').map(p => p.trim()).filter(Boolean))];
+}
+
+function parseLine(line) {
+    const body = line.trim().replace(/^-+/, '').trim();
+    const colon = body.indexOf(':');
+    const key = colon >= 0 ? body.slice(0, colon).trim() : '';
+    if (colon >= 0 && key && !key.includes(',')) return {key, phrases: splitPhrases(body.slice(colon + 1))};
+    return {key: '', phrases: splitPhrases(body)};
+}
+
+const renderInputLine = (key, phrases) => (key ? `${key}: ${phrases.join(', ')}` : phrases.join(', '));
+
+function addPhrase(text, key, phrase) {
+    const trimmed = text.replace(/\s+$/, '');
+    const lines = trimmed ? trimmed.split('\n') : [];
+    const parsed = lines.map(parseLine);
+    if (parsed.some(p => p.key === key && p.phrases.includes(phrase))) return text;
+    const at = key ? parsed.findIndex(p => p.key === key) : -1;
+    if (at < 0) return [...lines, renderInputLine(key, [phrase])].join('\n');
+    return [...lines.slice(0, at), renderInputLine(key, [...parsed[at].phrases, phrase]), ...lines.slice(at + 1)].join('\n');
+}
+
+// 保存する形に整える: 行末のカンマ・空白（候補の確定で付く ", "）、空行、値の無いキーの行を落とす
+function tidyInput(text) {
+    return text.split('\n')
+        .map(line => line.replace(/[\s,]+$/, ''))
+        .filter(line => parseLine(line).phrases.length > 0)
+        .join('\n');
+}
+
+// 段落の確定タグ（キーの並び）。固定の段落は自分の名前で、人物などの段落は subject を使う
+function templateKeys(section) {
+    if (state.templates[section]) return state.templates[section];
+    return state.fixedSections.includes(section) ? [] : (state.templates.subject || []);
+}
+
+// 入力欄に出すキー（自動で作るキーは除く）
+const editKeys = section => templateKeys(section).filter(key => !state.autoKeys.includes(key));
+
+// 行のうち、key の行の語句
+function phrasesOfKey(text, key) {
+    return (text || '').split('\n').map(parseLine).filter(p => p.key === key).flatMap(p => p.phrases);
+}
+
+// 確定タグのキーを並びどおりに置いた行（値の無いキーは「key: 」）。ほかの行はその後ろ
+function mergeTemplate(text, keys) {
+    const lines = text ? text.split('\n') : [];
+    const parsed = lines.map(parseLine);
+    const used = new Set();
+    const keyLines = keys.map(key => {
+        const at = parsed.findIndex((p, i) => p.key === key && !used.has(i));
+        if (at < 0) return `${key}: `;
+        used.add(at);
+        return lines[at];
+    });
+    return [...keyLines, ...lines.filter((line, i) => !used.has(i) && line.trim())];
+}
+
+// 編集を始めたときのカーソル位置: 最初の値の無いキーの行の末尾（無ければ最後）
+function firstEmptyKeyEnd(lines, keyCount) {
+    let offset = 0;
+    for (let i = 0; i < lines.length; i++) {
+        if (i < keyCount && parseLine(lines[i]).phrases.length === 0) return offset + lines[i].length;
+        offset += lines[i].length + 1;
     }
+    return Math.max(0, offset - 1);
 }
 
-function handleCheckboxChange(rowIndex, columnName, checked, event) {
-    // イベント伝播を停止（行選択を防ぐ）
-    event.stopPropagation();
-    
-    if (selectedRows.size > 1 && selectedRows.has(rowIndex)) {
-        // 複数選択時: 選択されている全行を同じ値に変更
-        selectedRows.forEach(selectedRowIndex => {
-            updateCell(selectedRowIndex, columnName, checked);
-            // UIも更新 - 畳まれた列を考慮して正確なカラム位置を特定
-            const tbody = document.getElementById('tableBody');
-            const rows = tbody.querySelectorAll('tr');
-            const targetRow = rows[selectedRowIndex];
-            const checkboxes = targetRow.querySelectorAll('input[type="checkbox"]');
-            
-            // 表示されているカラムのみを対象にして正確な位置を計算
-            const visibleColumns = getVisibleColumns();
-            const columnIndex = visibleColumns.indexOf(columnName);
-            
-            if (columnIndex !== -1 && checkboxes[columnIndex]) {
-                checkboxes[columnIndex].checked = checked;
-            }
-        });
-        showStatus(`${selectedRows.size}行のカラム「${columnName}」を${checked ? 'True' : 'False'}に変更`);
-    } else {
-        // 単一行の変更
-        updateCell(rowIndex, columnName, checked);
+// ---- あいまい検索（打った文字が順に含まれる語句を拾う。連続・語頭の一致を高く） ----
+
+function fuzzyScore(query, text) {
+    const q = query.toLowerCase().replace(/\s+/g, '');
+    const t = text.toLowerCase();
+    if (!q) return 0;
+    let score = t.startsWith(query.toLowerCase()) ? 10 : 0;
+    let from = 0;
+    let prev = -2;
+    for (const ch of q) {
+        const at = t.indexOf(ch, from);
+        if (at < 0) return null;
+        const wordStart = at === 0 || /[\s\-_/:,]/.test(t[at - 1]);
+        score += 1 + (at === prev + 1 ? 4 : 0) + (wordStart ? 3 : 0);
+        prev = at;
+        from = at + 1;
     }
+    return score - t.length * 0.02;
 }
 
-function getVisibleColumns() {
-    // 現在表示されているカラムの一覧を取得（畳まれた列を除外）
-    const visibleColumns = [];
-    
-    if (window.currentColumnsByKind) {
-        const columnsByKind = window.currentColumnsByKind;
-        Object.keys(columnsByKind).forEach(kind => {
-            if (!hiddenKinds.has(kind)) {
-                // 表示されているkindのカラムを追加
-                columnsByKind[kind].forEach(col => {
-                    visibleColumns.push(col);
-                });
-            }
-        });
+// 入力欄のカーソル位置の文脈
+// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語 / start = 行頭（キー・語句・文・単語）
+function contextOf(el) {
+    const value = el.value;
+    const caret = el.selectionStart;
+    const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
+    const lineEndAt = value.indexOf('\n', caret);
+    const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
+    const before = value.slice(lineStart, caret);
+    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases};
+    const colon = before.indexOf(':');
+    const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
+    if (colon >= 0 && keyPart !== '' && !keyPart.includes(',')) {
+        const segment = Math.max(before.lastIndexOf(','), colon) + 1;
+        const raw = before.slice(segment);
+        const query = raw.trimStart();
+        return {...base, mode: 'phrase', key: keyPart, query, queryStart: lineStart + segment + (raw.length - query.length)};
     }
-    
-    return visibleColumns;
-}
-
-async function updateTaskUI() {
-    const taskSelect = document.getElementById('taskSelect');
-    const kindSelect = document.getElementById('kindSelect');
-    const kindText = document.getElementById('kindText');
-    const captionSelect = document.getElementById('captionSelect');
-    const captionText = document.getElementById('captionText');
-    const defaultValueToggle = document.getElementById('defaultValueToggle');
-    
-    const selectedTask = taskSelect.value;
-    
-    // 全て初期化
-    kindSelect.disabled = false;
-    kindText.disabled = true;
-    captionSelect.disabled = false;
-    captionText.disabled = false;
-    defaultValueToggle.disabled = false;
-    
-    switch (selectedTask) {
-        case 'column追加':
-            // デフォルト状態（変更なし）
-            await loadKinds(); // 通常のkind読み込み
-            await updateCaptionSelect(); // カラム選択肢を更新
-            break;
-            
-        case 'kind改名':
-            // new_kindを除外してkindのみ選択可能
-            await loadKindsForRename();
-            captionSelect.disabled = true;
-            captionText.disabled = true;
-            kindText.disabled = false; // 修正: kind改名では kindText を有効化
-            kindText.placeholder = '新種別名';
-            defaultValueToggle.disabled = true;
-            break;
-            
-        case 'column改名':
-            // new_kindを除外してkindのみ選択可能
-            await loadKindsForRename();
-            kindText.disabled = true;
-            captionText.disabled = false;
-            captionText.placeholder = '新カラム名';
-            defaultValueToggle.disabled = true;
-            break;
-            
-        case 'kind・column両方改名':
-            // 両方改名の場合
-            await loadKindsForRename();
-            kindText.disabled = false; // 新種別名入力を有効
-            kindText.placeholder = '新種別名';
-            captionText.placeholder = '新カラム名';
-            defaultValueToggle.disabled = true;
-            break;
-            
-        case 'column表から削除':
-        case 'column全体から削除':
-            // new_kindを除外してkindのみ選択可能
-            await loadKindsForRename();
-            kindText.disabled = true;
-            captionText.disabled = true;
-            defaultValueToggle.disabled = true;
-            break;
+    const prefix = before.match(/^\s*-*\s*/)[0].length;
+    const rest = before.slice(prefix);
+    const lastBreak = Math.max(rest.lastIndexOf(' '), rest.lastIndexOf(','), rest.lastIndexOf('\t'));
+    if (lastBreak >= 0) {
+        return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1};
     }
+    return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
 }
 
-function updateCaptionText() {
-    const captionSelect = document.getElementById('captionSelect');
-    const captionText = document.getElementById('captionText');
-    const taskSelect = document.getElementById('taskSelect');
-    
-    const selectedTask = taskSelect.value;
-    
-    // タスクに応じて制御を変更
-    if (selectedTask === 'column追加') {
-        // column追加時はnew_column選択時のみテキスト入力可能
-        if (captionSelect.value === 'new_column') {
-            captionText.disabled = false;
-            captionText.placeholder = '新カラム名';
-        } else {
-            captionText.disabled = true;
-            captionText.value = captionSelect.value;
-        }
-    } else if (selectedTask === 'column改名' || selectedTask === 'kind・column両方改名') {
-        // 追加・改名タスクでは常にテキスト入力を有効にする
-        captionText.disabled = false;
-        if (captionSelect.value && captionSelect.value !== 'new_column') {
-            captionText.value = captionSelect.value; // 既存値をコピー
-        }
-    } else if (captionSelect.value === 'new_column') {
-        captionText.disabled = false;
-        captionText.placeholder = "新カラム名";
-    } else {
-        captionText.disabled = true;
-        captionText.value = captionSelect.value;
+function keepBest(items) {
+    const best = new Map();
+    for (const item of items) {
+        const prev = best.get(item.label);
+        if (!prev || prev.bonus < item.bonus) best.set(item.label, item);
     }
+    return [...best.values()];
 }
 
-async function updateCaptionSelect() {
-    const kindSelect = document.getElementById('kindSelect');
-    const kindText = document.getElementById('kindText');
-    const captionSelect = document.getElementById('captionSelect');
-    const taskSelect = document.getElementById('taskSelect');
-    
-    const selectedKind = kindSelect.value;
-    const selectedTask = taskSelect.value;
-    
-    if (selectedKind === 'new_kind') {
-        kindText.disabled = false;
-        captionSelect.innerHTML = '<option value="new_column">new_column</option>';
-    } else {
-        // kind改名タスクの場合は常にkindText入力を有効にする
-        if (selectedTask === 'kind改名' || selectedTask === 'kind・column両方改名') {
-            kindText.disabled = false;
-        } else {
-            kindText.disabled = true;
-        }
-        
-        // タスクに応じて処理分岐
-        if (selectedTask === 'column追加') {
-            // column追加時は表にないカラムのみ表示
-            await loadCaptionsForAdd(selectedKind);
-        } else if (selectedTask === 'column改名' || selectedTask === 'column表から削除' || selectedTask === 'kind・column両方改名') {
-            // 表にあるカラムのみ表示
-            await loadCaptionsForRename();
-        } else if (selectedTask === 'column全体から削除') {
-            // 全カラム表示（表になくても削除可能）
-            await loadCaptionsByKind(selectedKind);
-        } else if (selectedTask === 'kind改名') {
-            // kind改名の場合はカラム選択不要
-            captionSelect.innerHTML = '';
-        } else {
-            await loadCaptionsByKind(selectedKind);
-        }
-    }
+const wordBonus = (w, section) => (w.section === section ? 3 : 0) + Math.log1p(w.count);
+
+// キーのある行: そのキーで使われた語句（打っていなくても使用回数の多い順に出す）
+function phraseCandidates(section, ctx) {
+    return keepBest(state.phrases
+        .filter(p => p.key === ctx.key && !ctx.current.includes(p.phrase))
+        .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
 }
 
-async function loadKinds() {
-    try {
-        const response = await fetch('/get_kinds');
-        const result = await response.json();
-        
-        const kindSelect = document.getElementById('kindSelect');
-        kindSelect.innerHTML = '';
-        
-        result.kinds.forEach(kind => {
-            const option = document.createElement('option');
-            option.value = kind;
-            option.textContent = kind;
-            kindSelect.appendChild(option);
-        });
-        
-        await updateCaptionSelect();
-    } catch (error) {
-        console.error('Error loading kinds:', error);
-    }
+// キーなしの文の単語（1文字以上打ったときだけ）
+function wordCandidates(section, ctx) {
+    if (!ctx.query) return [];
+    return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
 }
 
-async function loadKindsForRename() {
-    try {
-        const response = await fetch('/get_kinds');
-        const result = await response.json();
-        
-        const kindSelect = document.getElementById('kindSelect');
-        kindSelect.innerHTML = '';
-        
-        // new_kindを除外
-        const filteredKinds = result.kinds.filter(kind => kind !== 'new_kind');
-        
-        filteredKinds.forEach(kind => {
-            const option = document.createElement('option');
-            option.value = kind;
-            option.textContent = kind;
-            kindSelect.appendChild(option);
-        });
-        
-        await updateCaptionSelect();
-    } catch (error) {
-        console.error('Error loading kinds for rename:', error);
-    }
+// 行頭: キー、キー付きの語句、キーなしの文、単語（1文字以上打ったときだけ）
+function lineStartCandidates(section, ctx) {
+    if (!ctx.query) return [];
+    return keepBest([
+        ...state.phrases.flatMap(p => {
+            const bonus = wordBonus(p, section);
+            if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
+            return [
+                {kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1},
+                {kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus},
+            ];
+        }),
+        ...wordCandidates(section, ctx),
+    ]);
 }
 
-async function loadCaptionsByKind(kind) {
-    try {
-        const response = await fetch(`/get_captions_by_kind/${kind}`);
-        const result = await response.json();
-        
-        const captionSelect = document.getElementById('captionSelect');
-        captionSelect.innerHTML = '';
-        
-        // new_columnを除外してリスト作成
-        const filteredCaptions = result.captions.filter(caption => caption !== 'new_column');
-        
-        filteredCaptions.forEach(caption => {
-            const option = document.createElement('option');
-            option.value = caption;
-            option.textContent = caption;
-            captionSelect.appendChild(option);
-        });
-        
-        updateCaptionText();
-    } catch (error) {
-        console.error('Error loading captions:', error);
-    }
+// 一括入力でキーなしを選んだとき: 文と単語（1文字以上打ったときだけ）
+function keylessCandidates(section, ctx) {
+    if (!ctx.query) return [];
+    return keepBest([
+        ...state.phrases.filter(p => !p.key)
+            .map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})),
+        ...wordCandidates(section, ctx),
+    ]);
 }
 
-async function loadCaptionsForAdd(kind) {
-    if (kind === 'new_kind') {
-        // new_kind選択時はnew_columnのみ
-        const captionSelect = document.getElementById('captionSelect');
-        captionSelect.innerHTML = '<option value="new_column">new_column</option>';
-        updateCaptionText();
+const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates};
+
+function candidates(section, ctx) {
+    return CANDIDATE_SOURCES[ctx.mode](section, ctx)
+        .map(item => ({...item, score: fuzzyScore(ctx.query, item.match)}))
+        .filter(item => item.score !== null)
+        .sort((a, b) => (b.score + b.bonus) - (a.score + a.bonus))
+        .slice(0, 20);
+}
+
+function showSuggestions(el, section, contextFor = contextOf) {
+    const ctx = contextFor(el);
+    const items = candidates(section, ctx);
+    if (!items.length) {
+        hideSuggestions();
         return;
     }
-    
-    try {
-        // 全カラム情報を取得
-        const response = await fetch(`/get_captions_by_kind/${kind}`);
-        const result = await response.json();
-        
-        // 現在のテーブルカラム情報を取得
-        const tableResponse = await fetch(`/get_table_captions_by_kind/${kind}`);
-        const tableResult = await tableResponse.json();
-        
-        const captionSelect = document.getElementById('captionSelect');
-        captionSelect.innerHTML = '<option value="new_column">new_column</option>';
-        
-        // 全カラムから表にあるカラムを除外（表に存在しないカラムのみ追加）
-        const allCaptions = result.captions.filter(caption => caption !== 'new_column');
-        const tableCaptions = tableResult.captions.filter(caption => caption !== 'new_column');
-        const notInTableCaptions = allCaptions.filter(caption => !tableCaptions.includes(caption));
-        
-        notInTableCaptions.forEach(caption => {
-            const option = document.createElement('option');
-            option.value = caption;
-            option.textContent = caption;
-            captionSelect.appendChild(option);
-        });
-        
-        updateCaptionText();
-    } catch (error) {
-        console.error('Error loading captions for add:', error);
-        // エラー時はnew_columnのみ
-        const captionSelect = document.getElementById('captionSelect');
-        captionSelect.innerHTML = '<option value="new_column">new_column</option>';
-        updateCaptionText();
-    }
+    state.suggest = {el, section, ctx, items, active: 0, moved: false};
+    const list = $('suggestions');
+    list.innerHTML = items.map((item, i) =>
+        `<li role="option" data-i="${i}"${i === 0 ? ' class="active"' : ''}>${escapeHtml(item.label)}` +
+        `${item.count ? `<span class="count">${item.count}</span>` : ''}</li>`).join('');
+    list.hidden = false;
+    const rect = el.getBoundingClientRect();
+    const below = rect.bottom + list.offsetHeight <= window.innerHeight;
+    list.style.left = `${rect.left}px`;
+    list.style.top = `${below ? rect.bottom : Math.max(0, rect.top - list.offsetHeight)}px`;
 }
 
-async function loadCaptionsForRename() {
-    const kindSelect = document.getElementById('kindSelect');
-    const taskSelect = document.getElementById('taskSelect');
-    const selectedKind = kindSelect.value;
-    const selectedTask = taskSelect.value;
-    
-    if (!selectedKind) return;
-    
-    try {
-        // タスクに応じてAPIを使い分け
-        let apiUrl;
-        if (selectedTask === 'column表から削除' || selectedTask === 'column改名') {
-            // 表から削除・改名の場合は表内カラムのみ
-            apiUrl = `/get_table_captions_by_kind/${selectedKind}`;
-        } else {
-            // その他の場合は全カラム
-            apiUrl = `/get_captions_by_kind/${selectedKind}`;
-        }
-        
-        const response = await fetch(apiUrl);
-        const result = await response.json();
-        
-        const captionSelect = document.getElementById('captionSelect');
-        captionSelect.innerHTML = '';
-        
-        // new_columnを除外
-        const filteredCaptions = result.captions.filter(caption => caption !== 'new_column');
-        
-        filteredCaptions.forEach(caption => {
-            const option = document.createElement('option');
-            option.value = caption;
-            option.textContent = caption;
-            captionSelect.appendChild(option);
-        });
-        
-        updateCaptionText();
-    } catch (error) {
-        console.error('Error loading captions for rename:', error);
-    }
+function hideSuggestions() {
+    state.suggest = null;
+    $('suggestions').hidden = true;
 }
 
-async function loadExistingProjects() {
-    try {
-        console.log('Loading existing projects...');
-        const response = await fetch('/get_existing_projects');
-        const result = await response.json();
-        
-        console.log('Projects response:', result);
-        
-        const select = document.getElementById('existingProjects');
-        select.innerHTML = '<option value="">-- 既存プロジェクトを選択 --</option>';
-        
-        if (result.projects && result.projects.length > 0) {
-            result.projects.forEach(project => {
-                console.log('Adding project:', project);
-                const option = document.createElement('option');
-                option.value = project.name;
-                option.textContent = `${project.name} (${project.image_path})`;
-                select.appendChild(option);
-            });
-            console.log(`Added ${result.projects.length} projects to select`);
-        } else {
-            console.log('No projects found');
-            showStatus('既存プロジェクトが見つかりませんでした');
-        }
-    } catch (error) {
-        console.error('Error loading projects:', error);
-        showStatus('プロジェクト一覧取得エラー: ' + error.message, true);
-    }
+function moveActive(step) {
+    const s = state.suggest;
+    s.active = (s.active + step + s.items.length) % s.items.length;
+    s.moved = true;
+    [...$('suggestions').children].forEach((li, i) => li.classList.toggle('active', i === s.active));
+    $('suggestions').children[s.active].scrollIntoView({block: 'nearest'});
 }
 
-async function loadExistingProject() {
-    const select = document.getElementById('existingProjects');
-    const projectName = select.value;
-    
-    if (!projectName) return;
-    
-    try {
-        const response = await fetch('/load_existing_project', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({project_name: projectName})
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            document.getElementById('imageDir').value = result.image_dir;
-            showStatus('プロジェクトを読み込みました');
-            await refreshTable();
-        } else {
-            showStatus(result.message, true);
-        }
-    } catch (error) {
-        showStatus('プロジェクト読み込みエラー: ' + error.message, true);
+function accept(item) {
+    const {el, ctx} = state.suggest;
+    if (item.kind === 'keyed' && el.tagName === 'TEXTAREA') {
+        // 打ちかけの文字を消し、同じキーの行へ足す（無ければ行を足す）
+        const without = el.value.slice(0, ctx.queryStart) + el.value.slice(ctx.caret);
+        el.value = addPhrase(without.split('\n').filter(line => line.trim()).join('\n'), item.key, item.phrase);
+        el.setSelectionRange(el.value.length, el.value.length);
+    } else if (item.kind === 'keyed') {
+        el.value = `${item.key}: ${item.phrase}`;  // 一括入力は1行
+    } else {
+        const text = {
+            key: () => `${item.key}: `,
+            phrase: () => item.phrase + (ctx.restEmpty ? ', ' : ''),
+            word: () => item.word + (ctx.restEmpty ? ' ' : ''),
+            line: () => item.phrase,
+        }[item.kind]();
+        el.setRangeText(text, ctx.queryStart, ctx.caret, 'end');
     }
+    el.dispatchEvent(new Event('input'));
 }
 
-async function loadDirectory() {
-    const imageDir = document.getElementById('imageDir').value;
-    if (!imageDir) {
-        showStatus('ディレクトリパスを入力してください', true);
-        return;
+// 候補が出ているときのキー操作。Enter は打ちかけがあるか ↑↓ で選んだときだけ確定（改行を邪魔しない）
+function handleSuggestKey(event) {
+    const s = state.suggest;
+    if (!s || s.el !== event.target) return false;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        moveActive(event.key === 'ArrowDown' ? 1 : -1);
+    } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (s.ctx.query || s.moved))) {
+        accept(s.items[s.active]);
+    } else if (event.key === 'Escape') {
+        hideSuggestions();
+    } else {
+        return false;
     }
-    
-    try {
-        const response = await fetch('/load_directory', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({image_dir: imageDir})
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus('ディレクトリを読み込みました');
-            await refreshTable();
-        } else {
-            showStatus(result.message, true);
+    event.preventDefault();
+    return true;
+}
+
+function refreshWords() {
+    clearTimeout(refreshWords.timer);
+    refreshWords.timer = setTimeout(() => {
+        getJson('/get_dictionary')
+            .then(body => {
+                state.phrases = body.phrases;
+                state.words = body.words;
+                fillBulkKeys();
+            })
+            .catch(e => console.warn('辞書を読めません', e));
+    }, 100);
+}
+
+// ---- 表 ----
+
+function headHtml() {
+    return [
+        '<th>サムネイル</th>',
+        '<th>画像 / トークン</th>',
+        '<th>マーク</th>',
+        ...state.sections.map(s => (state.fixedSections.includes(s)
+            ? `<th data-section="${escapeHtml(s)}"><span class="section-name fixed">${escapeHtml(s)}</span></th>`
+            : `<th data-section="${escapeHtml(s)}"><span class="section-name" title="ダブルクリックで改名">${escapeHtml(s)}</span>` +
+              `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${escapeHtml(s)} を外す">×</button></th>`)),
+        ...(state.hasHints ? ['<th class="hint-head" title="画像と同じ名前の .txt（読むだけ。保存には影響しない）">hint</th>'] : []),
+    ].join('');
+}
+
+// マークの欄: 排他（A〜D のどれか1つ）と複数（★●▲■）のボタン
+function marksHtml(row) {
+    const button = (kind, mark, on) =>
+        `<button type="button" class="mark-btn${on ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}">${mark}</button>`;
+    const one = state.markChoices.one.map(m => button('one', m, row.mark === m)).join('');
+    const many = state.markChoices.many.map(m => button('many', m, (row.marks || '').includes(m))).join('');
+    return `<td class="marks"><div class="mark-row">${one}</div><div class="mark-row">${many}</div></td>`;
+}
+
+// マークの絞り込みに合うか
+function matchesFilter(row) {
+    const {one, many} = state.filter;
+    const okOne = !one || (one === 'none' ? !row.mark : row.mark === one);
+    const okMany = !many || (many === 'none' ? !row.marks : (row.marks || '').includes(many));
+    return okOne && okMany;
+}
+
+// hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）
+const hintHtml = row => `<td class="hint"><textarea readonly rows="5" aria-label="hint">${escapeHtml(row.hint || '')}</textarea></td>`;
+
+function metaHtml(row) {
+    const known = row.tokens !== null && row.tokens !== undefined;
+    const over = known && row.tokens > state.tokenLimit;
+    return `<div class="name">${escapeHtml(row['サムネイル'])}</div>` +
+        `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'} / ${state.tokenLimit}</div>`;
+}
+
+// view のボタン（各組の先頭の ☓ でその組の語句を消す）。押されている語句は on
+function choicesHtml(row) {
+    const view = phrasesOfKey(row.texts.picture, 'view');
+    const button = (phrase, label, group) =>
+        `<button type="button" class="choice${view.includes(phrase) ? ' on' : ''}" data-group="${group}" ` +
+        `data-phrase="${escapeHtml(phrase)}" title="${escapeHtml(phrase)}">${escapeHtml(label)}</button>`;
+    const clear = group => `<button type="button" class="choice clear" data-group="${group}" title="選択なし">☓</button>`;
+    const camera = state.viewChoices.camera.map((phrases, g) =>
+        `<span class="group">${clear(`camera${g}`)}${phrases.map(p => button(p, p.replace(/^from /, ''), `camera${g}`)).join('')}</span>`);
+    const pov = `<span class="group">${clear('pov')}${state.viewChoices.pov.map(c => button(c.phrase, `${c.emoji} ${c.label}`, 'pov')).join('')}</span>`;
+    return `<div class="choices"><div class="choice-row"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
+        `<div class="choice-row"><span class="choice-label">👀</span>${pov}</div></div>`;
+}
+
+const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
+
+// 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く、自動のキー（characters）は自動の値で出す
+function cellHtml(section, row) {
+    const keys = templateKeys(section);
+    const lines = mergeTemplate(row.texts[section] || '', keys).map(line => {
+        const key = parseLine(line).key;
+        if (state.autoKeys.includes(key)) {
+            const value = row.characters || '';
+            return `<div class="ln auto${value ? '' : ' empty'}" title="自動">${escapeHtml(`${key}:${value ? ` ${value}` : ''}`)}</div>`;
         }
-    } catch (error) {
-        showStatus('エラーが発生しました: ' + error.message, true);
-    }
+        const empty = parseLine(line).phrases.length === 0;
+        return `<div class="ln${empty ? ' empty' : ''}">${escapeHtml(line.trimEnd())}</div>`;
+    });
+    return `<div class="text">${lines.join('')}</div>${keys.includes('view') ? choicesHtml(row) : ''}`;
+}
+
+function rowHtml(row) {
+    const name = row['サムネイル'];
+    const classes = [row.is_dead ? 'dead' : '', state.selected.has(row.index) ? 'selected' : '',
+        matchesFilter(row) ? '' : 'filtered'].filter(Boolean).join(' ');
+    const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row)}</td>`).join('');
+    return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
+        `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt=""></td>` +
+        `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
+}
+
+const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}"]`);
+
+function renderTable() {
+    $('gridHead').innerHTML = headHtml();
+    $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
+    const bulkSection = $('bulkSection').value;  // 描き直しても一括入力の段落は選んだままにする
+    $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+    if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;
+    fillBulkKeys();
+    $('emptyNote').hidden = state.loaded;
+    $('tools').hidden = !state.loaded;
+    $('markTools').hidden = !state.loaded;
+    setDirty(state.dirty);
+    updateSelectionInfo();
+}
+
+function replaceRow(row) {
+    state.byIndex.set(row.index, row);
+    state.rows = state.rows.map(r => (r.index === row.index ? row : r));
+    const tr = rowElement(row.index);
+    if (tr) tr.outerHTML = rowHtml(row);
 }
 
 async function refreshTable() {
-    try {
-        console.log('refreshTable: Starting table refresh...');
-        const response = await fetch('/get_table_data');
-        const data = await response.json();
-        
-        console.log('refreshTable: Received data:', data);
-        currentData = data.data;
-        await renderTable(data.columns, data.data);
-        console.log('refreshTable: Table refresh completed');
-    } catch (error) {
-        console.error('refreshTable: Error updating table:', error);
-        showStatus('テーブル更新エラー: ' + error.message, true);
+    commitEdit();
+    const body = await getJson('/get_table_data');
+    state.sections = body.sections;
+    state.rows = body.data;
+    state.byIndex = new Map(body.data.map(r => [r.index, r]));
+    state.hasHints = body.data.some(r => r.hint);
+    state.tokenLimit = body.token_limit;
+    state.templates = body.templates;
+    state.fixedSections = body.fixed_sections;
+    state.autoKeys = body.auto_keys;
+    state.viewChoices = body.view_choices;
+    if (state.markChoices.one.length === 0) fillMarkFilters(body.mark_choices);
+    state.markChoices = body.mark_choices;
+    state.selected = new Set([...state.selected].filter(i => state.byIndex.has(i)));
+    if (!state.byIndex.has(state.anchor)) state.anchor = null;
+    state.loaded = true;
+    renderTable();
+    refreshWords();
+}
+
+// ---- 入力欄 ----
+
+function startEdit(td) {
+    if (state.editor && state.editor.td === td) return;
+    commitEdit();
+    const index = Number(td.closest('tr').dataset.index);
+    const section = td.dataset.section;
+    // 編集する行を選択状態にする（選択中の行の中なら選択はそのまま）
+    if (!state.selected.has(index)) {
+        state.selected = new Set([index]);
+        state.anchor = index;
+        paintSelection();
     }
+    const keys = editKeys(section);
+    const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
+    const el = document.createElement('textarea');
+    el.value = lines.join('\n');
+    td.replaceChildren(el);
+    state.editor = {index, section, td, el};
+    el.addEventListener('input', () => { autosize(el); showSuggestions(el, section); });
+    el.addEventListener('keydown', event => {
+        if (handleSuggestKey(event)) return;
+        if (event.key === 'Escape' || (event.key === 'Enter' && event.ctrlKey)) {
+            event.preventDefault();
+            commitEdit();
+        }
+    });
+    el.addEventListener('keyup', event => {
+        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) showSuggestions(el, section);
+    });
+    el.addEventListener('click', () => showSuggestions(el, section));
+    el.addEventListener('blur', () => commitEdit());
+    autosize(el);
+    el.focus();
+    const caret = firstEmptyKeyEnd(lines, keys.length);
+    el.setSelectionRange(caret, caret);
 }
 
-async function renderTable(columns, data) {
-    const headerRow = document.getElementById('tableHeader');
-    const tbody = document.getElementById('tableBody');
-    
-    // 選択状態をクリア
-    selectedRows.clear();
-    
-    // カラムを種別ごとにグループ化して表示
-    await renderGroupedTable(columns, data);
+function commitEdit() {
+    const editor = state.editor;
+    if (!editor) return;
+    state.editor = null;
+    hideSuggestions();
+    const row = state.byIndex.get(editor.index);
+    const text = tidyInput(editor.el.value);
+    const changed = text !== (row.texts[editor.section] || '');
+    row.texts[editor.section] = text;
+    editor.td.innerHTML = cellHtml(editor.section, row);
+    if (changed) track(sendText(row, editor.section, text)).catch(e => setStatus(String(e.message || e), 'error'));
 }
 
-// kind列の表示/非表示を管理するグローバル変数
-let hiddenKinds = new Set();
-let isDeadVisible = true; // 削除済み画像の表示状態
+async function sendText(row, section, text) {
+    const res = await postJson('/update_text', {row_index: row.index, section, text});
+    if (!res.success) {
+        setStatus(`${row['サムネイル']} の入力を反映できませんでした`, 'error');
+        return;
+    }
+    row.caption = res.caption;
+    row.tokens = res.tokens;
+    row.characters = res.characters;
+    const tr = rowElement(row.index);
+    if (tr) {
+        tr.querySelector('td.meta').innerHTML = metaHtml(row);
+        // 人物の段落を書き換えると characters が変わるので picture の欄を描き直す（編集中なら触らない）
+        const picture = tr.querySelector('td.cell[data-section="picture"]');
+        if (picture && !picture.querySelector('textarea')) picture.innerHTML = cellHtml('picture', row);
+    }
+    setDirty(true);
+    refreshWords();
+}
 
-function toggleKindColumns(kind) {
-    if (hiddenKinds.has(kind)) {
-        hiddenKinds.delete(kind);
+// view のボタン: 押した行（選択中の行の中なら選択中の全行）の view の行に、組の語句を1つだけ置く
+async function choose(button) {
+    const index = Number(button.closest('tr').dataset.index);
+    const rows = state.selected.has(index) ? visibleIndexes().filter(i => state.selected.has(i)) : [index];
+    const group = choiceGroup(button.dataset.group);
+    const clear = button.classList.contains('clear');
+    commitEdit();
+    await settled();
+    const res = await postJson('/set_choice', {
+        rows, section: 'picture', key: 'view', group,
+        phrase: clear ? group[0] : button.dataset.phrase,
+        on: !clear && !button.classList.contains('on'),
+    });
+    if (!res.success) return setStatus(res.message || '選べませんでした', 'error');
+    res.rows.forEach(replaceRow);
+    setDirty(true);
+    refreshWords();
+}
+
+// ---- 行の選択（クリック: その行だけ / Ctrl: 足し引き / Shift: 最後にクリックした行からの範囲） ----
+
+function visibleIndexes() {
+    const showDead = $('showDead').checked;
+    return state.rows.filter(r => (showDead || !r.is_dead) && matchesFilter(r)).map(r => r.index);
+}
+
+function selectVisible() {
+    state.selected = new Set(visibleIndexes());
+    paintSelection();
+}
+
+// 見えなくなった行を選択から外す
+function dropHiddenFromSelection() {
+    const visible = new Set(visibleIndexes());
+    state.selected = new Set([...state.selected].filter(i => visible.has(i)));
+    paintSelection();
+}
+
+function selectRow(index, event) {
+    const additive = event.ctrlKey || event.metaKey;
+    if (event.shiftKey && state.anchor !== null) {
+        const order = visibleIndexes();
+        const from = order.indexOf(state.anchor);
+        const to = order.indexOf(index);
+        const range = from < 0 || to < 0 ? [index] : order.slice(Math.min(from, to), Math.max(from, to) + 1);
+        state.selected = new Set(additive ? [...state.selected, ...range] : range);
+    } else if (additive) {
+        if (state.selected.has(index)) state.selected.delete(index);
+        else state.selected.add(index);
+        state.anchor = index;
     } else {
-        hiddenKinds.add(kind);
+        const onlyThis = state.selected.size === 1 && state.selected.has(index);
+        state.selected = new Set(onlyThis ? [] : [index]);
+        state.anchor = index;
     }
-    
-    // テーブルを再描画
-    refreshTable();
+    paintSelection();
 }
 
-function toggleDeadVisibility() {
-    isDeadVisible = !isDeadVisible;
-    refreshTable();
+function paintSelection() {
+    for (const tr of $('gridBody').rows) tr.classList.toggle('selected', state.selected.has(Number(tr.dataset.index)));
+    updateSelectionInfo();
 }
 
-async function renderGroupedTable(columns, data) {
-    try {
-        const response = await fetch('/get_columns_by_kind');
-        const result = await response.json();
-        const columnsByKind = result.columns_by_kind;
-        
-        // グローバル変数に保存
-        window.currentColumnsByKind = columnsByKind;
-        
-        const thead = document.querySelector('#tableHeader').parentNode;
-        const tbody = document.getElementById('tableBody');
-        
-        // ヘッダー部分を完全に初期化
-        thead.innerHTML = '';
-        
-        // 種別ヘッダー行作成
-        const kindHeaderRow = document.createElement('tr');
-        const orderedColumns = ['idx', 'サムネイル']; // インデックスカラムを追加
-        
-        // インデックス列の種別ヘッダー（空白）
-        const idxKindTh = document.createElement('th');
-        idxKindTh.textContent = '\u00A0'; // Non-breaking space
-        idxKindTh.style.textAlign = 'center';
-        idxKindTh.style.backgroundColor = '#e9ecef';
-        idxKindTh.style.borderRight = '1px solid #dee2e6';
-        idxKindTh.style.width = '50px';
-        idxKindTh.style.minWidth = '50px';
-        idxKindTh.style.maxWidth = '50px';
-        idxKindTh.classList.add('sticky-header');
-        kindHeaderRow.appendChild(idxKindTh);
-        
-        // サムネイル列の種別ヘッダー（空白）
-        const thumbnailKindTh = document.createElement('th');
-        thumbnailKindTh.textContent = '\u00A0'; // Non-breaking space
-        thumbnailKindTh.style.textAlign = 'center';
-        thumbnailKindTh.style.backgroundColor = '#e9ecef';
-        thumbnailKindTh.style.borderRight = '2px solid #dee2e6';
-        thumbnailKindTh.classList.add('sticky-header');
-        kindHeaderRow.appendChild(thumbnailKindTh);
-        
-        // 各種別のヘッダー
-        Object.keys(columnsByKind).forEach(kind => {
-            const isHidden = hiddenKinds.has(kind);
-            
-            if (!isHidden) {
-                const kindTh = document.createElement('th');
-                kindTh.textContent = kind + ' ▼'; // 表示中
-                kindTh.colSpan = columnsByKind[kind].length;
-                kindTh.style.textAlign = 'center';
-                kindTh.style.backgroundColor = '#e9ecef';
-                kindTh.style.borderRight = '2px solid #dee2e6';
-                kindTh.style.cursor = 'pointer';
-                kindTh.classList.add('sticky-header');
-                
-                // クリックイベントを追加
-                kindTh.addEventListener('click', () => toggleKindColumns(kind));
-                
-                kindHeaderRow.appendChild(kindTh);
-                
-                // カラム順序に追加
-                orderedColumns.push(...columnsByKind[kind]);
-            } else {
-                // 非表示時は折りたたまれた表示
-                const kindTh = document.createElement('th');
-                kindTh.textContent = kind + ' ▶'; // 折りたたまれている
-                kindTh.colSpan = 1; // 1列分のみ
-                kindTh.style.textAlign = 'center';
-                kindTh.style.backgroundColor = '#d6d8db';
-                kindTh.style.borderRight = '2px solid #dee2e6';
-                kindTh.style.cursor = 'pointer';
-                kindTh.style.width = '60px'; // 幅を半分に
-                kindTh.style.minWidth = '60px';
-                kindTh.style.maxWidth = '60px';
-                kindTh.classList.add('sticky-header');
-                
-                // クリックイベントを追加
-                kindTh.addEventListener('click', () => toggleKindColumns(kind));
-                
-                kindHeaderRow.appendChild(kindTh);
-                
-                // 折りたたまれた列として1列分のプレースホルダーを追加
-                orderedColumns.push(`${kind}_collapsed`);
-            }
-        });
-        
-        // カラムヘッダー行作成
-        const colHeaderRow = document.createElement('tr');
-        colHeaderRow.id = 'tableHeader'; // IDを維持
-        
-        // インデックス列
-        const idxColTh = document.createElement('th');
-        idxColTh.textContent = 'idx';
-        idxColTh.style.backgroundColor = '#f8f9fa';
-        idxColTh.style.borderRight = '1px solid #dee2e6';
-        idxColTh.style.width = '50px';
-        idxColTh.style.minWidth = '50px';
-        idxColTh.style.maxWidth = '50px';
-        idxColTh.style.fontSize = '0.7em';
-        idxColTh.classList.add('sticky-header');
-        colHeaderRow.appendChild(idxColTh);
-        
-        // サムネイル列
-        const thumbnailColTh = document.createElement('th');
-        thumbnailColTh.textContent = 'サムネイル';
-        thumbnailColTh.style.backgroundColor = '#f8f9fa';
-        thumbnailColTh.style.borderRight = '2px solid #dee2e6';
-        thumbnailColTh.classList.add('sticky-header');
-        colHeaderRow.appendChild(thumbnailColTh);
-        
-        // 各カラムのヘッダー
-        let kindIndex = 0;
-        Object.keys(columnsByKind).forEach(kind => {
-            const isHidden = hiddenKinds.has(kind);
-            const isEvenKind = kindIndex % 2 === 0;
-            const headerBgColor = isEvenKind ? '#f8f9fa' : '#e9ecef';
-            
-            if (!isHidden) {
-                columnsByKind[kind].forEach((col, index) => {
-                    const colTh = document.createElement('th');
-                    colTh.textContent = col;
-                    colTh.style.fontSize = '0.7em'; // 2段階下げる：0.9em → 0.7em
-                    colTh.style.backgroundColor = headerBgColor;
-                    colTh.classList.add('sticky-header');
-                    
-                    // 種別グループの最後のカラムに境界線を追加
-                    if (index === columnsByKind[kind].length - 1) {
-                        colTh.style.borderRight = '2px solid #dee2e6';
-                    }
-                    
-                    colHeaderRow.appendChild(colTh);
-                });
-            } else {
-                // 折りたたまれた場合は空のヘッダー
-                const colTh = document.createElement('th');
-                colTh.textContent = '...';
-                colTh.style.fontSize = '0.7em';
-                colTh.style.backgroundColor = '#d6d8db';
-                colTh.style.borderRight = '2px solid #dee2e6';
-                colTh.style.width = '60px'; // 幅を半分に
-                colTh.style.minWidth = '60px';
-                colTh.style.maxWidth = '60px';
-                colTh.classList.add('sticky-header');
-                colHeaderRow.appendChild(colTh);
-            }
-            kindIndex++;
-        });
-        
-        // ヘッダーを追加
-        thead.appendChild(kindHeaderRow);
-        thead.appendChild(colHeaderRow);
-        
-        // ボディ作成 - 最初から正しい色を設定
-        tbody.innerHTML = '';
-        data.forEach((row, index) => {
-            // is_deadフラグチェック
-            const isDead = row.is_dead || false;
-            
-            // 削除済み画像の表示/非表示制御
-            if (!isDeadVisible && isDead) {
-                return; // 削除済み非表示時はスキップ
-            }
-            
-            const tr = document.createElement('tr');
-            tr.style.cursor = 'pointer';
-            
-            // 削除済み行のスタイル適用
-            if (isDead) {
-                tr.classList.add('dead-row');
-            }
-            
-            // 行クリックイベント
-            tr.addEventListener('click', (e) => {
-                if (e.target.type !== 'checkbox') {
-                    toggleRowSelection(index, e);
-                }
-            });
-            
-            // 順序に従ってセル作成
-            let currentKindIndex = 0;
-            let currentKindColumnCount = 0;
-            const kindKeys = Object.keys(columnsByKind);
-            
-            // 順序に従ってセル作成
-            let kindIndexForCells = 0;
-            let kindColumnCount = 0;
-            const kindKeysForCells = Object.keys(columnsByKind);
-            
-            orderedColumns.forEach(col => {
-                const td = document.createElement('td');
-                
-                if (col === 'idx') {
-                    // インデックス列
-                    const idxText = (index+1).toString().padStart(3, '0'); // 3桁0埋め
-                    td.textContent = idxText;
-                    td.style.textAlign = 'center';
-                    td.style.fontSize = '0.8em';
-                    td.style.borderRight = '1px solid #dee2e6';
-                    td.style.width = '50px';
-                    td.style.minWidth = '50px';
-                    td.style.maxWidth = '50px';
-                    
-                    // インデックス列の背景色（削除済みの場合は上書きされる）
-                    if (!isDead) {
-                        const isEvenRow = index % 2 === 0;
-                        const rowBgColor = isEvenRow ? '#fff5f5' : '#fffbf0';
-                        td.style.backgroundColor = rowBgColor;
-                    }
-                    
-                } else if (col === 'サムネイル') {
-                    const img = document.createElement('img');
-                    img.src = row[col];
-                    img.className = 'thumbnail-cell';
-                    img.alt = 'thumbnail';
-                    
-                    img.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        const imageName = data[index]['サムネイル'];
-                        showImageModal(row[col], imageName);
-                    });
-                    
-                    td.appendChild(img);
-                    td.style.borderRight = '2px solid #dee2e6';
-                    
-                    // サムネイル列の背景色（削除済みの場合は上書きされる）
-                    if (!isDead) {
-                        const isEvenRow = index % 2 === 0;
-                        const rowBgColor = isEvenRow ? '#fff5f5' : '#fffbf0';
-                        td.style.backgroundColor = rowBgColor;
-                    }
-                    
-                } else if (col.endsWith('_collapsed')) {
-                    // 折りたたまれたkindの列 - kindインデックスを進める
-                    const kindName = col.replace('_collapsed', '');
-                    const isEvenKind = kindIndexForCells % 2 === 0;
-                    
-                    td.textContent = '...';
-                    td.style.textAlign = 'center';
-                    td.style.borderRight = '2px solid #dee2e6';
-                    td.style.width = '60px';
-                    td.style.minWidth = '60px';
-                    td.style.maxWidth = '60px';
-                    td.classList.add('collapsed-column');
-                    
-                    // 折りたたまれた列も行の色と濃淡を適用（削除済みの場合は上書きされる）
-                    if (!isDead) {
-                        const isEvenRow = index % 2 === 0;
-                        if (isEvenRow) {
-                            td.style.backgroundColor = isEvenKind ? '#fff0f0' : '#ffebeb';
-                        } else {
-                            td.style.backgroundColor = isEvenKind ? '#fffdf0' : '#fffaeb';
-                        }
-                    }
-                    
-                    // kindインデックスを次に進める
-                    kindIndexForCells++;
-                    kindColumnCount = 0;
-                    
-                } else {
-                    // 通常の列
-                    // 折りたたまれたkindをスキップしてkindインデックスを調整
-                    while (kindIndexForCells < kindKeysForCells.length && 
-                           (hiddenKinds.has(kindKeysForCells[kindIndexForCells]) || 
-                            kindColumnCount >= columnsByKind[kindKeysForCells[kindIndexForCells]].length)) {
-                        if (hiddenKinds.has(kindKeysForCells[kindIndexForCells])) {
-                            // 隠されたkindは既にcollapsed列で処理済みなのでスキップ
-                            kindIndexForCells++;
-                            kindColumnCount = 0;
-                        } else {
-                            // 通常のkind切り替え
-                            kindIndexForCells++;
-                            kindColumnCount = 0;
-                        }
-                    }
-                    
-                    if (kindIndexForCells < kindKeysForCells.length) {
-                        // セルの背景色を最初から正しく設定（削除済みの場合は上書きされる）
-                        if (!isDead) {
-                            const isEvenRow = index % 2 === 0;
-                            const isEvenKind = kindIndexForCells % 2 === 0;
-                            
-                            if (isEvenRow) {
-                                td.style.backgroundColor = isEvenKind ? '#fff0f0' : '#ffebeb';
-                            } else {
-                                td.style.backgroundColor = isEvenKind ? '#fffdf0' : '#fffaeb';
-                            }
-                        }
-                        
-                        // 種別グループの最後のカラムに境界線
-                        if (kindColumnCount === columnsByKind[kindKeysForCells[kindIndexForCells]].length - 1) {
-                            td.style.borderRight = '2px solid #dee2e6';
-                        }
-                        
-                        const checkbox = document.createElement('input');
-                        checkbox.type = 'checkbox';
-                        checkbox.checked = row[col] || false;
-                        checkbox.onchange = (e) => handleCheckboxChange(index, col, checkbox.checked, e);
-                        td.appendChild(checkbox);
-                        
-                        kindColumnCount++;
-                    }
-                }
-                
-                tr.appendChild(td);
-            });
-            
-            tbody.appendChild(tr);
-        });
-        
-    } catch (error) {
-        console.error('Error rendering grouped table:', error);
-        // フォールバック：通常のテーブル表示
-        renderSimpleTable(columns, data);
+function updateSelectionInfo() {
+    $('selectionInfo').textContent = `選択 ${state.selected.size} 行`;
+    // 行を選んでいる間は、キーの案内の代わりに一括入力を出す
+    $('bulkForm').hidden = state.selected.size === 0;
+    $('keyHelp').hidden = state.selected.size > 0;
+}
+
+// ---- 操作 ----
+
+async function bulkEdit(op) {
+    commitEdit();
+    const rows = visibleIndexes().filter(i => state.selected.has(i));
+    const phrases = $('bulkText').value.trim();
+    const key = $('bulkKey').value;
+    if (!rows.length) return setStatus('行を選んでください', 'error');
+    if (!phrases) return setStatus('語句を入力してください', 'error');
+    const text = key ? `${key}: ${phrases}` : phrases;
+    await settled();
+    const res = await postJson(op === 'add' ? '/add_phrase' : '/remove_phrase', {rows, section: $('bulkSection').value, text});
+    if (!res.success) return setStatus(res.message || '一括入力できませんでした', 'error');
+    res.rows.forEach(replaceRow);
+    $('bulkText').value = '';
+    hideSuggestions();
+    setDirty(true);
+    refreshWords();
+    setStatus(`${rows.length} 行${op === 'add' ? 'に追加' : 'から削除'}しました`, 'ok');
+}
+
+async function addSection() {
+    const name = $('sectionName').value.trim();
+    if (!name) return;
+    $('sectionName').value = '';  // 応答を待つ間に次の名前を打っても消さないよう、送った時点で空にする
+    const res = await postJson('/add_section', {name});
+    if (!res.success) {
+        if (!$('sectionName').value) $('sectionName').value = name;
+        return setStatus(res.message, 'error');
     }
+    setDirty(true);
+    await refreshTable();
 }
 
-function renderSimpleTable(columns, data) {
-    // 元の単純なテーブル表示（フォールバック用）
-    const headerRow = document.getElementById('tableHeader');
-    const tbody = document.getElementById('tableBody');
-    
-    selectedRows.clear();
-    
-    headerRow.innerHTML = '';
-    columns.forEach(col => {
-        const th = document.createElement('th');
-        th.textContent = col;
-        headerRow.appendChild(th);
+async function renameSection(old) {
+    const name = window.prompt('新しい段落名', old);
+    if (name === null || name.trim() === old) return;
+    await settled();
+    const res = await postJson('/rename_section', {old, new: name});
+    if (!res.success) return setStatus(res.message, 'error');
+    setDirty(true);
+    await refreshTable();
+}
+
+async function removeSection(name) {
+    const message = `段落「${name}」を表から外しますか？\nこの段落の入力も消えます（保存しなければ、プロジェクトを開き直すと戻ります）。`;
+    if (!window.confirm(message)) return;
+    await settled();
+    const res = await postJson('/remove_section', {name});
+    if (!res.success) return setStatus(res.message, 'error');
+    setDirty(true);
+    await refreshTable();
+}
+
+async function freezeDictionary() {
+    if (!window.confirm('今使っている語句と単語を共用辞書に入れますか？\n入れた語句は、どの画像からも消えても候補に残ります。')) return;
+    commitEdit();
+    await settled();
+    const res = await postJson('/freeze');
+    if (!res.success) return setStatus(res.message, 'error');
+    refreshWords();
+    setStatus(res.message, 'ok');
+}
+
+async function refreshProjects() {
+    const body = await getJson('/get_existing_projects');
+    const options = body.projects
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => `<option value="${escapeHtml(p.name)}" title="${escapeHtml(p.image_path)}">${escapeHtml(p.name)}</option>`);
+    $('projectSelect').innerHTML = ['<option value="">選んでください</option>', ...options].join('');
+    $('projectSelect').value = state.projectName;
+}
+
+const confirmDiscard = () => !state.dirty || window.confirm('保存していない変更があります。破棄して続けますか？');
+
+async function opened(name) {
+    state.projectName = name;
+    state.selected = new Set();
+    state.anchor = null;
+    state.dirty = false;
+    await refreshTable();
+    await refreshProjects();
+    setStatus(`「${name}」を開きました（${state.rows.length} 枚）`, 'ok');
+}
+
+async function openProject() {
+    const name = $('projectSelect').value;
+    if (!name) return;
+    commitEdit();
+    if (!confirmDiscard()) {
+        $('projectSelect').value = state.projectName;
+        return;
+    }
+    await settled();
+    const res = await postJson('/load_existing_project', {project_name: name});
+    if (!res.success) {
+        $('projectSelect').value = state.projectName;
+        return setStatus(res.message, 'error');
+    }
+    $('imageDir').value = res.image_dir;
+    await opened(name);
+}
+
+async function loadDirectory() {
+    const dir = $('imageDir').value.trim();
+    if (!dir) return setStatus('画像フォルダのパスを入力してください', 'error');
+    commitEdit();
+    if (!confirmDiscard()) return;
+    await settled();
+    const res = await postJson('/load_directory', {image_dir: dir});
+    if (!res.success) return setStatus(res.message, 'error');
+    await opened(dir.replace(/["']/g, '').replace(/[\\/]+$/, '').split(/[\\/]/).pop());
+}
+
+async function save() {
+    if (!state.loaded) return;
+    commitEdit();
+    await settled();
+    const res = await postJson('/save_data');
+    if (!res.success) return setStatus(res.message, 'error');
+    state.dirty = false;
+    await refreshTable();
+    await refreshProjects();
+    setStatus('保存しました', 'ok');
+}
+
+async function removeDead() {
+    if (!window.confirm('削除済み画像の行を完全に削除しますか？（あわせて保存します）')) return;
+    commitEdit();
+    await settled();
+    const res = await postJson('/remove_all_dead');
+    if (!res.success) return setStatus(res.message, 'error');
+    state.dirty = false;
+    await refreshTable();
+    setStatus(res.message, 'ok');
+}
+
+function toggleDead() {
+    $('grid').classList.toggle('hide-dead', !$('showDead').checked);
+    dropHiddenFromSelection();
+}
+
+// ---- マーキング ----
+
+function fillMarkFilters(choices) {
+    const options = (all, marks) => [`<option value="">${all}</option>`,
+        ...marks.map(m => `<option value="${m}">${m}</option>`), '<option value="none">なし</option>'].join('');
+    $('filterOne').innerHTML = options('排他: すべて', choices.one);
+    $('filterMany').innerHTML = options('複数: すべて', choices.many);
+}
+
+function applyFilter() {
+    state.filter = {one: $('filterOne').value, many: $('filterMany').value};
+    for (const tr of $('gridBody').rows) {
+        tr.classList.toggle('filtered', !matchesFilter(state.byIndex.get(Number(tr.dataset.index))));
+    }
+    dropHiddenFromSelection();
+}
+
+// 対象の行: 押した行が選択中なら選択中の（見えている）全行、そうでなければその行だけ
+function targetRows(index) {
+    return state.selected.has(index) ? visibleIndexes().filter(i => state.selected.has(i)) : [index];
+}
+
+async function sendMarks(url, payload) {
+    commitEdit();
+    await settled();
+    const res = await postJson(url, payload);
+    if (!res.success) return setStatus(res.message || 'マークを付けられませんでした', 'error');
+    res.rows.forEach(replaceRow);
+    setDirty(true);
+}
+
+// 排他のマーク: 対象の行がみなそのマークなら外し、そうでなければ付ける
+function markOne(rows, mark) {
+    const all = rows.every(i => state.byIndex.get(i).mark === mark);
+    return sendMarks('/set_mark', {rows, mark: all ? '' : mark});
+}
+
+// 複数のマーク: 対象の行がみなその記号を持っていれば外し、そうでなければ付ける
+function markMany(rows, mark) {
+    const all = rows.every(i => (state.byIndex.get(i).marks || '').includes(mark));
+    return sendMarks('/set_marks', {rows, mark, on: !all});
+}
+
+function clickMark(button) {
+    const rows = targetRows(Number(button.closest('tr').dataset.index));
+    return button.dataset.kind === 'one' ? markOne(rows, button.dataset.mark) : markMany(rows, button.dataset.mark);
+}
+
+// キーボード（入力欄の外で）: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■。Ctrl+A で表示中をすべて選択
+function handleMarkKey(event) {
+    const typing = event.target instanceof Element && event.target.closest('input, textarea, select');
+    if (typing || !state.loaded) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        selectVisible();
+        return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey || !/^[0-8]$/.test(event.key)) return;
+    const rows = visibleIndexes().filter(i => state.selected.has(i));
+    if (!rows.length) return setStatus('先に行を選んでください', 'error');
+    event.preventDefault();
+    const n = Number(event.key);
+    if (n === 0) guarded(sendMarks)('/set_mark', {rows, mark: ''});
+    else if (n <= 4) guarded(markOne)(rows, state.markChoices.one[n - 1]);
+    else guarded(markMany)(rows, state.markChoices.many[n - 5]);
+}
+
+// 長押し（1秒）でマークの列を全行クリア。短く押しただけなら案内だけ出す
+const HOLD_MS = 1000;  // 長押しで実行するまでの時間（ボタンの中の帯もこの時間で満タンになる）
+
+// 長押し（1秒）で run を行う。押している間はボタンの中で帯が伸び、満タンで実行。短く押しただけなら hint を出すだけ
+function holdToRun(button, run, hint) {
+    button.style.setProperty('--hold-ms', `${HOLD_MS}ms`);
+    let timer = null;
+    const cancel = () => {
+        if (timer === null) return;
+        clearTimeout(timer);
+        timer = null;
+        button.classList.remove('holding');
+        setStatus(hint);
+    };
+    button.addEventListener('pointerdown', () => {
+        button.classList.add('holding');
+        timer = setTimeout(() => {
+            timer = null;
+            button.classList.remove('holding');
+            guarded(run)();
+        }, HOLD_MS);
     });
-    
-    tbody.innerHTML = '';
-    data.forEach((row, index) => {
-        const tr = document.createElement('tr');
-        tr.style.cursor = 'pointer';
-        
-        tr.addEventListener('click', (e) => {
-            if (e.target.type !== 'checkbox') {
-                toggleRowSelection(index, e);
-            }
-        });
-        
-        columns.forEach(col => {
-            const td = document.createElement('td');
-            
-            if (col === 'サムネイル') {
-                const img = document.createElement('img');
-                img.src = row[col];
-                img.className = 'thumbnail-cell';
-                img.alt = 'thumbnail';
-                
-                img.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const imageName = data[index]['サムネイル'];
-                    showImageModal(row[col], imageName);
-                });
-                
-                td.appendChild(img);
-            } else {
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.checked = row[col] || false;
-                checkbox.onchange = (e) => handleCheckboxChange(index, col, checkbox.checked, e);
-                td.appendChild(checkbox);
-            }
-            
-            tr.appendChild(td);
-        });
-        
-        tbody.appendChild(tr);
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(name => button.addEventListener(name, cancel));
+}
+
+async function clearMarks(column) {
+    const res = await postJson('/clear_marks', {column});
+    if (!res.success) return setStatus(res.message, 'error');
+    setDirty(true);
+    await refreshTable();
+    setStatus(`全行の ${column === 'mark' ? 'A〜D' : '★●▲■'} を消しました`, 'ok');
+}
+
+async function deselectAll() {
+    state.selected = new Set();
+    state.anchor = null;
+    paintSelection();
+    setStatus('選択を解除しました', 'ok');
+}
+
+// 一括入力のキー: 段落の確定タグ、辞書でその段落に使われたキー、（キーなし）
+function bulkKeys(section) {
+    const template = editKeys(section);
+    const used = [...new Set(state.phrases.filter(p => p.section === section && p.key).map(p => p.key))];
+    const keys = [...template, ...used.filter(k => !template.includes(k))];
+    return template.length ? [...keys, ''] : ['', ...keys];
+}
+
+function fillBulkKeys() {
+    // 前に選んでいたキーが新しい段落にもあれば残す（最初の1回は先頭のキー）
+    const keep = $('bulkKey').options.length ? $('bulkKey').value : null;
+    const keys = bulkKeys($('bulkSection').value);
+    $('bulkKey').innerHTML = keys.map(k => `<option value="${escapeHtml(k)}">${k ? escapeHtml(k) : '（キーなし）'}</option>`).join('');
+    if (keys.includes(keep)) $('bulkKey').value = keep;
+}
+
+// 一括入力の語句の欄の文脈: キーは選んだもの。キーなしなら文と単語
+function bulkContext(el) {
+    const key = $('bulkKey').value;
+    const value = el.value;
+    const caret = el.selectionStart;
+    const before = value.slice(0, caret);
+    const base = {caret, restEmpty: value.slice(caret).trim() === '', current: key ? splitPhrases(value) : []};
+    if (key) {
+        const segment = before.lastIndexOf(',') + 1;
+        const raw = before.slice(segment);
+        const query = raw.trimStart();
+        return {...base, mode: 'phrase', key, query, queryStart: segment + (raw.length - query.length)};
+    }
+    const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
+    if (lastBreak >= 0) return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1};
+    const query = before.trimStart();
+    return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
+}
+
+function openImage(name) {
+    $('imageTitle').textContent = name;
+    $('imageFull').src = `/image/${encodeURIComponent(name)}`;
+    $('imageDialog').showModal();
+}
+
+// ---- つなぎ込み ----
+
+function wire() {
+    $('loadButton').addEventListener('click', guarded(loadDirectory));
+    $('imageDir').addEventListener('keydown', event => {
+        if (event.key === 'Enter') guarded(loadDirectory)();
+    });
+    $('projectSelect').addEventListener('change', guarded(openProject));
+    $('saveButton').addEventListener('click', guarded(save));
+    $('removeDeadButton').addEventListener('click', guarded(removeDead));
+    $('freezeButton').addEventListener('click', guarded(freezeDictionary));
+    $('showDead').addEventListener('change', toggleDead);
+    $('sectionForm').addEventListener('submit', event => {
+        event.preventDefault();
+        guarded(addSection)();
+    });
+    $('bulkForm').addEventListener('submit', event => {
+        event.preventDefault();
+        guarded(bulkEdit)(event.submitter ? event.submitter.value : 'add');
+    });
+    $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value, bulkContext));
+    $('bulkSection').addEventListener('change', () => {
+        fillBulkKeys();
+        hideSuggestions();
+    });
+    $('bulkKey').addEventListener('change', hideSuggestions);
+    $('bulkText').addEventListener('keydown', handleSuggestKey);
+    $('bulkText').addEventListener('blur', hideSuggestions);
+
+    $('filterOne').addEventListener('change', applyFilter);
+    $('filterMany').addEventListener('change', applyFilter);
+    $('selectVisibleButton').addEventListener('click', selectVisible);
+    document.querySelectorAll('.clear-marks .hold').forEach(button =>
+        holdToRun(button, () => clearMarks(button.dataset.column), '1秒長押しすると、全行のマークを消します'));
+    holdToRun($('deselectButton'), deselectAll, '1秒長押しすると、選択を解除します');
+    document.addEventListener('keydown', handleMarkKey);
+
+    $('gridBody').addEventListener('click', event => {
+        const choice = event.target.closest('.choice');
+        if (choice) {
+            guarded(choose)(choice);
+            return;
+        }
+        const markButton = event.target.closest('.mark-btn');
+        if (markButton) {
+            guarded(clickMark)(markButton);
+            return;
+        }
+        const td = event.target.closest('td');
+        if (!td) return;
+        const index = Number(td.closest('tr').dataset.index);
+        if (td.classList.contains('thumb')) {
+            if (event.target.tagName === 'IMG') openImage(td.closest('tr').dataset.name);
+        } else if (td.classList.contains('meta')) {
+            selectRow(index, event);
+        } else if (td.classList.contains('cell') && !td.querySelector('textarea')) {
+            // ボタンのある欄（picture）は文字の部分だけで編集を始める（ボタンの間や余白の誤クリックで開かない）
+            if (td.querySelector('.choices') && !event.target.closest('.text')) return;
+            startEdit(td);
+        }
+    });
+    // hint はフォーカスしたら全体を選ぶ（すぐコピーできるように）
+    $('gridBody').addEventListener('focusin', event => {
+        if (event.target.closest('td.hint')) event.target.select();
+    });
+    $('gridHead').addEventListener('click', event => {
+        const button = event.target.closest('.remove-section');
+        if (button) guarded(removeSection)(button.closest('th').dataset.section);
+    });
+    $('gridHead').addEventListener('dblclick', event => {
+        const name = event.target.closest('.section-name:not(.fixed)');
+        if (name) guarded(renameSection)(name.closest('th').dataset.section);
+    });
+
+    // 候補をクリックしても入力欄のフォーカスを外さない
+    $('suggestions').addEventListener('mousedown', event => event.preventDefault());
+    $('suggestions').addEventListener('click', event => {
+        const li = event.target.closest('li');
+        if (li && state.suggest) accept(state.suggest.items[Number(li.dataset.i)]);
+    });
+
+    $('imageDialog').addEventListener('click', event => {
+        if (event.target === $('imageDialog')) $('imageDialog').close();
+    });
+    document.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+            event.preventDefault();
+            guarded(save)();
+        }
+    });
+    window.addEventListener('beforeunload', event => {
+        if (state.dirty) {
+            event.preventDefault();
+            event.returnValue = '';
+        }
     });
 }
 
-async function updateCell(rowIndex, columnName, value) {
-    try {
-        const response = await fetch('/update_cell', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                row_index: rowIndex,
-                column_name: columnName,
-                value: value
-            })
-        });
-        
-        const result = await response.json();
-        if (!result.success) {
-            showStatus('セル更新エラー', true);
-        }
-    } catch (error) {
-        showStatus('セル更新エラー: ' + error.message, true);
-    }
-}
-
-async function executeTask() {
-    const taskSelect = document.getElementById('taskSelect');
-    const selectedTask = taskSelect.value;
-    
-    switch (selectedTask) {
-        case 'column追加':
-            await addColumn();
-            break;
-        case 'kind改名':
-            await renameKind();
-            break;
-        case 'column改名':
-            await renameColumn();
-            break;
-        case 'kind・column両方改名':
-            await renameBoth();
-            break;
-        case 'column表から削除':
-            await removeFromTable();
-            break;
-        case 'column全体から削除':
-            await removeCompletely();
-            break;
-        default:
-            showStatus('不明なタスクです', true);
-    }
-}
-
-async function addColumn() {
-    const kindSelect = document.getElementById('kindSelect');
-    const kindText = document.getElementById('kindText');
-    const captionSelect = document.getElementById('captionSelect');
-    const captionText = document.getElementById('captionText');
-    const defaultValue = document.getElementById('defaultValueToggle').checked;
-    
-    let kind = kindSelect.value;
-    let columnName;
-    
-    console.log('addColumn: Starting column addition');
-    console.log('addColumn: kindSelect.value =', kindSelect.value);
-    console.log('addColumn: kindText.value =', kindText.value);
-    console.log('addColumn: captionSelect.value =', captionSelect.value);
-    console.log('addColumn: captionText.value =', captionText.value);
-    
-    // 種別の決定
-    if (kind === 'new_kind') {
-        if (!kindText.value.trim()) {
-            showStatus('新しい種別名を入力してください', true);
-            return;
-        }
-        kind = kindText.value.trim();
-    }
-    
-    // カラム名の決定
-    if (captionSelect.value === 'new_column') {
-        // new_column選択時はテキスト入力から取得
-        if (!captionText.value.trim()) {
-            showStatus('新しいカラム名を入力してください', true);
-            return;
-        }
-        columnName = captionText.value.trim();
-        
-        // 空白文字チェック
-        if (!columnName || columnName === '') {
-            showStatus('空白のキャプション名は使用できません', true);
-            return;
-        }
-    } else {
-        // 既存カラム選択時は選択値を使用
-        columnName = captionSelect.value;
-    }
-    
-    console.log('addColumn: Final values - kind:', kind, 'columnName:', columnName, 'defaultValue:', defaultValue);
-    
-    try {
-        const response = await fetch('/add_column', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                column_name: columnName,
-                kind: kind,
-                default_value: defaultValue
-            })
-        });
-        
-        const result = await response.json();
-        console.log('addColumn: Server response:', result);
-        
-        if (result.success === true) {  // 明示的に === true で比較
-            showStatus(`カラム「${columnName}」(種別: ${kind})を追加しました（初期値：${defaultValue}）`);
-            
-            // UI初期化
-            kindText.value = '';
-            captionText.value = '';
-            
-            // 選択肢更新とテーブル更新を順次実行
-            await loadKinds();
-            await updateTaskUI(); // タスクUIも更新
-            await refreshTable();
-        } else {
-            console.log('addColumn: Addition failed, result.success =', result.success);
-            showStatus('カラム追加に失敗しました: ' + (result.error || '不明なエラー'), true);
-        }
-    } catch (error) {
-        console.error('addColumn: Error:', error);
-        showStatus('カラム追加エラー: ' + error.message, true);
-    }
-}
-
-async function renameKind() {
-    const kindSelect = document.getElementById('kindSelect');
-    const kindText = document.getElementById('kindText'); // 修正: kindText を使用
-    
-    const oldKind = kindSelect.value;
-    const newKind = kindText.value.trim(); // 修正: kindText から取得
-    
-    if (!oldKind) {
-        showStatus('変更対象の種別を選択してください', true);
-        return;
-    }
-    
-    if (!newKind) {
-        showStatus('新しい種別名を入力してください', true);
-        return;
-    }
-    
-    if (oldKind === newKind) {
-        showStatus('同じ種別名です', true);
-        return;
-    }
-    
-    try {
-        const response = await fetch('/rename_kind', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                old_kind: oldKind,
-                new_kind: newKind
-            })
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus(`種別「${oldKind}」を「${newKind}」に変更しました`);
-            
-            // UI初期化
-            kindText.value = ''; // 修正: kindText をクリア
-            
-            // データを保存して確実に永続化
-            await saveData();
-            
-            // 選択肢更新 - 順序を調整して確実に更新
-            await loadKindsForRename(); // kind改名では改名用のリストを再読み込み
-            await refreshTable();
-        } else {
-            showStatus('種別名変更に失敗しました', true);
-        }
-    } catch (error) {
-        showStatus('種別名変更エラー: ' + error.message, true);
-    }
-}
-
-async function renameBoth() {
-    const kindSelect = document.getElementById('kindSelect');
-    const kindText = document.getElementById('kindText');
-    const captionSelect = document.getElementById('captionSelect');
-    const captionText = document.getElementById('captionText');
-    
-    const oldKind = kindSelect.value;
-    const newKind = kindText.value.trim();
-    const oldColumn = captionSelect.value;
-    const newColumn = captionText.value.trim();
-    
-    if (!oldKind || !oldColumn) {
-        showStatus('変更対象の種別とカラムを選択してください', true);
-        return;
-    }
-    
-    if (!newKind || !newColumn) {
-        showStatus('新しい種別名とカラム名を入力してください', true);
-        return;
-    }
-    
-    if (oldKind === newKind && oldColumn === newColumn) {
-        showStatus('変更がありません', true);
-        return;
-    }
-    
-    try {
-        const response = await fetch('/rename_both', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                old_kind: oldKind,
-                new_kind: newKind,
-                old_column: oldColumn,
-                new_column: newColumn
-            })
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus(`種別「${oldKind}」→「${newKind}」、カラム「${oldColumn}」→「${newColumn}」に変更しました`);
-            
-            // UI初期化
-            kindText.value = '';
-            captionText.value = '';
-            
-            // データを保存して確実に永続化
-            await saveData();
-            
-            // 選択肢更新とテーブル更新を順次実行
-            await loadKindsForRename(); // 改名用のリストを再読み込み
-            await refreshTable();
-        } else {
-            showStatus('両方改名に失敗しました', true);
-        }
-    } catch (error) {
-        showStatus('両方改名エラー: ' + error.message, true);
-    }
-}
-
-async function renameColumn() {
-    const kindSelect = document.getElementById('kindSelect');
-    const captionSelect = document.getElementById('captionSelect');
-    const captionText = document.getElementById('captionText');
-    
-    const kind = kindSelect.value;
-    const oldColumn = captionSelect.value;
-    const newColumn = captionText.value.trim();
-    
-    if (!kind || !oldColumn) {
-        showStatus('変更対象のカラムを選択してください', true);
-        return;
-    }
-    
-    if (!newColumn) {
-        showStatus('新しいカラム名を入力してください', true);
-        return;
-    }
-    
-    if (oldColumn === newColumn) {
-        showStatus('同じカラム名です', true);
-        return;
-    }
-    
-    try {
-        const response = await fetch('/rename_column', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                old_column: oldColumn,
-                new_column: newColumn,
-                kind: kind
-            })
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus(`カラム「${oldColumn}」を「${newColumn}」に変更しました`);
-            
-            // UI初期化
-            captionText.value = '';
-            
-            // 選択肢更新とテーブル更新を順次実行
-            await loadKinds();
-            await updateTaskUI(); // タスクUIも更新
-            await refreshTable();
-        } else {
-            showStatus('カラム名変更に失敗しました', true);
-        }
-    } catch (error) {
-        showStatus('カラム名変更エラー: ' + error.message, true);
-    }
-}
-
-async function removeFromTable() {
-    const captionSelect = document.getElementById('captionSelect');
-    const captionText = document.getElementById('captionText');
-    
-    let columnName = captionSelect.value;
-    if (columnName === 'new_column') {
-        if (!captionText.value.trim()) {
-            showStatus('削除するカラム名を指定してください', true);
-            return;
-        }
-        columnName = captionText.value.trim();
-    }
-    
-    try {
-        const response = await fetch('/remove_column_from_table', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({column_name: columnName})
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus(`カラム「${columnName}」をテーブルから削除しました`);
-            await loadKinds(); // 選択肢も更新
-            await updateTaskUI(); // タスクUIも更新
-            await refreshTable();
-        } else {
-            showStatus('テーブルからの削除に失敗しました', true);
-        }
-    } catch (error) {
-        showStatus('削除エラー: ' + error.message, true);
-    }
-}
-
-async function removeCompletely() {
-    const captionSelect = document.getElementById('captionSelect');
-    const captionText = document.getElementById('captionText');
-    
-    let columnName = captionSelect.value;
-    if (columnName === 'new_column') {
-        if (!captionText.value.trim()) {
-            showStatus('削除するカラム名を指定してください', true);
-            return;
-        }
-        columnName = captionText.value.trim();
-    }
-    
-    if (!confirm(`カラム「${columnName}」を完全に削除します。この操作は取り消せません。よろしいですか？`)) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/remove_column_completely', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({column_name: columnName})
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus(`カラム「${columnName}」を完全に削除しました`);
-            
-            // UI初期化
-            captionText.value = '';
-            
-            // 選択肢更新とテーブル更新を順次実行
-            await loadKinds();
-            await updateTaskUI(); // タスクUIも更新
-            await refreshTable();
-        } else {
-            showStatus('完全削除に失敗しました', true);
-        }
-    } catch (error) {
-        showStatus('削除エラー: ' + error.message, true);
-    }
-}
-
-async function saveData() {
-    try {
-        const response = await fetch('/save_data', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'}
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus('データを保存しました');
-            // 保存後はサーバー側でload_dataが実行されるため、UI側も更新
-            await loadKinds();
-            await refreshTable();
-        } else {
-            showStatus(result.message, true);
-        }
-    } catch (error) {
-        showStatus('保存エラー: ' + error.message, true);
-    }
-}
-
-async function removeAllDead() {
-    const deadCount = currentData.filter(row => row.is_dead === true).length;
-    
-    if (deadCount === 0) {
-        showStatus('削除済み画像がありません', true);
-        return;
-    }
-    
-    if (!confirm(`${deadCount}件の削除済み画像を完全に削除します。\nこの操作は取り消せません。\n実行しますか？`)) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/remove_all_dead', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'}
-        });
-        
-        const result = await response.json();
-        if (result.success) {
-            showStatus(result.message);
-            await refreshTable();
-        } else {
-            showStatus(result.message || '削除に失敗しました', true);
-        }
-    } catch (error) {
-        showStatus('削除エラー: ' + error.message, true);
-    }
-}
-
-// 初期化
-document.addEventListener('DOMContentLoaded', async function() {
-    // トグルスイッチのラベル更新
-    const toggle = document.getElementById('defaultValueToggle');
-    const label = document.getElementById('toggleLabel');
-    
-    toggle.addEventListener('change', function() {
-        label.textContent = this.checked ? 'True' : 'False';
-    });
-    
-    // 削除済み表示トグルのイベントリスナー
-    const isDeadVisibleToggle = document.getElementById('isDeadVisibleToggle');
-    isDeadVisibleToggle.addEventListener('change', function() {
-        isDeadVisible = this.checked;
-        refreshTable();
-    });
-    await loadExistingProjects();
-    
-    // 種別一覧読み込み
-    await loadKinds();
-    
-    // タスクUI初期化
-    await updateTaskUI();
-    
-    // 自動的にテーブルを更新しようとする（データがある場合）
-    setTimeout(refreshTable, 500);
-});
+wire();
+toggleDead();
+guarded(refreshProjects)();
