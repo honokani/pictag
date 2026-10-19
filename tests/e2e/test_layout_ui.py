@@ -1,0 +1,105 @@
+"""列幅とマークの並び（Playwright）"""
+import pytest
+
+import app as pictag
+from helpers import make_images, word_tokenizer
+from tokens import TokenCounter
+
+sync_api = pytest.importorskip("playwright.sync_api")
+expect = sync_api.expect
+
+pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture(autouse=True)
+def tokens(monkeypatch):
+    # 実物のトークナイザーは取りに行かず、空白と記号で区切る小さなもので数える
+    monkeypatch.setattr(pictag, "token_counter", TokenCounter(word_tokenizer()))
+
+
+@pytest.fixture
+def imgs(tmp_path):
+    return make_images(tmp_path / "imgs" / "proj", {"a.png": (100, 100), "b.png": (100, 100)})
+
+
+def load_dir(page, imgs, width=1800):
+    page.set_viewport_size({"width": width, "height": 800})
+    page.goto(page.base_url)
+    page.fill("#imageDir", str(imgs))
+    page.click("#loadButton")
+    expect(page.locator("#gridBody tr")).to_have_count(2)
+
+
+def td(page, selector, name="a.png"):
+    return page.locator(f'#gridBody tr[data-name="{name}"] {selector}')
+
+
+def width(locator):
+    return locator.bounding_box()["width"]
+
+
+def overflow(page):
+    """表の横のはみ出し（px）"""
+    return page.evaluate("() => $('imagesView').scrollWidth - $('imagesView').clientWidth")
+
+
+def spare_after_close_up(page):
+    """picture の欄の右端（枠線の内側）と、🎥 の行の最後のボタン（ショットの大きさの組の右端）の間"""
+    picture = td(page, 'td.cell[data-section="picture"]').bounding_box()
+    last = td(page, ".choice-row.camera .choice").last.bounding_box()
+    return picture["x"] + picture["width"] - 1 - (last["x"] + last["width"])
+
+
+def test_marks_are_two_columns_of_four(page, imgs):
+    load_dir(page, imgs)
+    box = {m: td(page, f'.mark-btn[data-mark="{m}"]').bounding_box() for m in ["A", "B", "D", "★", "■"]}
+    assert abs(box["A"]["y"] - box["★"]["y"]) < 0.5 and box["★"]["x"] > box["A"]["x"]  # 左の列が A〜D、右の列が ★●▲■
+    assert box["A"]["y"] < box["B"]["y"] < box["D"]["y"]
+    assert abs(box["D"]["y"] - box["■"]["y"]) < 0.5
+    assert width(td(page, "td.marks")) <= 64  # ボタン2つ分
+
+
+def test_picture_column_ends_10px_after_close_up_and_keeps_its_width_while_editing(page, imgs):
+    load_dir(page, imgs)
+    assert 9.5 <= spare_after_close_up(page) <= 11
+    picture = td(page, 'td.cell[data-section="picture"]')
+    before = width(picture)
+    picture.locator(".text").click()
+    expect(picture.locator("textarea")).to_be_visible()
+    assert abs(width(picture) - before) < 0.5
+
+
+def test_hint_takes_the_rest_of_the_width(page, imgs):
+    (imgs / "a.txt").write_text("1girl, solo, smile", encoding="utf-8")
+    load_dir(page, imgs)
+    assert overflow(page) == 0
+    for section in ["action", "girl", "guy"]:
+        assert round(width(td(page, f'td.cell[data-section="{section}"]'))) == 220, section  # 段落は今までどおり
+    assert round(width(td(page, "td.meta"))) == 56  # token の欄は縮めない
+    assert width(td(page, "td.hint")) > 400  # 残りは hint（最小は 220）
+    assert 9.5 <= spare_after_close_up(page) <= 11
+
+
+def test_token_column_shows_the_count_over_the_limit_without_the_file_name(page, imgs):
+    load_dir(page, imgs)
+    expect(page.locator("#gridHead th").nth(1)).to_have_text("token")
+    tokens = td(page, "td.meta .tokens")
+    assert tokens.inner_text() == "0\n/ 507"  # 2行で、数字は右揃え
+    expect(td(page, "td.meta")).not_to_contain_text("a.png")
+    expect(td(page, "td.thumb img")).to_have_attribute("title", "a.png")  # ファイル名はサムネイルに載せると見える
+
+
+def test_thumbnail_is_a_square_as_tall_as_the_picture_cell(page, imgs):
+    load_dir(page, imgs)
+    img = td(page, "td.thumb img").bounding_box()
+    row = page.locator('#gridBody tr[data-name="a.png"]').bounding_box()
+    assert abs(img["width"] - img["height"]) < 0.5
+    assert abs(img["height"] + 9 - row["height"]) <= 1.5  # 上下の余白 8px と下の枠線 1px
+
+
+def test_without_hint_the_rest_goes_to_sections_other_than_picture(page, imgs):
+    load_dir(page, imgs)
+    assert overflow(page) == 0
+    action, girl, guy = (width(td(page, f'td.cell[data-section="{s}"]')) for s in ["action", "girl", "guy"])
+    assert action > 300 and abs(action - girl) < 1 and abs(action - guy) < 1  # 最小の 220 より広く、同じ幅で分ける
+    assert 9.5 <= spare_after_close_up(page) <= 11  # picture は広げない

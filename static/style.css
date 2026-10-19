@@ -1,5 +1,6 @@
 /* pictag — 演出なし。軽さと読みやすさを優先 */
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }  /* .bar などの display 指定より hidden を優先する */
 
 html, body { height: 100%; }
 
@@ -23,6 +24,8 @@ body {
 }
 
 .app-name { font-size: 16px; }
+.tabs { display: flex; gap: 2px; }
+.tab.on { background: #1f1f1f; border-color: #1f1f1f; color: #fff; cursor: default; }
 .bar label { display: flex; align-items: center; gap: 6px; }
 .bar label.grow { flex: 1 1 320px; }
 .bar label.grow input { flex: 1; }
@@ -54,6 +57,7 @@ button:disabled { opacity: .45; cursor: default; }
 #status { color: #555; }
 #status.error { color: #c62828; font-weight: 600; }
 #status.ok { color: #2e7d32; }
+#status.warn { color: #b26a00; font-weight: 600; }
 
 main { flex: 1; overflow: auto; }
 
@@ -85,19 +89,20 @@ th {
 th .section-name { cursor: text; font-weight: 600; }
 th .remove-section { border: none; background: none; padding: 0 4px; color: #888; }
 
-td.thumb { width: 108px; }
+/* サムネイルは正方形。大きさは JS が picture の欄の高さを測って --thumb-size に入れる（幅 = 大きさ + 左右の余白 12px + 枠線 1px） */
+td.thumb { width: calc(var(--thumb-size, 96px) + 13px); }
 td.thumb img {
     display: block;
-    width: 96px;
-    height: 96px;
+    width: var(--thumb-size, 96px);
+    height: var(--thumb-size, 96px);
     object-fit: contain;
     background: #eee;
     cursor: zoom-in;
 }
 
-td.meta { width: 150px; cursor: pointer; user-select: none; }
-td.meta .name { font-weight: 600; word-break: break-all; }
-td.meta .tokens { color: #666; font-variant-numeric: tabular-nums; }
+/* token の欄（クリックで行を選ぶ）。hint が残りを取っても縮めない */
+td.meta { width: 56px; min-width: 56px; cursor: pointer; user-select: none; }
+td.meta .tokens { white-space: pre-line; text-align: right; color: #666; font-variant-numeric: tabular-nums; }
 td.meta .tokens.over { color: #c62828; font-weight: 700; }
 
 td.cell { min-width: 220px; max-width: 380px; cursor: text; }
@@ -105,22 +110,33 @@ td.cell .text { white-space: pre-wrap; word-break: break-word; min-height: 1.5em
 td.cell .ln.empty { color: #b8b8b8; }
 td.cell .ln.auto { font-style: italic; color: #4a5a7a; }
 td.cell .ln.auto.empty { color: #b8b8b8; }
+td.cell .ln.conflict { color: #c62828; }
+td.cell .ln.conflict::before { content: '⚠ '; }
 
-td.cell[data-section="picture"] { min-width: 420px; }
+/* picture の列は close-up の右端 + 10px（幅は JS が測って --picture-width に入れる）。残りの幅は hint、無ければほかの段落へ */
+td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width: var(--picture-width, 420px); }
+.choice-row.camera { flex-wrap: nowrap; }
 .choices { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; font-size: 12px; }
 .choice-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .choices .group { display: inline-flex; gap: 2px; }
 .choice { padding: 0 5px; border-radius: 3px; border-color: #ccc; color: #444; line-height: 1.6; }
 .choice.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 .choice.clear { color: #999; }
+.choices .choice:not(.clear) { font-size: 14px; line-height: 1.4; }  /* 絵文字が小さくならないように */
+.choice.clear, .choice.icon { width: 22px; padding: 0; text-align: center; }  /* 絵文字だけのボタンは ☓ と同じ幅 */
+/* 👀 の人物のボタン: 女性はピンク、男性は青（押していなくても薄く色を付ける） */
+.choice.female { background: #fde8f1; border-color: #f2a7c6; }
+.choice.female.on { background: #d81b60; border-color: #d81b60; color: #fff; }
+.choice.male { background: #e3eefc; border-color: #9fbff0; }
+.choice.male.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 
-td.hint { min-width: 220px; max-width: 320px; }
+td.hint { min-width: 220px; width: 100%; }
 td.hint textarea { width: 100%; font-size: 12px; color: #555; background: #fafafa; resize: vertical; }
 
-td.marks { width: 112px; }
-.mark-row { display: flex; gap: 2px; margin-bottom: 2px; }
+td.marks { width: 63px; }  /* ボタン2つ分（24px × 2 + 間 2px + 左右の余白） */
+.mark-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 2px; }
 .mark-btn { width: 24px; padding: 0; font-size: 12px; line-height: 1.6; color: #888; border-color: #ccc; border-radius: 3px; }
 .mark-btn.on { color: #fff; font-weight: 700; }
 .mark-btn.on[data-mark="A"] { background: #d32f2f; border-color: #d32f2f; }
@@ -144,6 +160,27 @@ button.hold::before {
 }
 button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear forwards; }
 @keyframes hold-fill { from { width: 0; } to { width: 100%; } }
+
+/* 共用辞書の画面 */
+#dictTools .add-entry { margin-left: auto; }
+#dictAddSection, #dictAddKey { max-width: 120px; }
+#dictFilter, #dictAddText { width: 170px; }
+.rename-option { margin-left: auto; color: #555; font-size: 12px; }
+#dictView { padding-bottom: 24px; }
+#dictView p { padding: 24px; color: #777; }
+#dictGrid tbody tr { cursor: pointer; }
+#dictGrid td.dict-key { color: #555; white-space: nowrap; }
+#dictGrid td.dict-phrase { min-width: 260px; }
+#dictGrid td.dict-phrase input { width: 100%; }
+#dictGrid td.dict-sections { color: #666; font-size: 12px; }
+#dictGrid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.shared-mark { color: #2e7d32; font-weight: 700; }
+.group-badge { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 12px; color: #fff; background: #6a1b9a; }
+.group-badge.g1 { background: #00796b; }
+.group-badge.g2 { background: #8d6e63; }
+.group-badge.g3 { background: #c2185b; }
+.group-badge.g4 { background: #455a64; }
+.group-badge.g5 { background: #f57c00; }
 
 tr.selected td { background: #e3edfc; }
 tr.dead td { color: #9a9a9a; }

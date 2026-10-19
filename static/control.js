@@ -18,8 +18,11 @@ const state = {
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
-    phrases: [],          // 辞書の語句 [{section, key, phrase, count}]
-    words: [],            // キーなしの文の単語 [{section, word, count}]
+    phrases: [],          // 辞書の語句 [{section, key, phrase, count, shared}]
+    words: [],            // キーなしの文の単語 [{section, word, count, shared}]
+    groups: [],           // 「1つだけ」のグループ [{key, phrases}]（共用辞書）
+    defaultSections: [],  // 新規プロジェクトの段落（共用辞書の画面で語句を足す段落の候補）
+    view: 'images',       // 表示中の画面（images / dictionary）
     selected: new Set(),  // 行の index
     anchor: null,         // Shift 範囲選択の起点（最後にクリックした行）
     dirty: false,
@@ -151,6 +154,28 @@ function firstEmptyKeyEnd(lines, keyCount) {
     return Math.max(0, offset - 1);
 }
 
+// 入力の キー → 語句（キーのある行だけ）
+function phrasesByKey(text) {
+    const byKey = {};
+    for (const {key, phrases} of (text || '').split('\n').map(parseLine)) {
+        if (key) byKey[key] = [...(byKey[key] || []), ...phrases];
+    }
+    return byKey;
+}
+
+// ---- 「1つだけ」のグループ（groups.py と同じ規則。1枚の画像の1段落で、同じキーの語句のうち1つだけ） ----
+
+const groupOf = (key, phrase) => state.groups.find(g => g.key === key && g.phrases.includes(phrase));
+
+// 同じグループの別の語句が、もう入っているか（入っていれば候補に出さない）
+function blockedIn(byKey, key, phrase) {
+    const group = groupOf(key, phrase);
+    return Boolean(group) && group.phrases.some(p => p !== phrase && (byKey[key] || []).includes(p));
+}
+
+// 語句のうち2つ以上が入っているグループ（ぶつかっている）
+const conflictOf = (key, phrases) => state.groups.find(g => g.key === key && g.phrases.filter(p => phrases.includes(p)).length >= 2);
+
 // ---- あいまい検索（打った文字が順に含まれる語句を拾う。連続・語頭の一致を高く） ----
 
 function fuzzyScore(query, text) {
@@ -180,7 +205,8 @@ function contextOf(el) {
     const lineEndAt = value.indexOf('\n', caret);
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
-    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases};
+    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+        cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
     if (colon >= 0 && keyPart !== '' && !keyPart.includes(',')) {
@@ -209,10 +235,10 @@ function keepBest(items) {
 
 const wordBonus = (w, section) => (w.section === section ? 3 : 0) + Math.log1p(w.count);
 
-// キーのある行: そのキーで使われた語句（打っていなくても使用回数の多い順に出す）
+// キーのある行: そのキーで使われた語句（打っていなくても使用回数の多い順に出す）。同じグループの語句が入っていれば出さない
 function phraseCandidates(section, ctx) {
     return keepBest(state.phrases
-        .filter(p => p.key === ctx.key && !ctx.current.includes(p.phrase))
+        .filter(p => p.key === ctx.key && !ctx.current.includes(p.phrase) && !blockedIn(ctx.cellPhrases, p.key, p.phrase))
         .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
 }
 
@@ -229,10 +255,9 @@ function lineStartCandidates(section, ctx) {
         ...state.phrases.flatMap(p => {
             const bonus = wordBonus(p, section);
             if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
-            return [
-                {kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1},
-                {kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus},
-            ];
+            const keyed = blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
+                : [{kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus}];
+            return [{kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1}, ...keyed];
         }),
         ...wordCandidates(section, ctx),
     ]);
@@ -332,13 +357,27 @@ function refreshWords() {
     clearTimeout(refreshWords.timer);
     refreshWords.timer = setTimeout(() => {
         getJson('/get_dictionary')
-            .then(body => {
-                state.phrases = body.phrases;
-                state.words = body.words;
-                fillBulkKeys();
-            })
+            .then(applyDictionary)
             .catch(e => console.warn('辞書を読めません', e));
     }, 100);
+}
+
+// 辞書を受け取る（/get_dictionary と、共用辞書を書き換えた API の応答）。グループが変われば ⚠ を付け直す
+function applyDictionary(body) {
+    const groupsChanged = JSON.stringify(body.groups) !== JSON.stringify(state.groups);
+    state.phrases = body.phrases;
+    state.words = body.words;
+    state.groups = body.groups;
+    state.defaultSections = body.default_sections;
+    if (!state.loaded) {
+        // プロジェクトを開く前でも、共用辞書の画面で確定タグと固定の段落を使う
+        state.templates = body.templates;
+        state.fixedSections = body.fixed_sections;
+        state.autoKeys = body.auto_keys;
+    }
+    fillBulkKeys();
+    if (groupsChanged && state.loaded) rerenderRows();
+    document.dispatchEvent(new CustomEvent('pictag:dictionary'));
 }
 
 // ---- 表 ----
@@ -346,7 +385,7 @@ function refreshWords() {
 function headHtml() {
     return [
         '<th>サムネイル</th>',
-        '<th>画像 / トークン</th>',
+        '<th title="キャプションのトークン数 / 上限">token</th>',
         '<th>マーク</th>',
         ...state.sections.map(s => (state.fixedSections.includes(s)
             ? `<th data-section="${escapeHtml(s)}"><span class="section-name fixed">${escapeHtml(s)}</span></th>`
@@ -356,13 +395,13 @@ function headHtml() {
     ].join('');
 }
 
-// マークの欄: 排他（A〜D のどれか1つ）と複数（★●▲■）のボタン
+// マークの欄: 縦長の 2 列 × 4 行。左の列が排他（A〜D のどれか1つ）、右の列が複数（★●▲■）
 function marksHtml(row) {
     const button = (kind, mark, on) =>
         `<button type="button" class="mark-btn${on ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}">${mark}</button>`;
     const one = state.markChoices.one.map(m => button('one', m, row.mark === m)).join('');
     const many = state.markChoices.many.map(m => button('many', m, (row.marks || '').includes(m))).join('');
-    return `<td class="marks"><div class="mark-row">${one}</div><div class="mark-row">${many}</div></td>`;
+    return `<td class="marks"><div class="mark-grid">${one}${many}</div></td>`;
 }
 
 // マークの絞り込みに合うか
@@ -376,40 +415,70 @@ function matchesFilter(row) {
 // hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）
 const hintHtml = row => `<td class="hint"><textarea readonly rows="5" aria-label="hint">${escapeHtml(row.hint || '')}</textarea></td>`;
 
+// token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
 function metaHtml(row) {
     const known = row.tokens !== null && row.tokens !== undefined;
     const over = known && row.tokens > state.tokenLimit;
-    return `<div class="name">${escapeHtml(row['サムネイル'])}</div>` +
-        `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'} / ${state.tokenLimit}</div>`;
+    return `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'}\n/ ${state.tokenLimit}</div>`;
 }
 
 // view のボタン（各組の先頭の ☓ でその組の語句を消す）。押されている語句は on
+// 🎥 は絵文字だけ、👀 は絵文字と A, B（女性・男性で色を変える）。語句はマウスを載せると見える
 function choicesHtml(row) {
     const view = phrasesOfKey(row.texts.picture, 'view');
-    const button = (phrase, label, group) =>
-        `<button type="button" class="choice${view.includes(phrase) ? ' on' : ''}" data-group="${group}" ` +
-        `data-phrase="${escapeHtml(phrase)}" title="${escapeHtml(phrase)}">${escapeHtml(label)}</button>`;
+    // classes: 絵文字だけのボタンは icon（☓ と同じ幅）、👀 の人物は female / male
+    const button = (phrase, label, group, classes = []) =>
+        `<button type="button" class="${['choice', ...classes, view.includes(phrase) ? 'on' : ''].filter(Boolean).join(' ')}" data-group="${group}" ` +
+        `data-phrase="${escapeHtml(phrase)}" title="${escapeHtml(phrase)}" aria-label="${escapeHtml(phrase)}">${escapeHtml(label)}</button>`;
     const clear = group => `<button type="button" class="choice clear" data-group="${group}" title="選択なし">☓</button>`;
+    const emoji = state.viewChoices.camera_emoji || {};
     const camera = state.viewChoices.camera.map((phrases, g) =>
-        `<span class="group">${clear(`camera${g}`)}${phrases.map(p => button(p, p.replace(/^from /, ''), `camera${g}`)).join('')}</span>`);
-    const pov = `<span class="group">${clear('pov')}${state.viewChoices.pov.map(c => button(c.phrase, `${c.emoji} ${c.label}`, 'pov')).join('')}</span>`;
-    return `<div class="choices"><div class="choice-row"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
-        `<div class="choice-row"><span class="choice-label">👀</span>${pov}</div></div>`;
+        `<span class="group">${clear(`camera${g}`)}` +
+        `${phrases.map(p => button(p, emoji[p] || p.replace(/^from /, ''), `camera${g}`, emoji[p] ? ['icon'] : [])).join('')}</span>`);
+    const pov = `<span class="group">${clear('pov')}` +
+        `${state.viewChoices.pov.map(c => button(c.phrase, [c.emoji, c.label].filter(Boolean).join(' '), 'pov', [c.tone, c.label ? '' : 'icon'])).join('')}</span>`;
+    return `<div class="choices"><div class="choice-row camera"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
+        `<div class="choice-row pov"><span class="choice-label">👀</span>${pov}</div></div>`;
+}
+
+// picture の列幅: 🎥 の行の最後のボタン（close-up）の右端 + 10px。ボタンは固定なので、表が見えているときに1回だけ測る
+const PICTURE_SPARE = 10;
+
+function fitPictureColumn() {
+    if ($('grid').style.getPropertyValue('--picture-width')) return;
+    const last = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"] .choice-row.camera .choice')].pop();
+    const td = last && last.closest('td');
+    if (!td || td.getBoundingClientRect().width === 0) return;
+    const right = last.getBoundingClientRect().right - td.getBoundingClientRect().left;
+    const border = parseFloat(getComputedStyle(td).borderRightWidth) || 0;
+    $('grid').style.setProperty('--picture-width', `${Math.ceil(right + PICTURE_SPARE + border)}px`);
+}
+
+// サムネイルは正方形で、picture の欄の中身の高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る
+function fitThumbnails() {
+    const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
+        .filter(td => td.getBoundingClientRect().height > 0)
+        .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
+    if (heights.length) $('grid').style.setProperty('--thumb-size', `${Math.floor(Math.min(...heights))}px`);
 }
 
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
 
 // 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く、自動のキー（characters）は自動の値で出す
+// 同じグループの語句が2つ以上ある行には ⚠（CSS）
 function cellHtml(section, row) {
     const keys = templateKeys(section);
+    const byKey = phrasesByKey(row.texts[section]);
     const lines = mergeTemplate(row.texts[section] || '', keys).map(line => {
-        const key = parseLine(line).key;
+        const {key, phrases} = parseLine(line);
         if (state.autoKeys.includes(key)) {
             const value = row.characters || '';
             return `<div class="ln auto${value ? '' : ' empty'}" title="自動">${escapeHtml(`${key}:${value ? ` ${value}` : ''}`)}</div>`;
         }
-        const empty = parseLine(line).phrases.length === 0;
-        return `<div class="ln${empty ? ' empty' : ''}">${escapeHtml(line.trimEnd())}</div>`;
+        const conflict = key ? conflictOf(key, byKey[key] || []) : null;
+        const classes = ['ln', phrases.length === 0 ? 'empty' : '', conflict ? 'conflict' : ''].filter(Boolean).join(' ');
+        const title = conflict ? ` title="${escapeHtml(`1つだけのグループ: ${conflict.phrases.join(' / ')}`)}"` : '';
+        return `<div class="${classes}"${title}>${escapeHtml(line.trimEnd())}</div>`;
     });
     return `<div class="text">${lines.join('')}</div>${keys.includes('view') ? choicesHtml(row) : ''}`;
 }
@@ -420,7 +489,7 @@ function rowHtml(row) {
         matchesFilter(row) ? '' : 'filtered'].filter(Boolean).join(' ');
     const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row)}</td>`).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
-        `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt=""></td>` +
+        `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt="" title="${escapeHtml(name)}"></td>` +
         `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
 }
 
@@ -429,15 +498,23 @@ const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}
 function renderTable() {
     $('gridHead').innerHTML = headHtml();
     $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
+    fitPictureColumn();
+    fitThumbnails();
     const bulkSection = $('bulkSection').value;  // 描き直しても一括入力の段落は選んだままにする
     $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;
     fillBulkKeys();
     $('emptyNote').hidden = state.loaded;
-    $('tools').hidden = !state.loaded;
-    $('markTools').hidden = !state.loaded;
+    $('tools').hidden = !state.loaded || state.view !== 'images';
+    $('markTools').hidden = !state.loaded || state.view !== 'images';
     setDirty(state.dirty);
     updateSelectionInfo();
+}
+
+// 行だけ描き直す（グループが変わったときの ⚠ の付け直し）
+function rerenderRows() {
+    commitEdit();
+    $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
 }
 
 function replaceRow(row) {
@@ -627,7 +704,9 @@ async function bulkEdit(op) {
     hideSuggestions();
     setDirty(true);
     refreshWords();
-    setStatus(`${rows.length} 行${op === 'add' ? 'に追加' : 'から削除'}しました`, 'ok');
+    const done = `${rows.length} 行${op === 'add' ? 'に追加' : 'から削除'}しました`;
+    if (res.skipped) return setStatus(`${done}（${res.skipped} 行は、同じグループの語句があるので足していません）`, 'warn');
+    setStatus(done, 'ok');
 }
 
 async function addSection() {
@@ -712,15 +791,33 @@ async function openProject() {
     await opened(name);
 }
 
-async function loadDirectory() {
+// confirmed: 未保存の変更を破棄してよいか、もう確かめた（参照…から）
+async function loadDirectory(confirmed = false) {
     const dir = $('imageDir').value.trim();
     if (!dir) return setStatus('画像フォルダのパスを入力してください', 'error');
     commitEdit();
-    if (!confirmDiscard()) return;
+    if (!confirmed && !confirmDiscard()) return;
     await settled();
     const res = await postJson('/load_directory', {image_dir: dir});
     if (!res.success) return setStatus(res.message, 'error');
     await opened(dir.replace(/["']/g, '').replace(/[\\/]+$/, '').split(/[\\/]/).pop());
+}
+
+// 参照…: このPCでフォルダを選ぶ窓をアプリ側で開き、選んだらそのまま読み込む
+async function browseDirectory() {
+    commitEdit();
+    if (!confirmDiscard()) return;
+    $('browseButton').disabled = true;
+    setStatus('フォルダを選ぶ窓を開きました（見当たらなければタスクバーを見てください）');
+    try {
+        const res = await postJson('/choose_directory', {initial: $('imageDir').value.trim()});
+        if (!res.success) return setStatus(res.message, 'error');
+        if (!res.path) return setStatus('フォルダの選択をやめました');
+        $('imageDir').value = res.path;
+        await loadDirectory(true);
+    } finally {
+        $('browseButton').disabled = false;
+    }
 }
 
 async function save() {
@@ -802,7 +899,7 @@ function clickMark(button) {
 // キーボード（入力欄の外で）: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■。Ctrl+A で表示中をすべて選択
 function handleMarkKey(event) {
     const typing = event.target instanceof Element && event.target.closest('input, textarea, select');
-    if (typing || !state.loaded) return;
+    if (typing || !state.loaded || state.view !== 'images') return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectVisible();
@@ -880,7 +977,8 @@ function bulkContext(el) {
     const value = el.value;
     const caret = el.selectionStart;
     const before = value.slice(0, caret);
-    const base = {caret, restEmpty: value.slice(caret).trim() === '', current: key ? splitPhrases(value) : []};
+    const current = key ? splitPhrases(value) : [];
+    const base = {caret, restEmpty: value.slice(caret).trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
         const raw = before.slice(segment);
@@ -902,7 +1000,8 @@ function openImage(name) {
 // ---- つなぎ込み ----
 
 function wire() {
-    $('loadButton').addEventListener('click', guarded(loadDirectory));
+    $('loadButton').addEventListener('click', guarded(() => loadDirectory()));
+    $('browseButton').addEventListener('click', guarded(browseDirectory));
     $('imageDir').addEventListener('keydown', event => {
         if (event.key === 'Enter') guarded(loadDirectory)();
     });
