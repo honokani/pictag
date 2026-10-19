@@ -1,4 +1,6 @@
 """画面操作（Playwright）"""
+import re
+
 import pytest
 
 import app as pictag
@@ -372,15 +374,17 @@ def test_adding_girl_twice_names_them_a_and_b(page, imgs):
     page.fill("#sectionName", "girl")
     page.click("#sectionForm button")
     expect(page.locator("#gridHead .section-name")).to_have_count(5)
-    assert section_names(page) == ["picture", "action", "girl A", "guy", "girl B"]
+    assert section_names(page) == ["picture", "action", "girl A", "girl B", "guy"]  # 同じ種類は隣に並べる
     expect(choice(page, "a.png", "girl B POV")).to_have_text("👧 B")
+    pov = cell(page, "a.png", "picture").locator(".choice-row.pov .choice")
+    expect(pov).to_have_text(["☓", "👥", "👧 A", "👧 B", "👨"])  # third-person が先頭
 
 
 def test_view_buttons_toggle_and_clear(page, imgs):
     load_dir(page, imgs)
     choice(page, "a.png", "from behind").click()
     expect(picture_view(page, "a.png")).to_have_text("view: from behind")
-    expect(choice(page, "a.png", "from behind")).to_have_class("choice on")
+    expect(choice(page, "a.png", "from behind")).to_have_class(re.compile(r"\bon\b"))
     choice(page, "a.png", "from front").click()
     expect(picture_view(page, "a.png")).to_have_text("view: from front")
     choice(page, "a.png", "from above").click()
@@ -413,10 +417,18 @@ def test_pov_buttons_show_letters_and_are_colored_by_gender(page, imgs):
     expect(choice(page, "a.png", "third-person POV")).to_have_text("👥")
 
     girl, guy = choice(page, "a.png", "girl POV"), choice(page, "a.png", "guy A POV")
-    expect(girl).to_have_class("choice female")
-    expect(guy).to_have_class("choice male")
+    expect(girl).to_have_class(re.compile(r"\bfemale\b"))
+    expect(guy).to_have_class(re.compile(r"\bmale\b"))
     background = "el => getComputedStyle(el).backgroundColor"
     assert girl.evaluate(background) != guy.evaluate(background)
+
+
+def test_emoji_buttons_are_as_wide_as_the_clear_button(page, imgs):
+    load_dir(page, imgs)
+    picture = cell(page, "a.png", "picture")
+    clear = picture.locator(".choice.clear").first.bounding_box()["width"]
+    for phrase in ["from front", "from above", "long shot", "third-person POV", "girl POV"]:
+        assert abs(choice(page, "a.png", phrase).bounding_box()["width"] - clear) < 0.5, phrase
 
 
 def test_view_button_applies_to_selected_rows(page, imgs):
@@ -450,7 +462,7 @@ def test_clicking_beside_view_buttons_does_not_open_editor(page, imgs):
     load_dir(page, imgs)
     pov_row = cell(page, "a.png", "picture").locator(".choice-row").last
     box = pov_row.bounding_box()
-    pov_row.click(position={"x": box["width"] - 4, "y": box["height"] / 2})  # third-person の右の余白
+    pov_row.click(position={"x": box["width"] - 4, "y": box["height"] / 2})  # 最後のボタンの右の余白
     expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(0)
 
     cell(page, "a.png", "picture").locator(".text").click()

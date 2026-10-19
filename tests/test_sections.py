@@ -169,11 +169,11 @@ def test_adding_the_same_subject_names_them_with_letters(api, tool, imgs):
     api.load(imgs)
     api.write(api.row_index("a.png"), "looks: standing")
     assert api.add_section("girl")["success"]
-    assert sections(tool) == ["picture", "action", "girl A", "guy", "girl B"]  # 足した段落は末尾
+    assert sections(tool) == ["picture", "action", "girl A", "girl B", "guy"]  # 同じ種類は隣に並べる
     assert texts(tool, "girl A")["a.png"] == "looks: standing"
     api.add_section("guy")  # guy は最初からある
     api.add_section("guy")
-    assert sections(tool) == ["picture", "action", "girl A", "guy A", "girl B", "guy B", "guy C"]
+    assert sections(tool) == ["picture", "action", "girl A", "girl B", "guy A", "guy B", "guy C"]
 
 
 def test_caption_has_characters_of_subjects_with_text(api, imgs):
@@ -226,7 +226,7 @@ def test_table_data_has_view_choices_for_current_subjects(api, imgs):
     assert body["auto_keys"] == ["characters"]
     assert body["view_choices"]["camera"] == [CAMERA, VERTICAL, SHOTS]
     assert set(body["view_choices"]["camera_emoji"]) == {*CAMERA, *VERTICAL, *SHOTS}
-    assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["girl POV", "guy POV", "third-person POV"]
+    assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["third-person POV", "girl POV", "guy POV"]
 
 
 def test_choice_keeps_free_text_on_the_view_line(api, tool, imgs):

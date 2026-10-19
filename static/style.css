@@ -123,6 +123,7 @@ td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width:
 .choice.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 .choice.clear { color: #999; }
 .choices .choice:not(.clear) { font-size: 14px; line-height: 1.4; }  /* 絵文字が小さくならないように */
+.choice.clear, .choice.icon { width: 22px; padding: 0; text-align: center; }  /* 絵文字だけのボタンは ☓ と同じ幅 */
 /* 👀 の人物のボタン: 女性はピンク、男性は青（押していなくても薄く色を付ける） */
 .choice.female { background: #fde8f1; border-color: #f2a7c6; }
 .choice.female.on { background: #d81b60; border-color: #d81b60; color: #fff; }

@@ -13,7 +13,7 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from subjects import CAMERA_EMOJI, CAMERA_GROUPS, characters_of, name_for_new, pov_choices
+from subjects import CAMERA_EMOJI, CAMERA_GROUPS, characters_of, insert_position, name_for_new, pov_choices
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
@@ -576,7 +576,7 @@ class CaptionTool:
         return [s for s in section_names(self.df) if s not in FIXED_SECTIONS]
 
     def add_section(self, name):
-        """人物などの段落を表の末尾に足す（入力は空）。同じ名前があれば A, B, … を付ける（今ある無印は A に改名）"""
+        """人物などの段落を足す（入力は空）。同じ名前があれば A, B, … を付け（今ある無印は A に改名）、その隣に置く。無ければ末尾"""
         self.last_error = ''
         if self.image_dir is None:
             return self.fail('先にプロジェクトを読み込んでください')
@@ -590,7 +590,7 @@ class CaptionTool:
         if name in self.df.columns:
             return self.fail(f'段落「{name}」は既にあります')
         self.df = self.df.rename(columns=renames)
-        self.df[name] = ''
+        self.df.insert(insert_position(name, list(self.df.columns)), name, '')
         logger.info(f"Added section: {name} (renamed: {renames})")
         return True
 

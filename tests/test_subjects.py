@@ -1,7 +1,7 @@
 """人物などの段落: 自動の命名、characters の自動計算、view の選択肢"""
 import pytest
 
-from subjects import CAMERA_EMOJI, CAMERA_GROUPS, base_name, characters_of, name_for_new, pov_choices
+from subjects import CAMERA_EMOJI, CAMERA_GROUPS, base_name, characters_of, insert_position, name_for_new, pov_choices
 
 
 @pytest.mark.parametrize("section, expected", [("guy A", "guy"), ("girl", "girl"), ("big dog B", "big dog"), ("A", "A")])
@@ -39,13 +39,23 @@ def test_name_for_new_runs_out_after_z():
 def test_pov_choices_follow_subject_sections():
     # ボタンは絵文字と A, B の文字（絵文字の決まっていない名前は名前を残す）。女性・男性で色を変える
     assert pov_choices(["girl", "guy A", "guy B", "dog", "alien"]) == [
+        {"emoji": "👥", "label": "", "tone": "", "phrase": "third-person POV"},  # 先頭
         {"emoji": "👧", "label": "", "tone": "female", "phrase": "girl POV"},
         {"emoji": "👨", "label": "A", "tone": "male", "phrase": "guy A POV"},
         {"emoji": "👨", "label": "B", "tone": "male", "phrase": "guy B POV"},
         {"emoji": "🐕", "label": "", "tone": "", "phrase": "dog POV"},
         {"emoji": "👤", "label": "alien", "tone": "", "phrase": "alien POV"},
-        {"emoji": "👥", "label": "", "tone": "", "phrase": "third-person POV"},
     ]
+
+
+@pytest.mark.parametrize("name, columns, expected", [
+    ("girl B", ["picture", "action", "girl A", "guy"], 3),  # 同じ名前の最後の段落のすぐ後ろ
+    ("guy B", ["picture", "action", "girl A", "girl B", "guy A"], 5),
+    ("girl C", ["picture", "girl A", "guy", "girl B"], 4),
+    ("dog", ["picture", "action", "girl", "guy"], 4),  # 新しい名前は末尾
+])
+def test_insert_position_keeps_the_same_kind_together(name, columns, expected):
+    assert insert_position(name, columns) == expected
 
 
 def test_pov_tone_by_gender():

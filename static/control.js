@@ -426,15 +426,17 @@ function metaHtml(row) {
 // 🎥 は絵文字だけ、👀 は絵文字と A, B（女性・男性で色を変える）。語句はマウスを載せると見える
 function choicesHtml(row) {
     const view = phrasesOfKey(row.texts.picture, 'view');
-    const button = (phrase, label, group, tone = '') =>
-        `<button type="button" class="choice${tone ? ` ${tone}` : ''}${view.includes(phrase) ? ' on' : ''}" data-group="${group}" ` +
+    // classes: 絵文字だけのボタンは icon（☓ と同じ幅）、👀 の人物は female / male
+    const button = (phrase, label, group, classes = []) =>
+        `<button type="button" class="${['choice', ...classes, view.includes(phrase) ? 'on' : ''].filter(Boolean).join(' ')}" data-group="${group}" ` +
         `data-phrase="${escapeHtml(phrase)}" title="${escapeHtml(phrase)}" aria-label="${escapeHtml(phrase)}">${escapeHtml(label)}</button>`;
     const clear = group => `<button type="button" class="choice clear" data-group="${group}" title="選択なし">☓</button>`;
     const emoji = state.viewChoices.camera_emoji || {};
     const camera = state.viewChoices.camera.map((phrases, g) =>
-        `<span class="group">${clear(`camera${g}`)}${phrases.map(p => button(p, emoji[p] || p.replace(/^from /, ''), `camera${g}`)).join('')}</span>`);
+        `<span class="group">${clear(`camera${g}`)}` +
+        `${phrases.map(p => button(p, emoji[p] || p.replace(/^from /, ''), `camera${g}`, emoji[p] ? ['icon'] : [])).join('')}</span>`);
     const pov = `<span class="group">${clear('pov')}` +
-        `${state.viewChoices.pov.map(c => button(c.phrase, [c.emoji, c.label].filter(Boolean).join(' '), 'pov', c.tone)).join('')}</span>`;
+        `${state.viewChoices.pov.map(c => button(c.phrase, [c.emoji, c.label].filter(Boolean).join(' '), 'pov', [c.tone, c.label ? '' : 'icon'])).join('')}</span>`;
     return `<div class="choices"><div class="choice-row camera"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
         `<div class="choice-row pov"><span class="choice-label">👀</span>${pov}</div></div>`;
 }

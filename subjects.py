@@ -65,8 +65,15 @@ def tone_of(base):
     return 'female' if base in FEMALE else 'male' if base in MALE else ''
 
 
+def insert_position(name, columns):
+    """足す人物の段落を入れる位置: 同じ名前（A, B を除く）の最後の段落のすぐ後ろ。無ければ末尾"""
+    base = base_name(name)
+    same = [i for i, column in enumerate(columns) if base_name(column) == base]
+    return same[-1] + 1 if same else len(columns)
+
+
 def pov_choices(subjects):
-    """view の 👀 の選択肢: 人物ごとの POV と、第三者の POV
+    """view の 👀 の選択肢: 第三者の POV（先頭）と、人物ごとの POV
 
     ボタンは絵文字と A, B の文字（girl A → 👧 A）。絵文字の決まっていない名前は、見分けられるよう名前を残す（👤 alien）
     """
@@ -76,4 +83,4 @@ def pov_choices(subjects):
         label = (lettered.group(2) if lettered else '') if base in EMOJI else section
         return {'emoji': EMOJI.get(base, OTHER_EMOJI), 'label': label, 'tone': tone_of(base), 'phrase': f'{section} POV'}
 
-    return [*map(choice, subjects), THIRD_PERSON]
+    return [THIRD_PERSON, *map(choice, subjects)]
