@@ -408,6 +408,16 @@ def test_view_buttons_show_emoji_and_shot_sizes_are_one_group(page, imgs):
     expect(picture_view(page, "a.png")).to_have_text("view: third-person POV, long shot")
 
 
+def test_eye_level_sits_between_above_and_below(page, imgs):
+    load_dir(page, imgs)
+    vertical = cell(page, "a.png", "picture").locator('.choice:not(.clear)[data-group="camera1"]')
+    expect(vertical).to_have_text(["🦅", "👁️", "🐛"])
+    choice(page, "a.png", "eye level").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: eye level")
+    choice(page, "a.png", "from below").click()  # 上下の組は1つだけ
+    expect(picture_view(page, "a.png")).to_have_text("view: from below")
+
+
 def test_close_up_with_a_target_lights_the_button_and_is_replaced(page, imgs):
     load_dir(page, imgs)
     write(page, "a.png", "view: close-up face, from below", section="picture")
