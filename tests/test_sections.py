@@ -7,7 +7,7 @@ import app as pictag
 from helpers import caption_of, make_images, word_tokenizer
 from tokens import TokenCounter
 
-DEFAULT_SECTIONS = ["picture", "action", "girl"]
+DEFAULT_SECTIONS = ["picture", "action", "girl", "guy"]
 
 
 @pytest.fixture
@@ -42,6 +42,7 @@ def test_existing_project_keeps_its_subjects(api, tool, tmp_path):
     api.load(make_images(tmp_path / "imgs" / "proj_a", {"a.png": (100, 100)}))
     api.add_section("dog")
     assert api.post("/remove_section", {"name": "girl"})["success"]
+    assert api.post("/remove_section", {"name": "guy"})["success"]
     api.save()
     api.load(make_images(tmp_path / "imgs" / "proj_b", {"b.png": (100, 100)}))
     api.save()
@@ -86,7 +87,7 @@ def test_rename_section_keeps_texts(api, tool, imgs):
     api.load(imgs)
     api.write(api.row_index("a.png"), "looks: standing")
     assert api.post("/rename_section", {"old": "girl", "new": "girl A"})["success"]
-    assert sections(tool) == ["picture", "action", "girl A"]
+    assert sections(tool) == ["picture", "action", "girl A", "guy"]
     assert texts(tool, "girl A")["a.png"] == "looks: standing"
 
 
@@ -102,7 +103,7 @@ def test_removed_subject_stays_removed_after_save(api, tool, imgs):
     assert api.post("/remove_section", {"name": "girl"})["success"]
     api.save()
     api.open_project("proj")
-    assert sections(tool) == ["picture", "action"]
+    assert sections(tool) == ["picture", "action", "guy"]
 
 
 def test_bulk_add_and_remove_phrase(api, tool, imgs):
@@ -147,7 +148,7 @@ def test_table_data_has_texts_caption_and_tokens(api, imgs, monkeypatch):
     assert body["sections"] == DEFAULT_SECTIONS
     assert body["token_limit"] == 507
     a, b = body["data"]
-    assert a["texts"] == {"picture": "", "action": "", "girl": "looks: standing"}
+    assert a["texts"] == {"picture": "", "action": "", "girl": "looks: standing", "guy": ""}  # 空の guy は出力しない
     assert a["caption"] == "picture:\n  - characters: 1 girl\n\ngirl:\n  - looks: standing"
     assert a["tokens"] == 13  # picture / : / - / characters / : / 1 / girl / girl / : / - / looks / : / standing
     assert b["tokens"] == 0
@@ -161,16 +162,16 @@ def test_tokens_are_null_until_tokenizer_is_ready(api, imgs, monkeypatch):
 
 CAMERA = ["from front", "from side", "from behind"]
 VERTICAL = ["from above", "from below"]
+SHOTS = ["close-up", "portrait", "medium shot", "long shot"]
 
 
 def test_adding_the_same_subject_names_them_with_letters(api, tool, imgs):
     api.load(imgs)
     api.write(api.row_index("a.png"), "looks: standing")
     assert api.add_section("girl")["success"]
-    assert sections(tool) == ["picture", "action", "girl A", "girl B"]
+    assert sections(tool) == ["picture", "action", "girl A", "girl B", "guy"]  # 同じ種類は隣に並べる
     assert texts(tool, "girl A")["a.png"] == "looks: standing"
-    api.add_section("guy")
-    api.add_section("guy")
+    api.add_section("guy")  # guy は最初からある
     api.add_section("guy")
     assert sections(tool) == ["picture", "action", "girl A", "girl B", "guy A", "guy B", "guy C"]
 
@@ -220,20 +221,23 @@ def test_set_choice_rejects_bad_requests(api, tool, imgs, payload):
 
 
 def test_table_data_has_view_choices_for_current_subjects(api, imgs):
-    api.load(imgs)
-    api.add_section("guy")
+    api.load(imgs)  # 新規プロジェクトの人物は girl と guy
     body = api.table()
     assert body["auto_keys"] == ["characters"]
-    assert body["view_choices"]["camera"] == [CAMERA, VERTICAL, ["close-up"]]
-    assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["girl POV", "guy POV", "third-person POV"]
+    assert body["view_choices"]["camera"] == [CAMERA, VERTICAL, SHOTS]
+    assert set(body["view_choices"]["camera_emoji"]) == {*CAMERA, *VERTICAL, *SHOTS}
+    assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["third-person POV", "girl POV", "guy POV"]
 
 
 def test_choice_keeps_free_text_on_the_view_line(api, tool, imgs):
     api.load(imgs)
     api.write(0, "view: focus on hands", section="picture")
     api.post("/set_choice", {"rows": [0], "section": "picture", "key": "view",
-                             "phrase": "close-up", "group": ["close-up"], "on": True})
+                             "phrase": "close-up", "group": SHOTS, "on": True})
     assert texts(tool, "picture")["a.png"] == "view: focus on hands, close-up"
     api.post("/set_choice", {"rows": [0], "section": "picture", "key": "view",
-                             "phrase": "close-up", "group": ["close-up"], "on": False})
+                             "phrase": "medium shot", "group": SHOTS, "on": True})  # ショットの大きさは1つだけ
+    assert texts(tool, "picture")["a.png"] == "view: focus on hands, medium shot"
+    api.post("/set_choice", {"rows": [0], "section": "picture", "key": "view",
+                             "phrase": "medium shot", "group": SHOTS, "on": False})
     assert texts(tool, "picture")["a.png"] == "view: focus on hands"

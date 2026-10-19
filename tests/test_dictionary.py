@@ -59,7 +59,7 @@ def test_save_writes_readable_json(api, imgs, base_dir):
     api.save()
 
     table = json.loads((base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8"))
-    assert table == {"sections": ["picture", "action", "girl"],
+    assert table == {"sections": ["picture", "action", "girl", "guy"],
                      "rows": [{"image": "a.png", "is_dead": False, "texts": {"girl": "looks: standing"}},
                               {"image": "b.png", "is_dead": False, "texts": {}}]}
 
