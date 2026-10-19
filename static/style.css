@@ -54,6 +54,7 @@ button {
 button.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 button:disabled { opacity: .45; cursor: default; }
 
+#statusTime { color: #888; font-variant-numeric: tabular-nums; }
 #status { color: #555; }
 #status.error { color: #c62828; font-weight: 600; }
 #status.ok { color: #2e7d32; }

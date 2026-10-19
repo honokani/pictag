@@ -67,7 +67,12 @@ function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
 }
 
+// 時:分:秒（2桁ずつ）
+const clock = (d = new Date()) => [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+
+// メッセージは出た時刻と並べる（出たままでも、いつのメッセージか分かる）
 function setStatus(message, kind = '') {
+    $('statusTime').textContent = message ? clock() : '';
     $('status').textContent = message;
     $('status').className = kind;
 }
