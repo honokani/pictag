@@ -67,7 +67,12 @@ function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
 }
 
+// 時:分:秒（2桁ずつ）
+const clock = (d = new Date()) => [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+
+// メッセージは出た時刻と並べる（出たままでも、いつのメッセージか分かる）
 function setStatus(message, kind = '') {
+    $('statusTime').textContent = message ? clock() : '';
     $('status').textContent = message;
     $('status').className = kind;
 }
@@ -109,10 +114,18 @@ function addPhrase(text, key, phrase) {
     return [...lines.slice(0, at), renderInputLine(key, [...parsed[at].phrases, phrase]), ...lines.slice(at + 1)].join('\n');
 }
 
-// 保存する形に整える: 行末のカンマ・空白（候補の確定で付く ", "）、空行、値の無いキーの行を落とす
+// 1行を整える: 続いたカンマ（",, " ", ," ",  ,"）は1つにして、カンマの後ろは空白1つ（"a,b" "a,  b" "a , b" → "a, b"）。
+// 語の間に続いた空白は1つ。値の頭と行末のカンマ・空白（候補の確定で付く ", "）は落とす
+const tidyLine = line => line
+    .replace(/\s*,[\s,]*/g, ', ')
+    .replace(/(?<=\S)\s{2,}(?=\S)/g, ' ')
+    .replace(/^(\s*-*\s*[^,:]*:)?\s*,\s*/, (match, head) => (head ? `${head} ` : ''))
+    .replace(/[\s,]+$/, '');
+
+// 保存する形に整える: 各行を整え、空行と値の無いキーの行を落とす
 function tidyInput(text) {
     return text.split('\n')
-        .map(line => line.replace(/[\s,]+$/, ''))
+        .map(tidyLine)
         .filter(line => parseLine(line).phrases.length > 0)
         .join('\n');
 }
@@ -197,8 +210,17 @@ function fuzzyScore(query, text) {
     return score - t.length * 0.02;
 }
 
+// 語の後ろ（カーソルの前）に続くスペースの数
+const spacesAfterWord = before => (before.match(/\S( *)$/) || ['', ''])[1].length;
+
+// キーなしの文で、語の後にスペースを2つ続けた（打たなくても単語の候補を出す合図。3つ目でしまう）
+const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
+
+// 選んだ単語の後ろに付ける区切り: 行末なら ", "（欄を離れると行末のカンマは消える）。後ろに語が続けば空白、空白かカンマが続けば付けない
+const wordSeparator = after => (!after.trim() ? ', ' : /^[\s,]/.test(after) ? '' : ' ');
+
 // 入力欄のカーソル位置の文脈
-// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語 / start = 行頭（キー・語句・文・単語）
+// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
 function contextOf(el) {
     const value = el.value;
     const caret = el.selectionStart;
@@ -206,7 +228,8 @@ function contextOf(el) {
     const lineEndAt = value.indexOf('\n', caret);
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
-    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+    const after = value.slice(caret, lineEnd);
+    const base = {caret, after, restEmpty: after.trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
         cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
@@ -220,7 +243,8 @@ function contextOf(el) {
     const rest = before.slice(prefix);
     const lastBreak = Math.max(rest.lastIndexOf(' '), rest.lastIndexOf(','), rest.lastIndexOf('\t'));
     if (lastBreak >= 0) {
-        return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1};
+        return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1,
+            spaces: spacesAfterWord(rest)};
     }
     return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
 }
@@ -243,9 +267,9 @@ function phraseCandidates(section, ctx) {
         .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
 }
 
-// キーなしの文の単語（1文字以上打ったときだけ）
+// キーなしの文の単語（1文字以上打ったとき。語の後にスペースを2つ続けたときは、打たなくても使用回数の多い順に出す）
 function wordCandidates(section, ctx) {
-    if (!ctx.query) return [];
+    if (!(ctx.query || calledBySpaces(ctx))) return [];
     return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
 }
 
@@ -329,10 +353,11 @@ function accept(item) {
         const text = {
             key: () => `${item.key}: `,
             phrase: () => item.phrase + (ctx.restEmpty ? ', ' : ''),
-            word: () => item.word + (ctx.restEmpty ? ' ' : ''),
+            word: () => item.word + wordSeparator(ctx.after),
             line: () => item.phrase,
         }[item.kind]();
-        el.setRangeText(text, ctx.queryStart, ctx.caret, 'end');
+        // 候補を出すために2つ続けたスペースは、1つにまとめる
+        el.setRangeText(text, calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart, ctx.caret, 'end');
     }
     el.dispatchEvent(new Event('input'));
 }
@@ -600,6 +625,51 @@ async function refreshTable() {
     refreshWords();
 }
 
+// ---- 空白と改行の印（打っている欄の上に、同じ文字組みの層を重ねて ␣ と ↵ だけを描く。文字には入らない） ----
+
+// 欄から印の層へ写す文字組み（折り返しと文字の位置をそろえる）
+const MIRRORED_STYLES = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'wordSpacing', 'lineHeight', 'tabSize',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'];
+
+const whitespaceHtml = text => escapeHtml(text)
+    .replace(/ /g, '<span class="sp"> </span>')
+    .replace(/\n/g, '<span class="nl"></span>\n');
+
+// 印の層を描く（欄のすぐ後ろの要素）。欄の中がスクロールしていれば合わせる
+function paintWhitespace(el) {
+    const layer = el.nextElementSibling;
+    layer.innerHTML = whitespaceHtml(el.value);
+    layer.scrollTop = el.scrollTop;
+    layer.scrollLeft = el.scrollLeft;
+}
+
+// 印の層の文字組みと幅を欄に合わせて描く。幅はスクロールバーを除いた欄の中身に合わせ、一行の欄は文字の上下の位置も合わせる
+function fitWhitespace(el) {
+    const layer = el.nextElementSibling;
+    const style = getComputedStyle(el);
+    MIRRORED_STYLES.forEach(name => { layer.style[name] = style[name]; });
+    layer.style.width = `${el.clientWidth + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth)}px`;
+    if (el.tagName === 'INPUT') {
+        layer.style.lineHeight = `${el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)}px`;
+    }
+    paintWhitespace(el);
+}
+
+// 欄を包んで印の層を重ねる（包んだ要素を返す。欄が画面にあれば、その場所で包む）
+function withWhitespaceMarks(el) {
+    const wrap = document.createElement(el.tagName === 'TEXTAREA' ? 'div' : 'span');
+    wrap.className = 'ws';
+    if (el.parentNode) el.replaceWith(wrap);
+    const layer = document.createElement('div');
+    layer.className = 'ws-marks';
+    layer.setAttribute('aria-hidden', 'true');
+    wrap.append(el, layer);
+    el.addEventListener('focus', () => fitWhitespace(el));
+    ['input', 'scroll', 'keyup', 'click', 'select'].forEach(type => el.addEventListener(type, () => paintWhitespace(el)));
+    new ResizeObserver(() => fitWhitespace(el)).observe(el);  // 高さを合わせたとき・表示されたとき・窓の幅を変えたとき
+    return wrap;
+}
+
 // ---- 入力欄 ----
 
 function startEdit(td) {
@@ -617,7 +687,7 @@ function startEdit(td) {
     const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
     const el = document.createElement('textarea');
     el.value = lines.join('\n');
-    td.replaceChildren(el);
+    td.replaceChildren(withWhitespaceMarks(el));
     state.editor = {index, section, td, el};
     el.addEventListener('input', () => { autosize(el); showSuggestions(el, section); });
     el.addEventListener('keydown', event => {
@@ -756,6 +826,7 @@ async function bulkEdit(op) {
     if (!res.success) return setStatus(res.message || '一括入力できませんでした', 'error');
     res.rows.forEach(replaceRow);
     $('bulkText').value = '';
+    paintWhitespace($('bulkText'));
     hideSuggestions();
     setDirty(true);
     refreshWords();
@@ -1033,8 +1104,9 @@ function bulkContext(el) {
     const value = el.value;
     const caret = el.selectionStart;
     const before = value.slice(0, caret);
+    const after = value.slice(caret);
     const current = key ? splitPhrases(value) : [];
-    const base = {caret, restEmpty: value.slice(caret).trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
+    const base = {caret, after, restEmpty: after.trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
         const raw = before.slice(segment);
@@ -1042,7 +1114,9 @@ function bulkContext(el) {
         return {...base, mode: 'phrase', key, query, queryStart: segment + (raw.length - query.length)};
     }
     const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
-    if (lastBreak >= 0) return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1};
+    if (lastBreak >= 0) {
+        return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1, spaces: spacesAfterWord(before)};
+    }
     const query = before.trimStart();
     return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
 }
@@ -1074,6 +1148,7 @@ function wire() {
         event.preventDefault();
         guarded(bulkEdit)(event.submitter ? event.submitter.value : 'add');
     });
+    withWhitespaceMarks($('bulkText'));
     $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value, bulkContext));
     $('bulkSection').addEventListener('change', () => {
         fillBulkKeys();

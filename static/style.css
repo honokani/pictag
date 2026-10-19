@@ -54,6 +54,7 @@ button {
 button.primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 button:disabled { opacity: .45; cursor: default; }
 
+#statusTime { color: #888; font-variant-numeric: tabular-nums; }
 #status { color: #555; }
 #status.error { color: #c62828; font-weight: 600; }
 #status.ok { color: #2e7d32; }
@@ -131,6 +132,29 @@ td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width:
 .choice.male.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
+
+/* 打っている欄の空白（␣）と改行（↵）の印。欄の上に重ねた層に描き、文字には入らない（文字組み・幅は JS で欄から写す） */
+.ws { position: relative; }
+span.ws { display: inline-flex; }
+.ws > textarea { display: block; }
+.ws-marks {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    border: solid transparent;
+    color: transparent;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+}
+span.ws > .ws-marks { white-space: pre; }
+.ws-marks .sp, .ws-marks .nl { position: relative; }
+/* ␣: スペースの幅いっぱいの下カッコ（続いたスペースは境の線を共有して |_|_| に見える） */
+.ws-marks .sp::after { content: ''; position: absolute; left: -.5px; right: -.5px; bottom: .2em; height: .22em; border: 1px solid #bbb; border-top: 0; }
+.ws-marks .nl::after { content: '↵'; position: absolute; left: 2px; color: #bbb; }
 
 /* hint は全文を出す（高さは中身に合わせ、中でスクロールしない）。右上のボタンで畳む */
 td.hint { min-width: 220px; width: 100%; position: relative; }
