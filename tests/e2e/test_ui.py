@@ -80,6 +80,23 @@ def wait_for_word(page, word):
 
 # ---- テスト ----
 
+def test_browse_button_loads_the_chosen_folder(page, imgs, monkeypatch):
+    monkeypatch.setattr(pictag, "ask_directory", lambda initial: str(imgs))  # 窓は開かず、選んだことにする
+    page.goto(page.base_url)
+    page.click("#browseButton")
+    expect(page.locator("#gridBody tr")).to_have_count(3)
+    expect(page.locator("#imageDir")).to_have_value(str(imgs))
+
+
+def test_browse_cancelled_leaves_things_as_they_are(page, monkeypatch):
+    monkeypatch.setattr(pictag, "ask_directory", lambda initial: "")
+    page.goto(page.base_url)
+    page.click("#browseButton")
+    expect(page.locator("#status")).to_have_text("フォルダの選択をやめました")
+    expect(page.locator("#browseButton")).to_be_enabled()
+    expect(page.locator("#emptyNote")).to_be_visible()
+
+
 def test_load_shows_rows_sections_and_template_keys(page, imgs):
     load_dir(page, imgs)
     assert section_names(page) == ["picture", "action", "girl"]

@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+import subprocess
+import sys
 import threading
 from collections import Counter
 from functools import reduce
@@ -38,6 +40,18 @@ HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡�
 FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
 DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl']  # 新規プロジェクトの段落（guy や dog は必要なときに足す）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
+LOCAL_ADDRESSES = {'127.0.0.1', '::1'}  # フォルダを選ぶ窓は、このPCから開いたときだけ（窓はこのPCに出る）
+
+# フォルダを選ぶ窓（別のプロセスで開く。引数は選び始めるフォルダ、出力は選んだフォルダ。やめたら空）
+FOLDER_DIALOG = '\n'.join([
+    'import sys, tkinter',
+    'from tkinter import filedialog',
+    'root = tkinter.Tk()',
+    'root.withdraw()',
+    "root.attributes('-topmost', True)",
+    "path = filedialog.askdirectory(parent=root, title='画像フォルダを選ぶ', initialdir=sys.argv[1] or None, mustexist=True)",
+    "print(path or '')",
+])
 
 # キャプションのトークン数（tokenizer.json は起動時に裏で取得する）
 token_counter = TokenCounter()
@@ -107,6 +121,18 @@ def read_hints(image_dir, image_names):
     """画像と同じ名前の .txt（画像フォルダにあるもの）を hint として読む。{画像名: 中身}"""
     paths = {name: image_dir / f"{Path(name).stem}{HINT_EXT}" for name in image_names}
     return {name: path.read_text(encoding='utf-8', errors='replace') for name, path in paths.items() if path.is_file()}
+
+def ask_directory(initial):
+    """このPCでフォルダを選ぶ窓を開き、選んだフォルダのパスを返す（やめたら空）
+
+    Tk は Flask のスレッドで動かさず、別のプロセスで開く。窓を開いている間、応答は待つ
+    """
+    result = subprocess.run([sys.executable, '-X', 'utf8', '-c', FOLDER_DIALOG, initial],
+                            capture_output=True, text=True, encoding='utf-8', timeout=600)
+    if result.returncode != 0:
+        lines = result.stderr.strip().splitlines()
+        raise RuntimeError(lines[-1] if lines else f'終了コード {result.returncode}')
+    return result.stdout.strip()
 
 def pairs_of(items):
     """画面から来た [{key, phrase}] を [(キー, 語句)] にする"""
@@ -820,6 +846,21 @@ def load_directory():
     except Exception as e:
         logger.error(f"Failed to load directory: {e}")
         return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/choose_directory', methods=['POST'])
+def choose_directory():
+    """このPCでフォルダを選ぶ窓を開く（{initial}: 選び始めるフォルダ）。path: 選んだフォルダ（やめたら空）"""
+    if request.remote_addr not in LOCAL_ADDRESSES:
+        return jsonify({'success': False,
+                        'message': 'フォルダを選ぶ窓は、このアプリを動かしている PC からだけ使えます。パスを入力してください'})
+    data = request.get_json() or {}
+    initial = data.get('initial').strip().strip('"\'') if isinstance(data.get('initial'), str) else ''
+    try:
+        path = ask_directory(initial if initial and Path(initial).is_dir() else '')
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
+        logger.error(f"Failed to open the folder dialog: {e}")
+        return jsonify({'success': False, 'message': f'フォルダを選ぶ窓を開けません（{e}）。パスを入力してください'})
+    return jsonify({'success': True, 'path': str(Path(path)) if path else ''})
 
 @app.route('/get_table_data')
 def get_table_data():

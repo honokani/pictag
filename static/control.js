@@ -777,15 +777,33 @@ async function openProject() {
     await opened(name);
 }
 
-async function loadDirectory() {
+// confirmed: 未保存の変更を破棄してよいか、もう確かめた（参照…から）
+async function loadDirectory(confirmed = false) {
     const dir = $('imageDir').value.trim();
     if (!dir) return setStatus('画像フォルダのパスを入力してください', 'error');
     commitEdit();
-    if (!confirmDiscard()) return;
+    if (!confirmed && !confirmDiscard()) return;
     await settled();
     const res = await postJson('/load_directory', {image_dir: dir});
     if (!res.success) return setStatus(res.message, 'error');
     await opened(dir.replace(/["']/g, '').replace(/[\\/]+$/, '').split(/[\\/]/).pop());
+}
+
+// 参照…: このPCでフォルダを選ぶ窓をアプリ側で開き、選んだらそのまま読み込む
+async function browseDirectory() {
+    commitEdit();
+    if (!confirmDiscard()) return;
+    $('browseButton').disabled = true;
+    setStatus('フォルダを選ぶ窓を開きました（見当たらなければタスクバーを見てください）');
+    try {
+        const res = await postJson('/choose_directory', {initial: $('imageDir').value.trim()});
+        if (!res.success) return setStatus(res.message, 'error');
+        if (!res.path) return setStatus('フォルダの選択をやめました');
+        $('imageDir').value = res.path;
+        await loadDirectory(true);
+    } finally {
+        $('browseButton').disabled = false;
+    }
 }
 
 async function save() {
@@ -968,7 +986,8 @@ function openImage(name) {
 // ---- つなぎ込み ----
 
 function wire() {
-    $('loadButton').addEventListener('click', guarded(loadDirectory));
+    $('loadButton').addEventListener('click', guarded(() => loadDirectory()));
+    $('browseButton').addEventListener('click', guarded(browseDirectory));
     $('imageDir').addEventListener('keydown', event => {
         if (event.key === 'Enter') guarded(loadDirectory)();
     });
