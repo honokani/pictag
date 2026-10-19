@@ -395,13 +395,13 @@ function headHtml() {
     ].join('');
 }
 
-// マークの欄: 排他（A〜D のどれか1つ）と複数（★●▲■）のボタン
+// マークの欄: 縦長の 2 列 × 4 行。左の列が排他（A〜D のどれか1つ）、右の列が複数（★●▲■）
 function marksHtml(row) {
     const button = (kind, mark, on) =>
         `<button type="button" class="mark-btn${on ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}">${mark}</button>`;
     const one = state.markChoices.one.map(m => button('one', m, row.mark === m)).join('');
     const many = state.markChoices.many.map(m => button('many', m, (row.marks || '').includes(m))).join('');
-    return `<td class="marks"><div class="mark-row">${one}</div><div class="mark-row">${many}</div></td>`;
+    return `<td class="marks"><div class="mark-grid">${one}${many}</div></td>`;
 }
 
 // マークの絞り込みに合うか
@@ -432,8 +432,21 @@ function choicesHtml(row) {
     const camera = state.viewChoices.camera.map((phrases, g) =>
         `<span class="group">${clear(`camera${g}`)}${phrases.map(p => button(p, p.replace(/^from /, ''), `camera${g}`)).join('')}</span>`);
     const pov = `<span class="group">${clear('pov')}${state.viewChoices.pov.map(c => button(c.phrase, `${c.emoji} ${c.label}`, 'pov')).join('')}</span>`;
-    return `<div class="choices"><div class="choice-row"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
-        `<div class="choice-row"><span class="choice-label">👀</span>${pov}</div></div>`;
+    return `<div class="choices"><div class="choice-row camera"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
+        `<div class="choice-row pov"><span class="choice-label">👀</span>${pov}</div></div>`;
+}
+
+// picture の列幅: 🎥 の行の最後のボタン（close-up）の右端 + 10px。ボタンは固定なので、表が見えているときに1回だけ測る
+const PICTURE_SPARE = 10;
+
+function fitPictureColumn() {
+    if ($('grid').style.getPropertyValue('--picture-width')) return;
+    const last = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"] .choice-row.camera .choice')].pop();
+    const td = last && last.closest('td');
+    if (!td || td.getBoundingClientRect().width === 0) return;
+    const right = last.getBoundingClientRect().right - td.getBoundingClientRect().left;
+    const border = parseFloat(getComputedStyle(td).borderRightWidth) || 0;
+    $('grid').style.setProperty('--picture-width', `${Math.ceil(right + PICTURE_SPARE + border)}px`);
 }
 
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
@@ -472,6 +485,7 @@ const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}
 function renderTable() {
     $('gridHead').innerHTML = headHtml();
     $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
+    fitPictureColumn();
     const bulkSection = $('bulkSection').value;  // 描き直しても一括入力の段落は選んだままにする
     $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;

@@ -99,7 +99,7 @@ td.thumb img {
     cursor: zoom-in;
 }
 
-td.meta { width: 150px; cursor: pointer; user-select: none; }
+td.meta { width: 150px; min-width: 150px; cursor: pointer; user-select: none; }  /* hint が残りを取っても縮めない */
 td.meta .name { font-weight: 600; word-break: break-all; }
 td.meta .tokens { color: #666; font-variant-numeric: tabular-nums; }
 td.meta .tokens.over { color: #c62828; font-weight: 700; }
@@ -112,7 +112,9 @@ td.cell .ln.auto.empty { color: #b8b8b8; }
 td.cell .ln.conflict { color: #c62828; }
 td.cell .ln.conflict::before { content: '⚠ '; }
 
-td.cell[data-section="picture"] { min-width: 420px; }
+/* picture の列は close-up の右端 + 10px（幅は JS が測って --picture-width に入れる）。残りの幅は hint、無ければほかの段落へ */
+td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width: var(--picture-width, 420px); }
+.choice-row.camera { flex-wrap: nowrap; }
 .choices { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; font-size: 12px; }
 .choice-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .choices .group { display: inline-flex; gap: 2px; }
@@ -122,11 +124,11 @@ td.cell[data-section="picture"] { min-width: 420px; }
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 
-td.hint { min-width: 220px; max-width: 320px; }
+td.hint { min-width: 220px; width: 100%; }
 td.hint textarea { width: 100%; font-size: 12px; color: #555; background: #fafafa; resize: vertical; }
 
-td.marks { width: 112px; }
-.mark-row { display: flex; gap: 2px; margin-bottom: 2px; }
+td.marks { width: 63px; }  /* ボタン2つ分（24px × 2 + 間 2px + 左右の余白） */
+.mark-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 2px; }
 .mark-btn { width: 24px; padding: 0; font-size: 12px; line-height: 1.6; color: #888; border-color: #ccc; border-radius: 3px; }
 .mark-btn.on { color: #fff; font-weight: 700; }
 .mark-btn.on[data-mark="A"] { background: #d32f2f; border-color: #d32f2f; }

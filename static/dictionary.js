@@ -261,6 +261,7 @@ function showView(view) {
     $('dictSelTools').hidden = images;
     $('dictView').hidden = images;
     if (images) {
+        fitPictureColumn();  // 共用辞書の画面にいる間に表を描いた場合は、ここで測る
         $('imagesView').scrollTop = dict.scroll;
         return;
     }
