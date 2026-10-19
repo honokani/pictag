@@ -109,10 +109,18 @@ function addPhrase(text, key, phrase) {
     return [...lines.slice(0, at), renderInputLine(key, [...parsed[at].phrases, phrase]), ...lines.slice(at + 1)].join('\n');
 }
 
-// 保存する形に整える: 行末のカンマ・空白（候補の確定で付く ", "）、空行、値の無いキーの行を落とす
+// 1行を整える: 続いたカンマ（",, " ", ," ",  ,"）は1つにして、カンマの後ろは空白1つ（"a,b" "a,  b" "a , b" → "a, b"）。
+// 語の間に続いた空白は1つ。値の頭と行末のカンマ・空白（候補の確定で付く ", "）は落とす
+const tidyLine = line => line
+    .replace(/\s*,[\s,]*/g, ', ')
+    .replace(/(?<=\S)\s{2,}(?=\S)/g, ' ')
+    .replace(/^(\s*-*\s*[^,:]*:)?\s*,\s*/, (match, head) => (head ? `${head} ` : ''))
+    .replace(/[\s,]+$/, '');
+
+// 保存する形に整える: 各行を整え、空行と値の無いキーの行を落とす
 function tidyInput(text) {
     return text.split('\n')
-        .map(line => line.replace(/[\s,]+$/, ''))
+        .map(tidyLine)
         .filter(line => parseLine(line).phrases.length > 0)
         .join('\n');
 }
@@ -197,8 +205,14 @@ function fuzzyScore(query, text) {
     return score - t.length * 0.02;
 }
 
+// 語の後ろ（カーソルの前）に続くスペースの数
+const spacesAfterWord = before => (before.match(/\S( *)$/) || ['', ''])[1].length;
+
+// キーなしの文で、語の後にスペースを2つ続けた（打たなくても単語の候補を出す合図。3つ目でしまう）
+const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
+
 // 入力欄のカーソル位置の文脈
-// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語 / start = 行頭（キー・語句・文・単語）
+// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
 function contextOf(el) {
     const value = el.value;
     const caret = el.selectionStart;
@@ -220,7 +234,8 @@ function contextOf(el) {
     const rest = before.slice(prefix);
     const lastBreak = Math.max(rest.lastIndexOf(' '), rest.lastIndexOf(','), rest.lastIndexOf('\t'));
     if (lastBreak >= 0) {
-        return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1};
+        return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1,
+            spaces: spacesAfterWord(rest)};
     }
     return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
 }
@@ -243,9 +258,9 @@ function phraseCandidates(section, ctx) {
         .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
 }
 
-// キーなしの文の単語（1文字以上打ったときだけ）
+// キーなしの文の単語（1文字以上打ったとき。語の後にスペースを2つ続けたときは、打たなくても使用回数の多い順に出す）
 function wordCandidates(section, ctx) {
-    if (!ctx.query) return [];
+    if (!(ctx.query || calledBySpaces(ctx))) return [];
     return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
 }
 
@@ -329,10 +344,11 @@ function accept(item) {
         const text = {
             key: () => `${item.key}: `,
             phrase: () => item.phrase + (ctx.restEmpty ? ', ' : ''),
-            word: () => item.word + (ctx.restEmpty ? ' ' : ''),
+            word: () => item.word + (ctx.restEmpty || calledBySpaces(ctx) ? ' ' : ''),
             line: () => item.phrase,
         }[item.kind]();
-        el.setRangeText(text, ctx.queryStart, ctx.caret, 'end');
+        // 候補を出すために2つ続けたスペースは1つにまとめ、2つ目の位置に「単語 + 空白」を入れる（文の途中でも後ろの語と分かれる）
+        el.setRangeText(text, calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart, ctx.caret, 'end');
     }
     el.dispatchEvent(new Event('input'));
 }
@@ -1042,7 +1058,9 @@ function bulkContext(el) {
         return {...base, mode: 'phrase', key, query, queryStart: segment + (raw.length - query.length)};
     }
     const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
-    if (lastBreak >= 0) return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1};
+    if (lastBreak >= 0) {
+        return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1, spaces: spacesAfterWord(before)};
+    }
     const query = before.trimStart();
     return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
 }
