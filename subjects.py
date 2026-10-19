@@ -17,6 +17,8 @@ THIRD_PERSON = {'emoji': '👥', 'label': '', 'tone': '', 'phrase': 'third-perso
 # 3つ目の組はショットの大きさ（寄り → 引き）
 CAMERA_GROUPS = [['from front', 'from side', 'from behind'], ['from above', 'from below'],
                  ['close-up', 'portrait', 'medium shot', 'long shot']]
+# 後ろに対象を書ける語句（close-up face）。ボタンでは、対象の付いたものも同じ語句として扱う
+TARGETED = ['close-up']
 # 🎥 のボタンの絵文字（語句はボタンにマウスを載せると見える）。above / below は鳥の目・虫の目
 CAMERA_EMOJI = {'from front': '🧍', 'from side': '🚶', 'from behind': '🔙', 'from above': '🦅', 'from below': '🐛',
                 'close-up': '🔍', 'portrait': '🖼️', 'medium shot': '👕', 'long shot': '🏞️'}

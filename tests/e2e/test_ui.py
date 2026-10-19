@@ -408,6 +408,18 @@ def test_view_buttons_show_emoji_and_shot_sizes_are_one_group(page, imgs):
     expect(picture_view(page, "a.png")).to_have_text("view: third-person POV, long shot")
 
 
+def test_close_up_with_a_target_lights_the_button_and_is_replaced(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "view: close-up face, from below", section="picture")
+    close_up = choice(page, "a.png", "close-up")
+    expect(close_up).to_have_class(re.compile(r"\bon\b"))
+    expect(close_up).to_have_attribute("title", "close-up face")  # 入っている語句が見える
+    choice(page, "a.png", "portrait").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: from below, portrait")
+    choice(page, "a.png", "close-up").click()  # 戻すと close-up だけ（対象は手で書き足す）
+    expect(picture_view(page, "a.png")).to_have_text("view: from below, close-up")
+
+
 def test_pov_buttons_show_letters_and_are_colored_by_gender(page, imgs):
     load_dir(page, imgs)
     expect(choice(page, "a.png", "guy POV")).to_have_text("👨")  # guy は最初からある

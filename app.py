@@ -13,7 +13,7 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from subjects import CAMERA_EMOJI, CAMERA_GROUPS, characters_of, insert_position, name_for_new, pov_choices
+from subjects import CAMERA_EMOJI, CAMERA_GROUPS, TARGETED, characters_of, insert_position, name_for_new, pov_choices
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
@@ -676,7 +676,7 @@ class CaptionTool:
         if not (isinstance(key, str) and key and valid_group and phrase in group and isinstance(on, bool)):
             return self.fail('選択の指定が正しくありません')
         for r in dict.fromkeys(rows):
-            self.df.at[r, section] = set_choice(to_text(self.df.at[r, section]), key, phrase, group, on)
+            self.df.at[r, section] = set_choice(to_text(self.df.at[r, section]), key, phrase, group, on, TARGETED)
         return True
 
     def mark_rows(self, rows, column, change, check):
@@ -873,7 +873,8 @@ def get_table_data():
     df = caption_tool.df
     common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS,
               'auto_keys': AUTO_KEYS,
-              'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'pov': pov_choices(caption_tool.subjects())},
+              'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'targeted': TARGETED,
+                               'pov': pov_choices(caption_tool.subjects())},
               'mark_choices': {'one': ONE, 'many': MANY}}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})

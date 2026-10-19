@@ -226,7 +226,16 @@ def test_table_data_has_view_choices_for_current_subjects(api, imgs):
     assert body["auto_keys"] == ["characters"]
     assert body["view_choices"]["camera"] == [CAMERA, VERTICAL, SHOTS]
     assert set(body["view_choices"]["camera_emoji"]) == {*CAMERA, *VERTICAL, *SHOTS}
+    assert body["view_choices"]["targeted"] == ["close-up"]  # 後ろに対象を書ける（close-up face）
     assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["third-person POV", "girl POV", "guy POV"]
+
+
+def test_choice_replaces_close_up_with_a_target(api, tool, imgs):
+    api.load(imgs)
+    api.write(0, "view: close-up face, from below", section="picture")
+    api.post("/set_choice", {"rows": [0], "section": "picture", "key": "view",
+                             "phrase": "portrait", "group": SHOTS, "on": True})
+    assert texts(tool, "picture")["a.png"] == "view: from below, portrait"
 
 
 def test_choice_keeps_free_text_on_the_view_line(api, tool, imgs):

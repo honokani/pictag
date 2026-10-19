@@ -7,7 +7,6 @@
 """
 import re
 from collections import Counter
-from functools import reduce
 
 from caption_format import parse_line, phrases_of
 from groups import normalize_groups
@@ -157,22 +156,35 @@ def add_phrase(text, key, phrase):
     return '\n'.join([*lines[:at], render_input_line(key, [*parsed[at][1], phrase]), *lines[at + 1:]])
 
 
-def set_choice(text, key, phrase, group, on):
-    """key の行に group の語句を1つだけ置く（on なら phrase にし、off なら group の語句を消す）"""
-    cleared = reduce(lambda t, p: remove_phrase(t, key, p), group, text)
+def is_choice(phrase, member, targeted=()):
+    """語句がボタンの語句 member にあたるか（targeted の語句は、後ろに対象の付いたもの（close-up face）も）"""
+    return phrase == member or (member in targeted and phrase.startswith(f'{member} '))
+
+
+def set_choice(text, key, phrase, group, on, targeted=()):
+    """key の行に group の語句を1つだけ置く（on なら phrase にし、off なら group の語句を消す）
+
+    targeted の語句は、後ろに対象の付いたもの（close-up face）も group の語句として消す
+    """
+    cleared = remove_matching(text, key, lambda p: any(is_choice(p, member, targeted) for member in group))
     return add_phrase(cleared, key, phrase) if on else cleared
+
+
+def remove_matching(text, key, match):
+    """入力の key の行から、match に合う語句を消す（語句が無くなった行は消す）"""
+    def edit(line):
+        k, phrases = parse_line(line)
+        if k != key or not any(map(match, phrases)):
+            return line
+        rest = [p for p in phrases if not match(p)]
+        return render_input_line(k, rest) if rest else None
+
+    return '\n'.join(line for line in map(edit, text.splitlines()) if line is not None)
 
 
 def remove_phrase(text, key, phrase):
     """入力から語句を消す（語句が無くなった行は消す）"""
-    def edit(line):
-        k, phrases = parse_line(line)
-        if k != key or phrase not in phrases:
-            return line
-        rest = [p for p in phrases if p != phrase]
-        return render_input_line(k, rest) if rest else None
-
-    return '\n'.join(line for line in map(edit, text.splitlines()) if line is not None)
+    return remove_matching(text, key, lambda p: p == phrase)
 
 
 def rename_phrase(text, key, old, new):
