@@ -102,3 +102,17 @@ CAMERA = ["from front", "from side", "from behind"]
 ])
 def test_set_choice_keeps_one_phrase_of_the_group(text, phrase, on, expected):
     assert set_choice(text, "view", phrase, CAMERA, on) == expected
+
+
+SHOTS = ["close-up", "portrait", "medium shot", "long shot"]
+
+
+@pytest.mark.parametrize("text, phrase, on, expected", [
+    ("view: close-up face, from below", "portrait", True, "view: from below, portrait"),  # 対象の付いた close-up も置き換える
+    ("view: close-up face, from below", "close-up", False, "view: from below"),
+    ("view: close-up hands", "close-up", True, "view: close-up"),
+    ("view: close-upper body", "portrait", True, "view: close-upper body, portrait"),  # 「close-up 」で始まるものだけ
+    ("view: portrait orientation", "medium shot", True, "view: portrait orientation, medium shot"),  # close-up だけ
+])
+def test_set_choice_treats_close_up_with_a_target_as_close_up(text, phrase, on, expected):
+    assert set_choice(text, "view", phrase, SHOTS, on, targeted=["close-up"]) == expected

@@ -426,10 +426,15 @@ function metaHtml(row) {
 // 🎥 は絵文字だけ、👀 は絵文字と A, B（女性・男性で色を変える）。語句はマウスを載せると見える
 function choicesHtml(row) {
     const view = phrasesOfKey(row.texts.picture, 'view');
+    const targeted = state.viewChoices.targeted || [];
+    // ボタンの語句にあたる、入力の語句（close-up は後ろに対象の付いたもの（close-up face）も）。title にはこれを出す
+    const current = phrase => view.find(p => p === phrase || (targeted.includes(phrase) && p.startsWith(`${phrase} `)));
     // classes: 絵文字だけのボタンは icon（☓ と同じ幅）、👀 の人物は female / male
-    const button = (phrase, label, group, classes = []) =>
-        `<button type="button" class="${['choice', ...classes, view.includes(phrase) ? 'on' : ''].filter(Boolean).join(' ')}" data-group="${group}" ` +
-        `data-phrase="${escapeHtml(phrase)}" title="${escapeHtml(phrase)}" aria-label="${escapeHtml(phrase)}">${escapeHtml(label)}</button>`;
+    const button = (phrase, label, group, classes = []) => {
+        const set = current(phrase);
+        return `<button type="button" class="${['choice', ...classes, set ? 'on' : ''].filter(Boolean).join(' ')}" data-group="${group}" ` +
+            `data-phrase="${escapeHtml(phrase)}" title="${escapeHtml(set || phrase)}" aria-label="${escapeHtml(phrase)}">${escapeHtml(label)}</button>`;
+    };
     const clear = group => `<button type="button" class="choice clear" data-group="${group}" title="選択なし">☓</button>`;
     const emoji = state.viewChoices.camera_emoji || {};
     const camera = state.viewChoices.camera.map((phrases, g) =>
