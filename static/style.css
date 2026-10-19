@@ -89,19 +89,20 @@ th {
 th .section-name { cursor: text; font-weight: 600; }
 th .remove-section { border: none; background: none; padding: 0 4px; color: #888; }
 
-td.thumb { width: 108px; }
+/* サムネイルは正方形。大きさは JS が picture の欄の高さを測って --thumb-size に入れる（幅 = 大きさ + 左右の余白 12px + 枠線 1px） */
+td.thumb { width: calc(var(--thumb-size, 96px) + 13px); }
 td.thumb img {
     display: block;
-    width: 96px;
-    height: 96px;
+    width: var(--thumb-size, 96px);
+    height: var(--thumb-size, 96px);
     object-fit: contain;
     background: #eee;
     cursor: zoom-in;
 }
 
-td.meta { width: 150px; min-width: 150px; cursor: pointer; user-select: none; }  /* hint が残りを取っても縮めない */
-td.meta .name { font-weight: 600; word-break: break-all; }
-td.meta .tokens { color: #666; font-variant-numeric: tabular-nums; }
+/* token の欄（クリックで行を選ぶ）。hint が残りを取っても縮めない */
+td.meta { width: 56px; min-width: 56px; cursor: pointer; user-select: none; }
+td.meta .tokens { white-space: pre-line; text-align: right; color: #666; font-variant-numeric: tabular-nums; }
 td.meta .tokens.over { color: #c62828; font-weight: 700; }
 
 td.cell { min-width: 220px; max-width: 380px; cursor: text; }

@@ -385,7 +385,7 @@ function applyDictionary(body) {
 function headHtml() {
     return [
         '<th>サムネイル</th>',
-        '<th>画像 / トークン</th>',
+        '<th title="キャプションのトークン数 / 上限">token</th>',
         '<th>マーク</th>',
         ...state.sections.map(s => (state.fixedSections.includes(s)
             ? `<th data-section="${escapeHtml(s)}"><span class="section-name fixed">${escapeHtml(s)}</span></th>`
@@ -415,11 +415,11 @@ function matchesFilter(row) {
 // hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）
 const hintHtml = row => `<td class="hint"><textarea readonly rows="5" aria-label="hint">${escapeHtml(row.hint || '')}</textarea></td>`;
 
+// token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
 function metaHtml(row) {
     const known = row.tokens !== null && row.tokens !== undefined;
     const over = known && row.tokens > state.tokenLimit;
-    return `<div class="name">${escapeHtml(row['サムネイル'])}</div>` +
-        `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'} / ${state.tokenLimit}</div>`;
+    return `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'}\n/ ${state.tokenLimit}</div>`;
 }
 
 // view のボタン（各組の先頭の ☓ でその組の語句を消す）。押されている語句は on
@@ -449,6 +449,14 @@ function fitPictureColumn() {
     $('grid').style.setProperty('--picture-width', `${Math.ceil(right + PICTURE_SPARE + border)}px`);
 }
 
+// サムネイルは正方形で、picture の欄の中身の高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る
+function fitThumbnails() {
+    const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
+        .filter(td => td.getBoundingClientRect().height > 0)
+        .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
+    if (heights.length) $('grid').style.setProperty('--thumb-size', `${Math.floor(Math.min(...heights))}px`);
+}
+
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
 
 // 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く、自動のキー（characters）は自動の値で出す
@@ -476,7 +484,7 @@ function rowHtml(row) {
         matchesFilter(row) ? '' : 'filtered'].filter(Boolean).join(' ');
     const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row)}</td>`).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
-        `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt=""></td>` +
+        `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt="" title="${escapeHtml(name)}"></td>` +
         `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
 }
 
@@ -486,6 +494,7 @@ function renderTable() {
     $('gridHead').innerHTML = headHtml();
     $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
     fitPictureColumn();
+    fitThumbnails();
     const bulkSection = $('bulkSection').value;  // 描き直しても一括入力の段落は選んだままにする
     $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;

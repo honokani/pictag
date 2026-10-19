@@ -1,12 +1,20 @@
 """列幅とマークの並び（Playwright）"""
 import pytest
 
-from helpers import make_images
+import app as pictag
+from helpers import make_images, word_tokenizer
+from tokens import TokenCounter
 
 sync_api = pytest.importorskip("playwright.sync_api")
 expect = sync_api.expect
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest.fixture(autouse=True)
+def tokens(monkeypatch):
+    # 実物のトークナイザーは取りに行かず、空白と記号で区切る小さなもので数える
+    monkeypatch.setattr(pictag, "token_counter", TokenCounter(word_tokenizer()))
 
 
 @pytest.fixture
@@ -67,9 +75,26 @@ def test_hint_takes_the_rest_of_the_width(page, imgs):
     assert overflow(page) == 0
     assert round(width(td(page, 'td.cell[data-section="action"]'))) == 220  # 段落は今までどおり
     assert round(width(td(page, 'td.cell[data-section="girl"]'))) == 220
-    assert round(width(td(page, "td.meta"))) == 150  # 画像名の欄も縮めない
+    assert round(width(td(page, "td.meta"))) == 56  # token の欄は縮めない
     assert width(td(page, "td.hint")) > 600  # 残りは hint
     assert 9.5 <= spare_after_close_up(page) <= 11
+
+
+def test_token_column_shows_the_count_over_the_limit_without_the_file_name(page, imgs):
+    load_dir(page, imgs)
+    expect(page.locator("#gridHead th").nth(1)).to_have_text("token")
+    tokens = td(page, "td.meta .tokens")
+    assert tokens.inner_text() == "0\n/ 507"  # 2行で、数字は右揃え
+    expect(td(page, "td.meta")).not_to_contain_text("a.png")
+    expect(td(page, "td.thumb img")).to_have_attribute("title", "a.png")  # ファイル名はサムネイルに載せると見える
+
+
+def test_thumbnail_is_a_square_as_tall_as_the_picture_cell(page, imgs):
+    load_dir(page, imgs)
+    img = td(page, "td.thumb img").bounding_box()
+    row = page.locator('#gridBody tr[data-name="a.png"]').bounding_box()
+    assert abs(img["width"] - img["height"]) < 0.5
+    assert abs(img["height"] + 9 - row["height"]) <= 1.5  # 上下の余白 8px と下の枠線 1px
 
 
 def test_without_hint_the_rest_goes_to_sections_other_than_picture(page, imgs):
