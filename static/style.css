@@ -1,5 +1,6 @@
 /* pictag — 演出なし。軽さと読みやすさを優先 */
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }  /* .bar などの display 指定より hidden を優先する */
 
 html, body { height: 100%; }
 
@@ -23,6 +24,8 @@ body {
 }
 
 .app-name { font-size: 16px; }
+.tabs { display: flex; gap: 2px; }
+.tab.on { background: #1f1f1f; border-color: #1f1f1f; color: #fff; cursor: default; }
 .bar label { display: flex; align-items: center; gap: 6px; }
 .bar label.grow { flex: 1 1 320px; }
 .bar label.grow input { flex: 1; }
@@ -54,6 +57,7 @@ button:disabled { opacity: .45; cursor: default; }
 #status { color: #555; }
 #status.error { color: #c62828; font-weight: 600; }
 #status.ok { color: #2e7d32; }
+#status.warn { color: #b26a00; font-weight: 600; }
 
 main { flex: 1; overflow: auto; }
 
@@ -105,6 +109,8 @@ td.cell .text { white-space: pre-wrap; word-break: break-word; min-height: 1.5em
 td.cell .ln.empty { color: #b8b8b8; }
 td.cell .ln.auto { font-style: italic; color: #4a5a7a; }
 td.cell .ln.auto.empty { color: #b8b8b8; }
+td.cell .ln.conflict { color: #c62828; }
+td.cell .ln.conflict::before { content: '⚠ '; }
 
 td.cell[data-section="picture"] { min-width: 420px; }
 .choices { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; font-size: 12px; }
@@ -144,6 +150,27 @@ button.hold::before {
 }
 button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear forwards; }
 @keyframes hold-fill { from { width: 0; } to { width: 100%; } }
+
+/* 共用辞書の画面 */
+#dictTools .add-entry { margin-left: auto; }
+#dictAddSection, #dictAddKey { max-width: 120px; }
+#dictFilter, #dictAddText { width: 170px; }
+.rename-option { margin-left: auto; color: #555; font-size: 12px; }
+#dictView { padding-bottom: 24px; }
+#dictView p { padding: 24px; color: #777; }
+#dictGrid tbody tr { cursor: pointer; }
+#dictGrid td.dict-key { color: #555; white-space: nowrap; }
+#dictGrid td.dict-phrase { min-width: 260px; }
+#dictGrid td.dict-phrase input { width: 100%; }
+#dictGrid td.dict-sections { color: #666; font-size: 12px; }
+#dictGrid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.shared-mark { color: #2e7d32; font-weight: 700; }
+.group-badge { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 12px; color: #fff; background: #6a1b9a; }
+.group-badge.g1 { background: #00796b; }
+.group-badge.g2 { background: #8d6e63; }
+.group-badge.g3 { background: #c2185b; }
+.group-badge.g4 { background: #455a64; }
+.group-badge.g5 { background: #f57c00; }
 
 tr.selected td { background: #e3edfc; }
 tr.dead td { color: #9a9a9a; }

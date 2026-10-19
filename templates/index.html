@@ -9,6 +9,10 @@
 <body>
     <header class="bar">
         <strong class="app-name">pictag</strong>
+        <nav class="tabs" aria-label="画面の切り替え">
+            <button type="button" class="tab on" data-view="images" aria-pressed="true">画像</button>
+            <button type="button" class="tab" data-view="dictionary" aria-pressed="false">共用辞書</button>
+        </nav>
         <label>既存プロジェクト
             <select id="projectSelect">
                 <option value="">選んでください</option>
@@ -56,12 +60,58 @@
         </form>
     </section>
 
-    <main>
+    <main id="imagesView">
         <table id="grid">
             <thead><tr id="gridHead"></tr></thead>
             <tbody id="gridBody"></tbody>
         </table>
         <p id="emptyNote">画像フォルダを読み込むか、既存プロジェクトを選んでください。</p>
+    </main>
+
+    <!-- 共用辞書の画面（タブで切り替え）。語句は「キー: 語句」で1行（段落をまたいでまとめる） -->
+    <section id="dictTools" class="bar tools" hidden>
+        <span class="group">絞り込み
+            <input id="dictFilter" type="text" placeholder="語句（例: stand）" autocomplete="off" aria-label="語句で絞り込み">
+            <select id="dictKey" aria-label="キーで絞り込み"></select>
+            <select id="dictShared" aria-label="共用辞書に入っているかで絞り込み">
+                <option value="">共用辞書: すべて</option>
+                <option value="in">共用辞書にある</option>
+                <option value="out">共用辞書にない</option>
+            </select>
+        </span>
+        <span id="dictCount" class="key-help"></span>
+        <form id="dictAddForm" class="group add-entry">
+            <select id="dictAddSection" aria-label="足す語句の段落"></select>
+            <select id="dictAddKey" aria-label="足す語句のキー"></select>
+            <input id="dictAddText" type="text" placeholder="新しい語句" autocomplete="off" aria-label="足す語句">
+            <button type="submit">共用辞書に足す</button>
+        </form>
+    </section>
+
+    <section id="dictSelTools" class="bar tools" hidden>
+        <span id="dictHelp" class="key-help">行を選ぶと、まとめて 共用辞書に入れる・1つだけのグループにする・消す ができます</span>
+        <span id="dictSelForm" class="group bulk" hidden>
+            <span id="dictSelInfo">選択 0 件</span>
+            <button type="button" id="dictRegisterButton">共用辞書に入れる</button>
+            <button type="button" id="dictGroupButton" title="同じキーの語句を、1枚の画像の1段落に1つだけ置けるグループにする">1つだけのグループにする</button>
+            <button type="button" id="dictUngroupButton">グループから外す</button>
+            <button type="button" id="dictUnregisterButton" class="hold" title="1秒長押しで、選んだ語句を共用辞書から消す（入力はそのまま）">共用辞書から消す</button>
+            <button type="button" id="dictDeselectButton">選択を外す</button>
+        </span>
+        <label class="group rename-option" title="改名したとき、開いているプロジェクトの入力の語句も新しい名前にする（他のプロジェクトは変えない）">
+            <input id="dictRenameInProject" type="checkbox" checked> 改名で、開いているプロジェクトの入力も置き換える
+        </label>
+    </section>
+
+    <main id="dictView" hidden>
+        <table id="dictGrid">
+            <thead><tr>
+                <th><input id="dictAll" type="checkbox" aria-label="表示中をすべて選択"></th>
+                <th>キー</th><th>語句</th><th>使っている段落</th><th>使用回数</th><th>共用辞書</th><th>グループ</th><th></th>
+            </tr></thead>
+            <tbody id="dictBody"></tbody>
+        </table>
+        <p id="dictEmpty" hidden>表示する語句がありません。画像の画面で入力するか、上の欄で語句を足してください。</p>
     </main>
 
     <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
@@ -73,5 +123,6 @@
     </dialog>
 
     <script src="/static/control.js"></script>
+    <script src="/static/dictionary.js"></script>
 </body>
 </html>

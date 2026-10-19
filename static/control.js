@@ -18,8 +18,11 @@ const state = {
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
-    phrases: [],          // 辞書の語句 [{section, key, phrase, count}]
-    words: [],            // キーなしの文の単語 [{section, word, count}]
+    phrases: [],          // 辞書の語句 [{section, key, phrase, count, shared}]
+    words: [],            // キーなしの文の単語 [{section, word, count, shared}]
+    groups: [],           // 「1つだけ」のグループ [{key, phrases}]（共用辞書）
+    defaultSections: [],  // 新規プロジェクトの段落（共用辞書の画面で語句を足す段落の候補）
+    view: 'images',       // 表示中の画面（images / dictionary）
     selected: new Set(),  // 行の index
     anchor: null,         // Shift 範囲選択の起点（最後にクリックした行）
     dirty: false,
@@ -151,6 +154,28 @@ function firstEmptyKeyEnd(lines, keyCount) {
     return Math.max(0, offset - 1);
 }
 
+// 入力の キー → 語句（キーのある行だけ）
+function phrasesByKey(text) {
+    const byKey = {};
+    for (const {key, phrases} of (text || '').split('\n').map(parseLine)) {
+        if (key) byKey[key] = [...(byKey[key] || []), ...phrases];
+    }
+    return byKey;
+}
+
+// ---- 「1つだけ」のグループ（groups.py と同じ規則。1枚の画像の1段落で、同じキーの語句のうち1つだけ） ----
+
+const groupOf = (key, phrase) => state.groups.find(g => g.key === key && g.phrases.includes(phrase));
+
+// 同じグループの別の語句が、もう入っているか（入っていれば候補に出さない）
+function blockedIn(byKey, key, phrase) {
+    const group = groupOf(key, phrase);
+    return Boolean(group) && group.phrases.some(p => p !== phrase && (byKey[key] || []).includes(p));
+}
+
+// 語句のうち2つ以上が入っているグループ（ぶつかっている）
+const conflictOf = (key, phrases) => state.groups.find(g => g.key === key && g.phrases.filter(p => phrases.includes(p)).length >= 2);
+
 // ---- あいまい検索（打った文字が順に含まれる語句を拾う。連続・語頭の一致を高く） ----
 
 function fuzzyScore(query, text) {
@@ -180,7 +205,8 @@ function contextOf(el) {
     const lineEndAt = value.indexOf('\n', caret);
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
-    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases};
+    const base = {caret, restEmpty: value.slice(caret, lineEnd).trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+        cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
     if (colon >= 0 && keyPart !== '' && !keyPart.includes(',')) {
@@ -209,10 +235,10 @@ function keepBest(items) {
 
 const wordBonus = (w, section) => (w.section === section ? 3 : 0) + Math.log1p(w.count);
 
-// キーのある行: そのキーで使われた語句（打っていなくても使用回数の多い順に出す）
+// キーのある行: そのキーで使われた語句（打っていなくても使用回数の多い順に出す）。同じグループの語句が入っていれば出さない
 function phraseCandidates(section, ctx) {
     return keepBest(state.phrases
-        .filter(p => p.key === ctx.key && !ctx.current.includes(p.phrase))
+        .filter(p => p.key === ctx.key && !ctx.current.includes(p.phrase) && !blockedIn(ctx.cellPhrases, p.key, p.phrase))
         .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
 }
 
@@ -229,10 +255,9 @@ function lineStartCandidates(section, ctx) {
         ...state.phrases.flatMap(p => {
             const bonus = wordBonus(p, section);
             if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
-            return [
-                {kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1},
-                {kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus},
-            ];
+            const keyed = blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
+                : [{kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus}];
+            return [{kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1}, ...keyed];
         }),
         ...wordCandidates(section, ctx),
     ]);
@@ -332,13 +357,27 @@ function refreshWords() {
     clearTimeout(refreshWords.timer);
     refreshWords.timer = setTimeout(() => {
         getJson('/get_dictionary')
-            .then(body => {
-                state.phrases = body.phrases;
-                state.words = body.words;
-                fillBulkKeys();
-            })
+            .then(applyDictionary)
             .catch(e => console.warn('辞書を読めません', e));
     }, 100);
+}
+
+// 辞書を受け取る（/get_dictionary と、共用辞書を書き換えた API の応答）。グループが変われば ⚠ を付け直す
+function applyDictionary(body) {
+    const groupsChanged = JSON.stringify(body.groups) !== JSON.stringify(state.groups);
+    state.phrases = body.phrases;
+    state.words = body.words;
+    state.groups = body.groups;
+    state.defaultSections = body.default_sections;
+    if (!state.loaded) {
+        // プロジェクトを開く前でも、共用辞書の画面で確定タグと固定の段落を使う
+        state.templates = body.templates;
+        state.fixedSections = body.fixed_sections;
+        state.autoKeys = body.auto_keys;
+    }
+    fillBulkKeys();
+    if (groupsChanged && state.loaded) rerenderRows();
+    document.dispatchEvent(new CustomEvent('pictag:dictionary'));
 }
 
 // ---- 表 ----
@@ -400,16 +439,20 @@ function choicesHtml(row) {
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
 
 // 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く、自動のキー（characters）は自動の値で出す
+// 同じグループの語句が2つ以上ある行には ⚠（CSS）
 function cellHtml(section, row) {
     const keys = templateKeys(section);
+    const byKey = phrasesByKey(row.texts[section]);
     const lines = mergeTemplate(row.texts[section] || '', keys).map(line => {
-        const key = parseLine(line).key;
+        const {key, phrases} = parseLine(line);
         if (state.autoKeys.includes(key)) {
             const value = row.characters || '';
             return `<div class="ln auto${value ? '' : ' empty'}" title="自動">${escapeHtml(`${key}:${value ? ` ${value}` : ''}`)}</div>`;
         }
-        const empty = parseLine(line).phrases.length === 0;
-        return `<div class="ln${empty ? ' empty' : ''}">${escapeHtml(line.trimEnd())}</div>`;
+        const conflict = key ? conflictOf(key, byKey[key] || []) : null;
+        const classes = ['ln', phrases.length === 0 ? 'empty' : '', conflict ? 'conflict' : ''].filter(Boolean).join(' ');
+        const title = conflict ? ` title="${escapeHtml(`1つだけのグループ: ${conflict.phrases.join(' / ')}`)}"` : '';
+        return `<div class="${classes}"${title}>${escapeHtml(line.trimEnd())}</div>`;
     });
     return `<div class="text">${lines.join('')}</div>${keys.includes('view') ? choicesHtml(row) : ''}`;
 }
@@ -434,10 +477,16 @@ function renderTable() {
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;
     fillBulkKeys();
     $('emptyNote').hidden = state.loaded;
-    $('tools').hidden = !state.loaded;
-    $('markTools').hidden = !state.loaded;
+    $('tools').hidden = !state.loaded || state.view !== 'images';
+    $('markTools').hidden = !state.loaded || state.view !== 'images';
     setDirty(state.dirty);
     updateSelectionInfo();
+}
+
+// 行だけ描き直す（グループが変わったときの ⚠ の付け直し）
+function rerenderRows() {
+    commitEdit();
+    $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
 }
 
 function replaceRow(row) {
@@ -627,7 +676,9 @@ async function bulkEdit(op) {
     hideSuggestions();
     setDirty(true);
     refreshWords();
-    setStatus(`${rows.length} 行${op === 'add' ? 'に追加' : 'から削除'}しました`, 'ok');
+    const done = `${rows.length} 行${op === 'add' ? 'に追加' : 'から削除'}しました`;
+    if (res.skipped) return setStatus(`${done}（${res.skipped} 行は、同じグループの語句があるので足していません）`, 'warn');
+    setStatus(done, 'ok');
 }
 
 async function addSection() {
@@ -802,7 +853,7 @@ function clickMark(button) {
 // キーボード（入力欄の外で）: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■。Ctrl+A で表示中をすべて選択
 function handleMarkKey(event) {
     const typing = event.target instanceof Element && event.target.closest('input, textarea, select');
-    if (typing || !state.loaded) return;
+    if (typing || !state.loaded || state.view !== 'images') return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectVisible();
@@ -880,7 +931,8 @@ function bulkContext(el) {
     const value = el.value;
     const caret = el.selectionStart;
     const before = value.slice(0, caret);
-    const base = {caret, restEmpty: value.slice(caret).trim() === '', current: key ? splitPhrases(value) : []};
+    const current = key ? splitPhrases(value) : [];
+    const base = {caret, restEmpty: value.slice(caret).trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
         const raw = before.slice(segment);

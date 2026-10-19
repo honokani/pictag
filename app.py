@@ -10,11 +10,14 @@ import pandas as pd
 from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
+from groups import blocked_by, clean_groups
 from subjects import CAMERA_GROUPS, characters_of, name_for_new, pov_choices
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
-from words import (AUTO_KEYS, add_phrase, check_section_name, count_sentence_words, count_words, empty_shared, freeze,
-                   phrase_entries, remove_phrase, set_choice, word_entries)
+from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
+                   empty_shared, freeze, group_phrases, phrase_entries, register_phrases, register_words, remove_phrase,
+                   rename_phrase, rename_registered, set_choice, ungroup_phrases, unregister_phrases, unregister_words,
+                   word_entries)
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -105,15 +108,28 @@ def read_hints(image_dir, image_names):
     paths = {name: image_dir / f"{Path(name).stem}{HINT_EXT}" for name in image_names}
     return {name: path.read_text(encoding='utf-8', errors='replace') for name, path in paths.items() if path.is_file()}
 
+def pairs_of(items):
+    """画面から来た [{key, phrase}] を [(キー, 語句)] にする"""
+    if not isinstance(items, list) or not all(isinstance(i, dict) and isinstance(i.get('phrase'), str) for i in items):
+        raise ValueError('語句の指定が正しくありません')
+    return [(check_key(i.get('key')), i['phrase']) for i in items]
+
+def words_of(items):
+    """画面から来た [単語] を確かめる"""
+    if not isinstance(items, list) or not all(isinstance(w, str) and w for w in items):
+        raise ValueError('単語の指定が正しくありません')
+    return items
+
 def read_shared(path):
-    """共用辞書を読む（無い・壊れているときは既定の確定タグだけ）"""
+    """共用辞書を読む（無い・壊れているときは既定の確定タグだけ。形の正しくないグループは除く）"""
     shared = empty_shared()
     if not path.exists():
         return shared
     try:
         data = json.loads(path.read_text(encoding='utf-8'))
-        return {key: data.get(key, value) if isinstance(data.get(key), type(value)) else value
-                for key, value in shared.items()}
+        loaded = {key: data.get(key, value) if isinstance(data.get(key), type(value)) else value
+                  for key, value in shared.items()}
+        return {**loaded, 'groups': clean_groups(loaded['groups'])}
     except (OSError, ValueError, AttributeError) as e:
         logger.warning(f"Failed to load shared dictionary: {e}")
         return shared
@@ -256,18 +272,117 @@ class CaptionTool:
         return phrases, words
 
     def dictionary(self):
-        """画面に渡す辞書（使用中 + 共用辞書の語句・単語、確定タグ）"""
+        """画面に渡す辞書（使用中 + 共用辞書の語句・単語、確定タグ、「1つだけ」のグループ）"""
         phrases, words = self.usage()
         return {'phrases': phrase_entries(phrases, self.shared), 'words': word_entries(words, self.shared),
-                'templates': self.shared['templates']}
+                'templates': self.shared['templates'], 'groups': self.shared['groups'],
+                'fixed_sections': FIXED_SECTIONS, 'default_sections': DEFAULT_SECTIONS, 'auto_keys': AUTO_KEYS}
+
+    def save_shared(self):
+        self.data_work_dir.mkdir(parents=True, exist_ok=True)
+        write_json(self.data_work_dir / SHARED_FILE, self.shared)
+
+    def update_shared(self, change):
+        """共用辞書を change で作り直して保存する（検証の ValueError は失敗理由を残して False）"""
+        self.last_error = ''
+        try:
+            shared = change(self.shared)
+        except ValueError as e:
+            return self.fail(str(e))
+        self.shared = shared
+        self.save_shared()
+        return True
 
     def freeze_dictionary(self):
         """使用中の語句・単語を共用辞書に足して保存する。足した数を返す"""
         self.shared, added = freeze(self.shared, *self.usage())
-        self.data_work_dir.mkdir(parents=True, exist_ok=True)
-        write_json(self.data_work_dir / SHARED_FILE, self.shared)
+        self.save_shared()
         logger.info(f"Froze dictionary: {added} entries added")
         return added
+
+    def register_entries(self, pairs, words):
+        """使っている「キー: 語句」・単語を、使っている段落すべてで共用辞書に入れる（入っているものはそのまま）"""
+        def change(shared):
+            wanted, wanted_words = set(pairs_of(pairs)), set(words_of(words))
+            phrase_usage, word_usage = self.usage()
+            known = {t[1:] for t in phrase_usage} | {(p['key'], p['phrase']) for p in shared['phrases']}
+            known_words = {w for _, w in word_usage} | {w['word'] for w in shared['words']}
+            unknown = [p for k, p in wanted if (k, p) not in known] + [w for w in wanted_words if w not in known_words]
+            if unknown:
+                raise ValueError(f'「{unknown[0]}」はどの画像でも使われていません')
+            return register_words(register_phrases(shared, [t for t in phrase_usage if t[1:] in wanted]),
+                                  [t for t in word_usage if t[1] in wanted_words])
+        return self.update_shared(change)
+
+    def add_entry(self, section, key, phrase):
+        """新しい「キー: 語句」を、段落を決めて共用辞書に入れる（まだどこでも使っていない語句を手で足す）"""
+        def change(shared):
+            k = check_key(key)
+            return register_phrases(shared, [(check_section_name(section), k, check_phrase(k, phrase))])
+        return self.update_shared(change)
+
+    def unregister_entries(self, pairs, words):
+        """「キー: 語句」・単語を共用辞書から消す（どの段落のものも。入力はそのまま）"""
+        return self.update_shared(lambda shared: unregister_words(unregister_phrases(shared, pairs_of(pairs)), words_of(words)))
+
+    def rename_entry(self, key, old, new, in_project):
+        """「key: old」を new にする（共用辞書と、in_project なら開いているプロジェクトの入力も）
+
+        入力を置き換えた行の数を返す（失敗は None）。他のプロジェクトの表は変えない
+        """
+        self.last_error = ''
+        try:
+            key = check_key(key)
+            new = check_phrase(key, new)
+            if not isinstance(old, str) or not old:
+                raise ValueError('改名する語句の指定が正しくありません')
+            if new == old:
+                raise ValueError('今と同じ名前です')
+            if not isinstance(in_project, bool):
+                raise ValueError('入力も置き換えるかの指定が正しくありません')
+        except ValueError as e:
+            self.fail(str(e))
+            return None
+        registered = any((p['key'], p['phrase']) == (key, old) for p in self.shared['phrases'])
+        sections = section_names(self.df) if in_project and 'サムネイル' in self.df.columns else []
+        before = self.df[sections].map(to_text)
+        after = before.map(lambda text: rename_phrase(text, key, old, new))
+        changed = int((before != after).any(axis=1).sum())
+        if not registered and not changed:
+            where = '共用辞書にも、開いているプロジェクトの入力にも' if in_project else '共用辞書に'
+            self.fail(f'「{old}」は{where}ありません')
+            return None
+        if registered:
+            self.shared = rename_registered(self.shared, key, old, new)
+            self.save_shared()
+        if changed:
+            self.df[sections] = after
+        logger.info(f"Renamed phrase: {key}: {old} -> {new} (rows: {changed})")
+        return changed
+
+    def group(self, key, phrases):
+        """同じキーの語句を「1つだけ」のグループにする（共用辞書に無い語句は、使っている段落で入れる）"""
+        def change(shared):
+            k = check_key(key)
+            if not k:
+                raise ValueError('キーのない文はグループにできません')
+            if not isinstance(phrases, list) or not all(isinstance(p, str) for p in phrases):
+                raise ValueError('語句の指定が正しくありません')
+            wanted = list(dict.fromkeys(phrases))
+            if len(wanted) < 2:
+                raise ValueError('グループにする語句を2つ以上選んでください')
+            phrase_usage, _ = self.usage()
+            used = [t for t in phrase_usage if t[1] == k and t[2] in wanted]
+            known = {t[2] for t in used} | {p['phrase'] for p in shared['phrases'] if p['key'] == k}
+            unknown = [p for p in wanted if p not in known]
+            if unknown:
+                raise ValueError(f'「{k}: {unknown[0]}」は辞書にありません')
+            return group_phrases(register_phrases(shared, used), k, wanted)
+        return self.update_shared(change)
+
+    def ungroup(self, pairs):
+        """語句をグループから外す（語句が1つになったグループは消える）"""
+        return self.update_shared(lambda shared: ungroup_phrases(shared, pairs_of(pairs)))
 
     def manage_dead_alive_status(self):
         """画像の生存状態を管理し、dead/alive状態を更新"""
@@ -505,6 +620,25 @@ class CaptionTool:
             self.df.at[r, section] = reduce(lambda t, p: edit(t, key, p), phrases, to_text(self.df.at[r, section]))
         return True
 
+    def add_to_rows(self, rows, section, text):
+        """一括入力で語句を足す。同じグループの別の語句がある行には、その語句を足さない
+
+        足さなかった語句のある行の数を返す（失敗は None）
+        """
+        groups = self.shared['groups']
+
+        def add(current, key, phrase):
+            return current if blocked_by(groups, current, key, phrase) else add_phrase(current, key, phrase)
+
+        if not self.edit_rows(rows, section, text, add):
+            return None
+        key, phrases = parse_line(text)
+
+        def has_all(r):
+            return set(phrases) <= {p for k, p in phrases_of(to_text(self.df.at[r, section])) if k == key}
+
+        return sum(1 for r in dict.fromkeys(rows) if not has_all(r))
+
     def choose(self, rows, section, key, phrase, group, on):
         """ボタンでの選択: 複数行の段落の key の行に、group の語句を1つだけ置く（on でなければ group の語句を消す）"""
         self.last_error = ''
@@ -735,8 +869,59 @@ def serve_image(filename):
 
 @app.route('/get_dictionary')
 def get_dictionary():
-    """辞書（phrases: 語句、words: キーなしの文の単語、templates: 確定タグ）。使用回数の多い順で、共用辞書だけのものは 0 回"""
+    """辞書（phrases: 語句、words: キーなしの文の単語、templates: 確定タグ、groups: 「1つだけ」のグループ）
+
+    使用回数の多い順で、共用辞書だけのものは 0 回
+    """
     return jsonify(caption_tool.dictionary())
+
+def dictionary_result(success, message):
+    """共用辞書を書き換える API の応答（成功なら新しい辞書も返す）"""
+    if not success:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'message': message, 'dictionary': caption_tool.dictionary()})
+
+@app.route('/register_entries', methods=['POST'])
+def register_entries():
+    """使っている語句・単語を共用辞書に入れる（{phrases: [{key, phrase}], words: [単語]}）"""
+    data = request.get_json() or {}
+    success = caption_tool.register_entries(data.get('phrases', []), data.get('words', []))
+    return dictionary_result(success, '共用辞書に入れました')
+
+@app.route('/add_entry', methods=['POST'])
+def add_entry():
+    """新しい語句を共用辞書に足す（{section, key, phrase}）"""
+    data = request.get_json() or {}
+    success = caption_tool.add_entry(data.get('section'), data.get('key'), data.get('phrase'))
+    return dictionary_result(success, '共用辞書に足しました')
+
+@app.route('/unregister_entries', methods=['POST'])
+def unregister_entries():
+    """語句・単語を共用辞書から消す（{phrases: [{key, phrase}], words: [単語]}）。入力はそのまま"""
+    data = request.get_json() or {}
+    success = caption_tool.unregister_entries(data.get('phrases', []), data.get('words', []))
+    return dictionary_result(success, '共用辞書から消しました')
+
+@app.route('/rename_entry', methods=['POST'])
+def rename_entry():
+    """語句の改名（{key, old, new, in_project}）。changed: 開いているプロジェクトで入力を置き換えた行の数"""
+    data = request.get_json() or {}
+    changed = caption_tool.rename_entry(data.get('key'), data.get('old'), data.get('new'), data.get('in_project'))
+    if changed is None:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'changed': changed, 'dictionary': caption_tool.dictionary()})
+
+@app.route('/group_phrases', methods=['POST'])
+def group_phrases_api():
+    """同じキーの語句を「1つだけ」のグループにする（{key, phrases}）"""
+    data = request.get_json() or {}
+    return dictionary_result(caption_tool.group(data.get('key'), data.get('phrases')), 'グループにしました')
+
+@app.route('/ungroup_phrases', methods=['POST'])
+def ungroup_phrases_api():
+    """語句をグループから外す（{phrases: [{key, phrase}]}）"""
+    data = request.get_json() or {}
+    return dictionary_result(caption_tool.ungroup(data.get('phrases', [])), 'グループから外しました')
 
 @app.route('/freeze', methods=['POST'])
 def freeze_dictionary():
@@ -794,12 +979,16 @@ def clear_marks():
 
 @app.route('/add_phrase', methods=['POST'])
 def add_phrase_to_rows():
-    """複数行への一括入力（{rows, section, text}。text は「キー: 語句, 語句」かキーなしの文）"""
+    """複数行への一括入力（{rows, section, text}。text は「キー: 語句, 語句」かキーなしの文）
+
+    同じグループの別の語句がある行には足さない（skipped: 足さなかった語句のある行の数）
+    """
     data = request.get_json() or {}
     rows = data.get('rows')
-    if not caption_tool.edit_rows(rows, data.get('section'), data.get('text'), add_phrase):
+    skipped = caption_tool.add_to_rows(rows, data.get('section'), data.get('text'))
+    if skipped is None:
         return jsonify({'success': False, 'message': caption_tool.last_error})
-    return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
+    return jsonify({'success': True, 'rows': caption_tool.row_views(rows), 'skipped': skipped})
 
 @app.route('/remove_phrase', methods=['POST'])
 def remove_phrase_from_rows():
