@@ -625,6 +625,51 @@ async function refreshTable() {
     refreshWords();
 }
 
+// ---- 空白と改行の印（打っている欄の上に、同じ文字組みの層を重ねて ␣ と ↵ だけを描く。文字には入らない） ----
+
+// 欄から印の層へ写す文字組み（折り返しと文字の位置をそろえる）
+const MIRRORED_STYLES = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing', 'wordSpacing', 'lineHeight', 'tabSize',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'];
+
+const whitespaceHtml = text => escapeHtml(text)
+    .replace(/ /g, '<span class="sp"> </span>')
+    .replace(/\n/g, '<span class="nl"></span>\n');
+
+// 印の層を描く（欄のすぐ後ろの要素）。欄の中がスクロールしていれば合わせる
+function paintWhitespace(el) {
+    const layer = el.nextElementSibling;
+    layer.innerHTML = whitespaceHtml(el.value);
+    layer.scrollTop = el.scrollTop;
+    layer.scrollLeft = el.scrollLeft;
+}
+
+// 印の層の文字組みと幅を欄に合わせて描く。幅はスクロールバーを除いた欄の中身に合わせ、一行の欄は文字の上下の位置も合わせる
+function fitWhitespace(el) {
+    const layer = el.nextElementSibling;
+    const style = getComputedStyle(el);
+    MIRRORED_STYLES.forEach(name => { layer.style[name] = style[name]; });
+    layer.style.width = `${el.clientWidth + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth)}px`;
+    if (el.tagName === 'INPUT') {
+        layer.style.lineHeight = `${el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)}px`;
+    }
+    paintWhitespace(el);
+}
+
+// 欄を包んで印の層を重ねる（包んだ要素を返す。欄が画面にあれば、その場所で包む）
+function withWhitespaceMarks(el) {
+    const wrap = document.createElement(el.tagName === 'TEXTAREA' ? 'div' : 'span');
+    wrap.className = 'ws';
+    if (el.parentNode) el.replaceWith(wrap);
+    const layer = document.createElement('div');
+    layer.className = 'ws-marks';
+    layer.setAttribute('aria-hidden', 'true');
+    wrap.append(el, layer);
+    el.addEventListener('focus', () => fitWhitespace(el));
+    ['input', 'scroll', 'keyup', 'click', 'select'].forEach(type => el.addEventListener(type, () => paintWhitespace(el)));
+    new ResizeObserver(() => fitWhitespace(el)).observe(el);  // 高さを合わせたとき・表示されたとき・窓の幅を変えたとき
+    return wrap;
+}
+
 // ---- 入力欄 ----
 
 function startEdit(td) {
@@ -642,7 +687,7 @@ function startEdit(td) {
     const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
     const el = document.createElement('textarea');
     el.value = lines.join('\n');
-    td.replaceChildren(el);
+    td.replaceChildren(withWhitespaceMarks(el));
     state.editor = {index, section, td, el};
     el.addEventListener('input', () => { autosize(el); showSuggestions(el, section); });
     el.addEventListener('keydown', event => {
@@ -781,6 +826,7 @@ async function bulkEdit(op) {
     if (!res.success) return setStatus(res.message || '一括入力できませんでした', 'error');
     res.rows.forEach(replaceRow);
     $('bulkText').value = '';
+    paintWhitespace($('bulkText'));
     hideSuggestions();
     setDirty(true);
     refreshWords();
@@ -1102,6 +1148,7 @@ function wire() {
         event.preventDefault();
         guarded(bulkEdit)(event.submitter ? event.submitter.value : 'add');
     });
+    withWhitespaceMarks($('bulkText'));
     $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value, bulkContext));
     $('bulkSection').addEventListener('change', () => {
         fillBulkKeys();
