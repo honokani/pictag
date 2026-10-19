@@ -335,6 +335,48 @@ def test_leaving_the_editor_tidies_commas_and_spaces(page, imgs):
     expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "body: long hair, bare hands"])
 
 
+def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png")  # looks: / clothes: / body: が並んだ状態
+    marks = cell(page, "a.png").locator(".ws-marks")
+    expect(marks.locator(".sp")).to_have_count(3)  # 開いたときから出す
+    expect(marks.locator(".nl")).to_have_count(2)
+    editor.fill("looks: standing\nbody:  long hair")
+    expect(marks.locator(".sp")).to_have_count(4)
+    expect(marks.locator(".nl")).to_have_count(1)
+    assert editor.input_value() == "looks: standing\nbody:  long hair"  # 印は文字に入らない
+    editor.evaluate("el => el.blur()")
+    expect(marks).to_have_count(0)  # 表示中の欄には出さない
+
+
+def test_marks_wrap_where_the_editor_wraps(page, imgs):
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png", section="action")
+    editor.fill(", ".join(["girl spread arms wide"] * 8))  # 何行にも折り返す長さ
+    # 印の層を中身の高さにすると、入力欄と同じ高さになる（同じ所で折り返している）
+    heights = editor.evaluate("""el => {
+        const layer = el.nextElementSibling;
+        layer.style.bottom = 'auto';
+        return [el.offsetHeight, layer.offsetHeight];
+    }""")
+    assert heights[0] > 100 and heights[0] == heights[1]
+
+
+def test_bulk_text_shows_space_marks_and_clears_them(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    wait_for_phrase(page, "long hair")
+    row(page, "a.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "girl")
+    page.select_option("#bulkKey", "body")
+    page.locator("#bulkText").press_sequentially("long hair")
+    marks = page.locator("#bulkForm .ws-marks .sp")
+    expect(marks).to_have_count(1)
+    page.click("text=選択行に追加")
+    expect(filled(page, "a.png")).to_have_text(["body: long hair"])
+    expect(marks).to_have_count(0)  # 欄を空にしたら印も消す
+
+
 def test_freeze_puts_words_into_shared_dictionary(page, imgs, tool):
     load_dir(page, imgs)
     write(page, "a.png", "body: long hair")
