@@ -182,6 +182,18 @@ def test_rename_is_cancelled_by_escape(page, movies):
     expect(page.locator("#saveButton")).to_have_text("保存")
 
 
+def test_dictionary_fields_take_english_only(page, movies):
+    # 共用辞書に入る欄（足す語句・改名）も英字だけ（全角は半角に、日本語は消す）
+    open_movies(page)
+    show_dictionary(page)
+    page.locator("#dictAddText").fill("ｓｈａｗｌ肩掛け")
+    expect(page.locator("#dictAddText")).to_have_value("shawl")
+    dict_row(page, "clothes", "cardigan").locator(".dict-rename").click()
+    editor = page.locator("#dictBody .rename-input")
+    editor.fill("ｓｈａｗｌ")
+    expect(editor).to_have_value("shawl")
+
+
 def test_selected_phrase_can_be_replaced_by_a_mate_of_its_group(page, movies):
     # 範囲を選んで候補を選ぶと置き換える。選んだ語句は無くなるものとして見るので、同じグループの語句も候補に出る
     open_movies(page)
