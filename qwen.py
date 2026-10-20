@@ -28,6 +28,8 @@ TIMEOUT = 300       # 答えを待つ時間（秒）
 
 INSTRUCTIONS = ("You write training captions for an image generation model. Describe the image in exactly this structured "
                 "format, with short comma-separated English phrases as values (lines without a key are one short sentence). "
+                "Put only actions in action (what the characters are doing and how they interact). Expressions, gaze, "
+                "pose, appearance and clothing belong to each character's section, never to action. "
                 "Match the vocabulary and level of detail of the example captions. Leave out sections and keys that do not "
                 "apply. Output only the caption.")
 # キーの無い段落に添える書き方の例（else は物ごとにキーで書く。ほかは短い文）
