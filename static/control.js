@@ -621,12 +621,35 @@ function toggleThumbZoom() {
     zoomThumbnails();
 }
 
+const ROW_GAP = 10;  // 見えていた行を見出しの下に見せ直すときの空き（px）
+
+// 列の見出しの下端（画面上の位置。見出しのセルは表の上に張り付く）
+const headBottom = () => $('gridHead').querySelector('th').getBoundingClientRect().bottom;
+
+// 見えている範囲で、上が切れていない最初の行（無ければ、一番上に見えている行）
+function firstWholeRow() {
+    const top = headBottom();
+    const bottom = $('imagesView').getBoundingClientRect().bottom;
+    const rows = [...$('gridBody').rows].filter(tr => tr.getBoundingClientRect().height > 0);
+    return rows.find(tr => tr.getBoundingClientRect().top >= top - 0.5 && tr.getBoundingClientRect().top < bottom)
+        || rows.find(tr => tr.getBoundingClientRect().bottom > top);
+}
+
+// 行を、列の見出しの下端から ROW_GAP だけ下に見せる（表の端で届かないときは、届くところまで）
+function showRowBelowHead(index) {
+    const tr = rowElement(index);
+    if (tr) $('imagesView').scrollTop += tr.getBoundingClientRect().top - headBottom() - ROW_GAP;
+}
+
 // hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
+// hint と preview は行ごとに高さが違うので、見えていた最初の行（上が切れていない行）を見出しのすぐ下に見せ直す
 function switchSideView(view) {
     commitEdit();
+    const anchor = firstWholeRow();
     state.sideView = view;
     saveSideView();
     renderTable();
+    if (anchor) showRowBelowHead(Number(anchor.dataset.index));
 }
 
 // token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
