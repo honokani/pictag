@@ -19,6 +19,7 @@ const state = {
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
     foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
     foldedSections: new Set(),  // 畳んだ段落の列（プロジェクトごとにブラウザに覚える）
+    sideView: 'hint',     // hint の列に出すもの（hint / preview。hint が無ければ preview。プロジェクトごとにブラウザに覚える）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
@@ -456,8 +457,18 @@ function headHtml() {
         '<th title="キャプションのトークン数 / 上限">token</th>',
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
-        ...(state.hasHints ? ['<th class="hint-head" title="画像と同じ名前の .txt（読むだけ。保存には影響しない）">hint</th>'] : []),
+        sideHeadHtml(),
     ].join('');
+}
+
+const PREVIEW_TITLE = '書き出すキャプション（保存したときの文面。読むだけ）';
+
+// hint の列の見出し: hint があれば hint / preview の切り替えボタン（押している方が on）、無ければ preview の文字だけ
+function sideHeadHtml() {
+    if (!state.hasHints) return `<th class="hint-head" title="${PREVIEW_TITLE}">preview</th>`;
+    const button = (view, title) => `<button type="button" class="side-view${state.sideView === view ? ' on' : ''}" ` +
+        `data-view="${view}" title="${title}">${view}</button>`;
+    return `<th class="hint-head">${button('hint', '画像と同じ名前の .txt（読むだけ。保存には影響しない）')}${button('preview', PREVIEW_TITLE)}</th>`;
 }
 
 // マークの欄: 縦長の 2 列 × 4 行。左の列が排他（A〜D のどれか1つ）、右の列が複数（★●▲■）
@@ -486,6 +497,17 @@ function hintHtml(row) {
     return '<td class="hint"><button type="button" class="hint-toggle" title="この画像の hint を畳む">－</button>' +
         `<textarea readonly rows="1" aria-label="hint">${escapeHtml(row.hint)}</textarea></td>`;
 }
+
+// hint の列に preview を出すか: hint が無いときと、見出しで preview を選んだとき
+const showsPreview = () => !state.hasHints || state.sideView === 'preview';
+
+// preview の欄: 書き出すキャプションの全文（読むだけ。見た目と動きは hint と同じ）。入力の無い行は空
+function previewHtml(row) {
+    if (!row.caption) return '<td class="hint preview"></td>';
+    return `<td class="hint preview"><textarea readonly rows="1" aria-label="preview">${escapeHtml(row.caption)}</textarea></td>`;
+}
+
+const sideHtml = row => (showsPreview() ? previewHtml(row) : hintHtml(row));
 
 // hint の高さを中身に合わせる（CSS の field-sizing が効かないブラウザ向け。先に全部読んでから書き、描き直しを1回にする）
 function fitHints(root) {
@@ -516,6 +538,25 @@ function saveFolded(kind, names) {
     }
 }
 
+// hint の列に出すもの（hint / preview）も、プロジェクトごとにブラウザに覚える
+const sideViewKey = () => `pictag:side-view:${state.projectName}`;
+
+function loadSideView() {
+    try {
+        return localStorage.getItem(sideViewKey()) === 'preview' ? 'preview' : 'hint';
+    } catch {
+        return 'hint';
+    }
+}
+
+function saveSideView() {
+    try {
+        localStorage.setItem(sideViewKey(), state.sideView);
+    } catch {
+        // 覚えられなくても、切り替えはできる
+    }
+}
+
 function toggleHint(button) {
     const tr = button.closest('tr');
     const name = tr.dataset.name;
@@ -539,6 +580,14 @@ function toggleSection(section) {
 function openSection(section, index) {
     toggleSection(section);
     startEdit(rowElement(index).querySelector(`td.cell[data-section="${CSS.escape(section)}"]`));
+}
+
+// hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
+function switchSideView(view) {
+    commitEdit();
+    state.sideView = view;
+    saveSideView();
+    renderTable();
 }
 
 // token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
@@ -631,7 +680,7 @@ function rowHtml(row) {
     const cells = state.sections.map(s => cellTd(s, row)).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt="" title="${escapeHtml(name)}"></td>` +
-        `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
+        `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${sideHtml(row)}</tr>`;
 }
 
 const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}"]`);
@@ -800,6 +849,11 @@ async function sendText(row, section, text) {
     const tr = rowElement(row.index);
     if (tr) {
         tr.querySelector('td.meta').innerHTML = metaHtml(row);
+        // preview を出していれば、書き出す文面も描き直す
+        if (showsPreview()) {
+            tr.querySelector('td.hint').outerHTML = previewHtml(row);
+            fitHints(tr);
+        }
         // 人物の段落を書き換えると characters が変わるので picture の欄を描き直す（編集中なら触らない）
         const picture = tr.querySelector('td.cell[data-section="picture"]');
         if (picture && !picture.querySelector('textarea') && !picture.classList.contains('folded')) picture.innerHTML = cellHtml('picture', row);
@@ -960,6 +1014,7 @@ async function opened(name) {
     state.projectName = name;
     state.foldedHints = loadFolded('hints');
     state.foldedSections = loadFolded('sections');
+    state.sideView = loadSideView();
     state.selected = new Set();
     state.anchor = null;
     state.dirty = false;
@@ -1272,6 +1327,8 @@ function wire() {
     $('gridHead').addEventListener('click', event => {
         const fold = event.target.closest('.fold-section');
         if (fold) toggleSection(fold.closest('th').dataset.section);
+        const view = event.target.closest('.side-view');
+        if (view) switchSideView(view.dataset.view);
         const button = event.target.closest('.remove-section');
         if (button) guarded(removeSection)(button.closest('th').dataset.section);
     });

@@ -97,9 +97,10 @@ def test_thumbnail_is_a_square_as_tall_as_the_picture_cell(page, imgs):
     assert abs(img["height"] + 9 - row["height"]) <= 1.5  # 上下の余白 8px と下の枠線 1px
 
 
-def test_without_hint_the_rest_goes_to_sections_other_than_picture(page, imgs):
-    load_dir(page, imgs)
+def test_without_hint_the_preview_takes_the_rest_of_the_width(page, imgs):
+    load_dir(page, imgs)  # hint が無くても、同じ列に preview を出す
     assert overflow(page) == 0
-    action, girl, guy = (width(td(page, f'td.cell[data-section="{s}"]')) for s in ["action", "girl", "guy"])
-    assert action > 300 and abs(action - girl) < 1 and abs(action - guy) < 1  # 最小の 220 より広く、同じ幅で分ける
+    for section in ["action", "girl", "guy"]:
+        assert round(width(td(page, f'td.cell[data-section="{section}"]'))) == 220, section  # hint があるときと同じ
+    assert width(td(page, "td.hint")) > 400  # 残りは preview
     assert 9.5 <= spare_after_close_up(page) <= 11  # picture は広げない
