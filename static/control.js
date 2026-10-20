@@ -846,13 +846,14 @@ function fitPictureColumn() {
     $('grid').style.setProperty('--picture-width', `${Math.ceil(right + PICTURE_SPARE + border)}px`);
 }
 
-// サムネイルは正方形で、picture の欄の中身の高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る
-// picture を畳んでいるときは測らない（畳む前の大きさのまま）
+// サムネイルは正方形で、picture の欄のキーの名前の行とボタンの高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る
+// 値の行（キーの名前の下）の分では大きくしない（列を広げない）。picture を畳んでいるときは測らない（畳む前の大きさのまま）
 function fitThumbnails() {
     if (!state.foldedSections.has('picture')) {
         const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
             .filter(td => td.getBoundingClientRect().height > 0)
-            .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
+            .map(td => [...td.querySelectorAll('.text .key'), ...td.querySelectorAll(':scope > .choices')]
+                .reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
         if (heights.length) state.thumbBase = Math.floor(Math.min(...heights));
     }
     zoomThumbnails();
@@ -873,24 +874,33 @@ function zoomThumbnails() {
 
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
 
-// 欄の表示: 確定タグのキーを並びどおりに出し、値の無いキーは薄く、自動のキー（characters）は自動の値で出す
+// 欄の表示: 確定タグのキーを並びどおりに、入力欄と同じくキーの名前の下に値を出す。値の無いキーは名前だけ薄く、自動のキー（characters）は自動の値
+// ほかの行（キーの無い文・確定タグに無いキー）は、あれば「その他:」の下に（最後のキーの値の続きに見えないように）。確定タグの無い段落（action・else）は行をそのまま
 // 同じグループの語句が2つ以上ある行には ⚠（CSS）
 function cellHtml(section, row) {
     const keys = templateKeys(section);
     const byKey = phrasesByKey(row.texts[section]);
-    const lines = mergeTemplate(row.texts[section] || '', keys).map(line => {
+    const lineHtml = (line, keyed) => {
         const {key, phrases} = parseLine(line);
         if (state.autoKeys.includes(key)) {
             const value = row.characters || '';
-            return `<div class="ln auto${value ? '' : ' empty'}" title="自動">${escapeHtml(`${key}:${value ? ` ${value}` : ''}`)}</div>`;
+            return `<div class="ln auto${value ? '' : ' empty'}" title="自動">${keyValueHtml(key, value)}</div>`;
         }
         const conflict = key ? conflictOf(key, byKey[key] || []) : null;
         const classes = ['ln', phrases.length === 0 ? 'empty' : '', conflict ? 'conflict' : ''].filter(Boolean).join(' ');
         const title = conflict ? ` title="${escapeHtml(`1つだけのグループ: ${conflict.phrases.join(' / ')}`)}"` : '';
-        return `<div class="${classes}"${title}>${escapeHtml(line.trimEnd())}</div>`;
-    });
-    return `<div class="text">${lines.join('')}</div>${keys.includes('view') ? choicesHtml(row) : ''}`;
+        const body = keyed ? keyValueHtml(key, phrases.length ? line.slice(line.indexOf(':') + 1).trim() : '') : escapeHtml(line.trimEnd());
+        return `<div class="${classes}"${title}>${body}</div>`;
+    };
+    const lines = mergeTemplate(row.texts[section] || '', keys);
+    const rest = lines.slice(keys.length).map(line => lineHtml(line, false));
+    const others = keys.length && rest.length ? ['<div class="others">その他:</div>', ...rest] : rest;
+    return `<div class="text">${[...lines.slice(0, keys.length).map(line => lineHtml(line, true)), ...others].join('')}</div>` +
+        `${keys.includes('view') ? choicesHtml(row) : ''}`;
 }
+
+// キーの名前の行と、その下の値の行（名前の後ろの空白は、文字として読んだときに「key: value」になるように）
+const keyValueHtml = (key, value) => `<div class="key">${escapeHtml(key)}: </div>${value ? `<div class="val">${escapeHtml(value)}</div>` : ''}`;
 
 // 段落の欄。畳んだ列は、入力があれば ● だけ（クリックで列を開いて編集を始める）
 function cellTd(section, row) {
@@ -1028,8 +1038,10 @@ function startEdit(td) {
         paintSelection();
     }
     // 確定タグのある段落は、キーごとの欄に分ける（キーの名前の下に、そのキーの値だけ。最後に、ほかの行の「その他」）。無い段落（action・else）は1つの欄
+    // 確定タグに extra のある段落（picture）は、extra に書けるので「その他」を出さない（前に書いたほかの行があれば、消えないように出す）
     const keys = editKeys(section);
     const {values, rest} = splitText(state.byIndex.get(index).texts[section] || '', keys);
+    const others = !keys.includes('extra') || rest.length > 0;
     const fieldOf = (key, value) => {
         const el = document.createElement('textarea');
         el.dataset.key = key;
@@ -1037,7 +1049,7 @@ function startEdit(td) {
         if (keys.length) el.rows = 1;  // 分けた欄は1行から（打った分だけ伸びる）
         return el;
     };
-    const fields = [...keys.map(key => fieldOf(key, values[key])), fieldOf('', rest.join('\n'))];
+    const fields = [...keys.map(key => fieldOf(key, values[key])), ...(others ? [fieldOf('', rest.join('\n'))] : [])];
     const editor = document.createElement('div');
     editor.className = keys.length ? 'editor split' : 'editor';
     editor.append(...fields.flatMap(el => {
