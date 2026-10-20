@@ -472,7 +472,7 @@ function headHtml() {
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
         ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。' +
-            '🤖: 上の 10 行を見本に / 🎲: ほかの行からランダムに 10 行を見本に">🤖🎲</th>'] : []),
+            '🤖（上）: 上の 10 行を見本に / 🎲（下）: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
         sideHeadHtml(),

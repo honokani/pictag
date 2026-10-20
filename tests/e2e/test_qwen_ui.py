@@ -66,17 +66,20 @@ def dice(page, name):
     return row(page, name).locator('.qwen-btn[data-mode="random"]')
 
 
-def test_qwen_column_sits_between_token_and_marks_as_wide_as_token(page, project, qwen_mode):
+def test_qwen_column_sits_between_token_and_marks_at_half_the_token_width(page, project, qwen_mode):
+    # 列は token の半分の幅のまま。🤖 と 🎲 は横に並べず、縦に積む（🤖 が上）
     open_project(page)
     head = page.locator("#gridHead th")
     expect(head.nth(1)).to_have_text("token")
-    expect(head.nth(2)).to_have_text("🤖🎲")
+    expect(head.nth(2)).to_have_text("🤖")
     expect(head.nth(3)).to_have_text("マーク")
     expect(robot(page, "r10.png")).to_have_text("🤖")
     expect(dice(page, "r10.png")).to_have_text("🎲")
     width = "el => el.getBoundingClientRect().width"
     meta = row(page, "r10.png").locator("td.meta").evaluate(width)
-    assert abs(row(page, "r10.png").locator("td.qwen").evaluate(width) - meta) <= 1
+    assert abs(row(page, "r10.png").locator("td.qwen").evaluate(width) - meta / 2) <= 1
+    top, bottom = robot(page, "r10.png").bounding_box(), dice(page, "r10.png").bounding_box()
+    assert bottom["y"] >= top["y"] + top["height"] - 0.5  # 🎲 は 🤖 の下
     expect(dice(page, "r09.png")).to_be_disabled()  # ほかの見本は r00〜r08 の 9 行
 
 
