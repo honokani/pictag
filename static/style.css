@@ -203,13 +203,18 @@ th .side-view + .side-view { margin-left: 2px; }
 th .side-view.on { background: #1f1f1f; border-color: #1f1f1f; color: #fff; cursor: default; }
 
 td.marks { width: 63px; }  /* ボタン2つ分（24px × 2 + 間 2px + 左右の余白） */
-.mark-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 2px; }
+.mark-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(8, auto); grid-auto-flow: column; gap: 2px; }
 .mark-btn { width: 24px; padding: 0; font-size: 12px; line-height: 1.6; color: #888; border-color: #ccc; border-radius: 3px; }
 .mark-btn.on { color: #fff; font-weight: 700; }
-.mark-btn.on[data-mark="A"] { background: #d32f2f; border-color: #d32f2f; }
-.mark-btn.on[data-mark="B"] { background: #1976d2; border-color: #1976d2; }
-.mark-btn.on[data-mark="C"] { background: #388e3c; border-color: #388e3c; }
-.mark-btn.on[data-mark="D"] { background: #ef6c00; border-color: #ef6c00; }
+/* 排他のマークの色（番号ごと。A〜H） */
+.mark-btn.on[data-kind="one"][data-mark="0"] { background: #d32f2f; border-color: #d32f2f; }
+.mark-btn.on[data-kind="one"][data-mark="1"] { background: #1976d2; border-color: #1976d2; }
+.mark-btn.on[data-kind="one"][data-mark="2"] { background: #388e3c; border-color: #388e3c; }
+.mark-btn.on[data-kind="one"][data-mark="3"] { background: #ef6c00; border-color: #ef6c00; }
+.mark-btn.on[data-kind="one"][data-mark="4"] { background: #c2185b; border-color: #c2185b; }
+.mark-btn.on[data-kind="one"][data-mark="5"] { background: #00838f; border-color: #00838f; }
+.mark-btn.on[data-kind="one"][data-mark="6"] { background: #6d4c41; border-color: #6d4c41; }
+.mark-btn.on[data-kind="one"][data-mark="7"] { background: #455a64; border-color: #455a64; }
 .mark-btn.on[data-kind="many"] { background: #6a1b9a; border-color: #6a1b9a; }
 tr.filtered { display: none; }
 .key-help { color: #666; font-size: 12px; }

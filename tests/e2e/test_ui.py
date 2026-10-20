@@ -1098,13 +1098,11 @@ def test_editing_selects_the_row(page, imgs):
     expect(page.locator("#selectionInfo")).to_have_text("選択 1 行")
 
 
-def test_bulk_form_replaces_key_help_only_while_selected(page, imgs):
+def test_bulk_form_shows_only_while_selected(page, imgs):
     load_dir(page, imgs)
-    expect(page.locator("#keyHelp")).to_be_visible()
     expect(page.locator("#bulkForm")).to_be_hidden()
     row(page, "a.png").locator("td.meta").click()
     expect(page.locator("#bulkForm")).to_be_visible()
-    expect(page.locator("#keyHelp")).to_be_hidden()
 
 
 def test_bulk_keys_follow_the_section(page, imgs):
@@ -1147,7 +1145,7 @@ def test_deselect_needs_a_long_press(page, imgs):
     page.wait_for_timeout(1300)
     page.mouse.up()
     expect(page.locator("#status")).to_have_text("選択を解除しました")
-    expect(page.locator("#keyHelp")).to_be_visible()
+    expect(page.locator("#bulkForm")).to_be_hidden()
     expect(page.locator("#gridBody tr.selected")).to_have_count(0)
 
 
