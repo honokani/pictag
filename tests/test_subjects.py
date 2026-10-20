@@ -17,6 +17,19 @@ def test_base_name(section, expected):
     ([], ""),
 ])
 def test_characters_of(present, expected):
+    assert characters_of([(section, "looks: standing") for section in present]) == expected
+
+
+@pytest.mark.parametrize("present, expected", [
+    ([("girl", "looks: standing"), ("else", "dog: brown fur, sitting\ncat: black")], "1 girl + dog + cat"),
+    ([("girl", "looks: standing"), ("else", "dog: brown fur\na bird flying\ndog: small")], "1 girl + dog"),  # 同じキーは1回。キーの無い文は入れない
+    ([("girl", "looks: standing"), ("else", "dog:\ncat: black")], "1 girl + cat"),  # 値の無いキーは入れない
+    ([("else", "a bird flying")], ""),
+    ([("girl", "looks: standing"), ("else", "dog: brown fur"), ("guy", "looks: sitting")], "1 girl + dog + 1 guy"),  # 表の並び
+    ([("girl", "looks: standing"), ("else A", "dog: brown fur"), ("else B", "cat: black\ndog: small")], "1 girl + dog + cat"),
+])
+def test_characters_of_lists_keys_of_else_without_numbers(present, expected):
+    # else（人物でない物の段落）は人物に数えず、行のキー（dog: / cat:）を数なしで並べる
     assert characters_of(present) == expected
 
 
@@ -46,6 +59,11 @@ def test_pov_choices_follow_subject_sections():
         {"emoji": "🐕", "label": "", "tone": "", "phrase": "dog POV"},
         {"emoji": "👤", "label": "alien", "tone": "", "phrase": "alien POV"},
     ]
+
+
+def test_pov_choices_leave_out_else():
+    # else は人物でないので POV のボタンを出さない（else A, else B も）
+    assert [c["phrase"] for c in pov_choices(["girl", "else A", "else B", "guy"])] == ["third-person POV", "girl POV", "guy POV"]
 
 
 @pytest.mark.parametrize("name, columns, expected", [

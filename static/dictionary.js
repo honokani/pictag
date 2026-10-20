@@ -15,8 +15,6 @@ const KEYLESS_FILTER = ':keyless';  // キーの絞り込みの「キーなし�
 const WORD_FILTER = ':word';
 const GROUP_COLORS = 6;
 
-const baseName = section => section.replace(/ [A-Z]$/, '');  // guy A → guy（subjects.py の base_name と同じ）
-
 // ---- 一覧の行 ----
 
 function dictionaryRows() {
