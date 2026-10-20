@@ -177,6 +177,22 @@ def test_rename_is_cancelled_by_escape(page, movies):
     expect(page.locator("#saveButton")).to_have_text("保存")
 
 
+def test_selected_phrase_can_be_replaced_by_a_mate_of_its_group(page, movies):
+    # 範囲を選んで候補を選ぶと置き換える。選んだ語句は無くなるものとして見るので、同じグループの語句も候補に出る
+    open_movies(page)
+    group_postures(page)
+    cell(page, "roman_holiday.png").click()
+    editor = cell(page, "roman_holiday.png").locator("textarea")
+    start = editor.input_value().index("sitting")
+    editor.evaluate(f"el => el.setSelectionRange({start}, {start})")
+    for _ in "sitting":
+        editor.press("Shift+ArrowRight")  # sitting を選ぶ
+    standing = page.locator("#suggestions:visible li", has_text="standing")
+    expect(standing).to_be_visible()
+    standing.click()
+    assert editor.input_value().startswith("looks: standing, smile\n")
+
+
 def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
     open_movies(page)
     group_postures(page)
