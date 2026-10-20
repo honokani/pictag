@@ -97,6 +97,21 @@ def test_thumbnail_is_a_square_as_tall_as_the_picture_cell(page, imgs):
     assert abs(img["height"] + 9 - row["height"]) <= 1.5  # 上下の余白 8px と下の枠線 1px
 
 
+def test_thumbnail_keeps_its_size_when_picture_values_are_written(page, imgs):
+    # 表示中の欄はキーの名前の下に値を出すが、サムネイルは値の行の分では大きくしない（列を広げない）
+    load_dir(page, imgs)
+    size = td(page, "td.thumb img").bounding_box()["height"]
+    text = td(page, 'td.cell[data-section="picture"] .text').bounding_box()["height"]
+    for name in ["a.png", "b.png"]:  # サムネイルは見えている行でいちばん低い picture に合わせるので、全行に書く
+        td(page, 'td.cell[data-section="picture"] .text', name).click()
+        td(page, 'textarea[data-key="place"]', name).fill("ship bow")
+        td(page, 'textarea[data-key="vibes"]', name).fill("romantic")
+        page.evaluate("document.activeElement.blur()")
+    page.locator('#gridHead th[data-section="guy"] .fold-section').click()  # 表を描き直す（サムネイルを測り直す）
+    assert td(page, 'td.cell[data-section="picture"] .text').bounding_box()["height"] > text + 30  # 値の行が増えた
+    assert abs(td(page, "td.thumb img").bounding_box()["height"] - size) < 0.5
+
+
 def test_without_hint_the_preview_takes_the_rest_of_the_width(page, imgs):
     load_dir(page, imgs)  # hint が無くても、同じ列に preview を出す
     assert overflow(page) == 0

@@ -123,7 +123,10 @@ td.cell .ln.empty { color: #b8b8b8; }
 td.cell .ln.auto { font-style: italic; color: #4a5a7a; }
 td.cell .ln.auto.empty { color: #b8b8b8; }
 td.cell .ln.conflict { color: #c62828; }
-td.cell .ln.conflict::before { content: '⚠ '; }
+td.cell .ln.conflict:not(:has(> .key))::before, td.cell .ln.conflict .val::before { content: '⚠ '; }  /* キーの名前の下に値を出す行は、値の頭に */
+/* キーの名前（表示中の欄も入力欄も同じ見た目。高さは表の1行 14px × 1.5 と同じ）。値はその下の行。ほかの行の前の「その他:」も同じ */
+td.cell .ln .key, td.cell .others, td.cell .field-key { font-size: 12px; line-height: 21px; color: #666; }
+td.cell .ln.empty .key { color: #b8b8b8; }
 
 /* picture の列は close-up の右端 + 10px（幅は JS が測って --picture-width に入れる）。残りの幅は hint の列（hint が無いときは preview） */
 td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width: var(--picture-width, 420px); }
@@ -145,7 +148,7 @@ th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 /* 確定タグのある段落の入力欄: キーの名前の下に、そのキーの値だけの欄（1行から、打った分だけ伸びる）。最後に、ほかの行の「その他」 */
 td.cell .editor.split textarea { min-height: 0; }
-td.cell .field-key { margin-top: 2px; font-size: 12px; line-height: 1.4; color: #666; cursor: default; }
+td.cell .field-key { cursor: default; }
 
 /* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture の幅より後ろに置いて優先する） */
 th .section-head { display: flex; align-items: center; }
