@@ -18,7 +18,8 @@ from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generat
                   pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of,
                       insert_position, name_for_new, pov_choices, template_keys)
-from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
+from marks import (MANY, ONE, check_number, check_one, many_from_file, many_numbers, many_text, marks_to_file, one_from_file,
+                   one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
@@ -98,7 +99,7 @@ def table_to_json(df):
     return {
         'sections': sections,
         'rows': [{'image': r['サムネイル'], 'is_dead': to_flag(r['is_dead']),
-                  **{column: r[column] for column in ('mark', 'marks') if to_text(r[column])},
+                  **marks_to_file(to_text(r['mark']), to_text(r['marks'])),
                   'texts': {s: r[s] for s in sections if to_text(r[s])}}
                  for r in df.to_dict('records')],
     }
@@ -106,7 +107,7 @@ def table_to_json(df):
 def table_from_json(data):
     sections = [check_section_name(s) for s in data['sections']]
     rows = [{'サムネイル': r['image'], 'is_dead': bool(r['is_dead']),
-             'mark': r.get('mark') if r.get('mark') in ONE else '', 'marks': clean_many(r.get('marks', '')),
+             'mark': one_from_file(r.get('mark')), 'marks': many_from_file(r.get('marks', '')),
              **{s: to_text(r['texts'].get(s, '')) for s in sections}}
             for r in data['rows']]
     return pd.DataFrame(rows, columns=FIXED_COLUMNS + sections)
@@ -510,8 +511,8 @@ class CaptionTool:
             data.append({
                 'サムネイル': img_file,
                 'is_dead': is_dead,
-                'mark': to_text(existing_row.get('mark', '')),
-                'marks': clean_many(existing_row.get('marks', '')),
+                'mark': one_text(one_number(to_text(existing_row.get('mark', '')))),
+                'marks': many_text(many_numbers(to_text(existing_row.get('marks', '')))),
                 **{s: to_text(existing_row.get(s, '')) for s in sections},
             })
 
@@ -742,13 +743,13 @@ class CaptionTool:
         return True
 
     def set_mark(self, rows, mark):
-        """排他のマーク（A〜D。空なら外す）を複数行に付ける"""
-        return self.mark_rows(rows, 'mark', lambda _: mark, lambda: check_one(mark))
+        """排他のマーク（番号 0〜7。None なら外す）を複数行に付ける"""
+        return self.mark_rows(rows, 'mark', lambda _: one_text(mark), lambda: check_one(mark))
 
     def set_marks(self, rows, mark, on):
-        """複数のマーク（★●▲■）を複数行に付ける・外す"""
+        """複数のマーク（番号 0〜7）を複数行に付ける・外す"""
         def check():
-            check_many(mark)
+            check_number(mark)
             if not isinstance(on, bool):
                 raise ValueError('付けるか外すかの指定が正しくありません')
         return self.mark_rows(rows, 'marks', lambda marks: toggle_many(marks, mark, on), check)
@@ -783,7 +784,7 @@ class CaptionTool:
         return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
                 'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
                 'hint': self.hints.get(record['サムネイル'], ''), 'qwen_hint': self.qwen_hints.get(record['サムネイル'], ''),
-                'mark': to_text(record['mark']), 'marks': to_text(record['marks']),
+                'mark': one_number(to_text(record['mark'])), 'marks': many_numbers(to_text(record['marks'])),
                 'caption': caption, 'tokens': token_counter.count(caption)}
 
     def row_views(self, indexes):
@@ -823,9 +824,9 @@ class CaptionTool:
             captions = [(i, self.caption_of(r, sections)) for i, r in others]
             if mode == 'random':
                 samples = pick_random_samples([caption for _, caption in captions])
-            else:  # mark: A〜D が同じ行 → ★●▲■ を共有する行 → ほかの行
-                one, many = to_text(records[position]['mark']), set(to_text(records[position]['marks']))
-                marks = {i: (to_text(r['mark']), set(to_text(r['marks']))) for i, r in others}
+            else:  # mark: 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行
+                one, many = to_text(records[position]['mark']), set(many_numbers(to_text(records[position]['marks'])))
+                marks = {i: (to_text(r['mark']), set(many_numbers(to_text(r['marks'])))) for i, r in others}
                 samples = pick_tiered_samples([[(i, c) for i, c in captions if one and marks[i][0] == one],
                                                [(i, c) for i, c in captions if many & marks[i][1]],
                                                captions])
@@ -1166,7 +1167,7 @@ def set_choice_on_rows():
 
 @app.route('/set_mark', methods=['POST'])
 def set_mark():
-    """排他のマーク（{rows, mark}。mark は A〜D、空なら外す）"""
+    """排他のマーク（{rows, mark}。mark は番号 0〜7（記号は marks.py の ONE）、null なら外す）"""
     data = request.get_json() or {}
     rows = data.get('rows')
     if not caption_tool.set_mark(rows, data.get('mark')):
@@ -1175,7 +1176,7 @@ def set_mark():
 
 @app.route('/set_marks', methods=['POST'])
 def set_marks():
-    """複数のマーク（{rows, mark, on}。mark は ★●▲■）"""
+    """複数のマーク（{rows, mark, on}。mark は番号 0〜7（記号は marks.py の MANY））"""
     data = request.get_json() or {}
     rows = data.get('rows')
     if not caption_tool.set_marks(rows, data.get('mark'), data.get('on')):

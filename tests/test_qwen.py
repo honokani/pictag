@@ -217,12 +217,13 @@ def test_qwen_fill_random_takes_samples_from_the_whole_project(qwen_api, comfy):
 
 
 def test_qwen_fill_mark_takes_rows_with_the_same_marks_first(qwen_api, comfy):
-    # 🔖: A〜D が同じ行 → ★●▲■ を共有する行 → ほかの行からランダム、の順に 10 個（A〜D が同じ行が頼む文の直前）
+    # 🔖: 排他のマーク（A〜H）が同じ行 → 複数のマーク（★●▲■…）を共有する行 → ほかの行からランダム、の順に 10 個
+    # （排他のマークが同じ行が頼む文の直前）。マークは番号（0 = A・★、1 = B）
     qwen_api.write(qwen_api.row_index("r11.png"), "looks: pose11")  # その行のほかに 11 行
     index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(12)}
-    qwen_api.post("/set_mark", {"rows": [index[1], index[2], index[10]], "mark": "A"})
-    qwen_api.post("/set_mark", {"rows": [index[4]], "mark": "B"})
-    qwen_api.post("/set_marks", {"rows": [index[3], index[10]], "mark": "★", "on": True})
+    qwen_api.post("/set_mark", {"rows": [index[1], index[2], index[10]], "mark": 0})
+    qwen_api.post("/set_mark", {"rows": [index[4]], "mark": 1})
+    qwen_api.post("/set_marks", {"rows": [index[3], index[10]], "mark": 0, "on": True})
     res = qwen_api.qwen_fill(index[10], mode="mark")
     assert res["success"], res
     used = [int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"])]

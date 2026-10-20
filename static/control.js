@@ -24,8 +24,8 @@ const state = {
     qwen: false,          // qwen 版で起動したか（🤖🎲 の列と hint_by_qwen を出す）
     qwenBusy: new Map(),  // Qwen が書いている行の index → 見本の選び方（near / random）
     thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
-    markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
-    filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
+    markChoices: {one: [], many: []},  // マークの記号（番号の順。排他 A〜H、複数 ★●▲■◆♥♣♠）。行のマークは番号で持つ
+    filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし、ほかは番号）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count, shared}]
     words: [],            // キーなしの文の単語 [{section, word, count, shared}]
@@ -566,20 +566,20 @@ function sideHeadHtml() {
     return `<th class="hint-head">${views.map(button).join('')}</th>`;
 }
 
-// マークの欄: 縦長の 2 列 × 4 行。左の列が排他（A〜D のどれか1つ）、右の列が複数（★●▲■）
+// マークの欄: 縦長の 2 列 × 8 行。左の列が排他（A〜H のどれか1つ）、右の列が複数（★●▲■◆♥♣♠）。ボタンは番号を持ち、記号を見せる
 function marksHtml(row) {
-    const button = (kind, mark, on) =>
-        `<button type="button" class="mark-btn${on ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}">${mark}</button>`;
-    const one = state.markChoices.one.map(m => button('one', m, row.mark === m)).join('');
-    const many = state.markChoices.many.map(m => button('many', m, (row.marks || '').includes(m))).join('');
+    const button = (kind, mark, label, on) =>
+        `<button type="button" class="mark-btn${on ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}">${escapeHtml(label)}</button>`;
+    const one = state.markChoices.one.map((label, i) => button('one', i, label, row.mark === i)).join('');
+    const many = state.markChoices.many.map((label, i) => button('many', i, label, row.marks.includes(i))).join('');
     return `<td class="marks"><div class="mark-grid">${one}${many}</div></td>`;
 }
 
 // マークの絞り込みに合うか
 function matchesFilter(row) {
     const {one, many} = state.filter;
-    const okOne = !one || (one === 'none' ? !row.mark : row.mark === one);
-    const okMany = !many || (many === 'none' ? !row.marks : (row.marks || '').includes(many));
+    const okOne = !one || (one === 'none' ? row.mark === null : row.mark === Number(one));
+    const okMany = !many || (many === 'none' ? !row.marks.length : row.marks.includes(Number(many)));
     return okOne && okMany;
 }
 
@@ -1242,9 +1242,7 @@ function paintSelection() {
 
 function updateSelectionInfo() {
     $('selectionInfo').textContent = `選択 ${state.selected.size} 行`;
-    // 行を選んでいる間は、キーの案内の代わりに一括入力を出す
-    $('bulkForm').hidden = state.selected.size === 0;
-    $('keyHelp').hidden = state.selected.size > 0;
+    $('bulkForm').hidden = state.selected.size === 0;  // 行を選んでいる間だけ、一括入力を出す
 }
 
 // ---- 操作 ----
@@ -1419,11 +1417,20 @@ function toggleDead() {
 
 // ---- マーキング ----
 
+// マークの記号の並び（A〜H のように最初と最後）。クリアのボタンと知らせに使う
+const markRange = labels => `${labels[0]}〜${labels[labels.length - 1]}`;
+
+// 絞り込みの選択肢（値は番号、見せるのは記号）と、クリアのボタンの名前（記号は marks.py の表から）
 function fillMarkFilters(choices) {
     const options = (all, marks) => [`<option value="">${all}</option>`,
-        ...marks.map(m => `<option value="${m}">${m}</option>`), '<option value="none">なし</option>'].join('');
+        ...marks.map((m, i) => `<option value="${i}">${escapeHtml(m)}</option>`), '<option value="none">なし</option>'].join('');
     $('filterOne').innerHTML = options('排他: すべて', choices.one);
     $('filterMany').innerHTML = options('複数: すべて', choices.many);
+    document.querySelectorAll('.clear-marks .hold').forEach(button => {
+        const range = markRange(button.dataset.column === 'mark' ? choices.one : choices.many);
+        button.textContent = `${range} をクリア`;
+        button.title = `1秒長押しで、全行の ${range} を消す`;
+    });
 }
 
 function applyFilter() {
@@ -1448,40 +1455,32 @@ async function sendMarks(url, payload) {
     setDirty(true);
 }
 
-// 排他のマーク: 対象の行がみなそのマークなら外し、そうでなければ付ける
+// 排他のマーク（番号）: 対象の行がみなそのマークなら外し、そうでなければ付ける
 function markOne(rows, mark) {
     const all = rows.every(i => state.byIndex.get(i).mark === mark);
-    return sendMarks('/set_mark', {rows, mark: all ? '' : mark});
+    return sendMarks('/set_mark', {rows, mark: all ? null : mark});
 }
 
-// 複数のマーク: 対象の行がみなその記号を持っていれば外し、そうでなければ付ける
+// 複数のマーク（番号）: 対象の行がみなその番号を持っていれば外し、そうでなければ付ける
 function markMany(rows, mark) {
-    const all = rows.every(i => (state.byIndex.get(i).marks || '').includes(mark));
+    const all = rows.every(i => state.byIndex.get(i).marks.includes(mark));
     return sendMarks('/set_marks', {rows, mark, on: !all});
 }
 
 function clickMark(button) {
     const rows = targetRows(Number(button.closest('tr').dataset.index));
-    return button.dataset.kind === 'one' ? markOne(rows, button.dataset.mark) : markMany(rows, button.dataset.mark);
+    const mark = Number(button.dataset.mark);
+    return button.dataset.kind === 'one' ? markOne(rows, mark) : markMany(rows, mark);
 }
 
-// キーボード（入力欄の外で）: 1〜4 で A〜D、0 で外す、5〜8 で ★●▲■。Ctrl+A で表示中をすべて選択
+// キーボード（入力欄の外で）: Ctrl+A で表示中をすべて選択（マークのショートカットは無い。マークが増えて数字キーでは足りない）
 function handleMarkKey(event) {
     const typing = event.target instanceof Element && event.target.closest('input, textarea, select');
     if (typing || !state.loaded || state.view !== 'images') return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
         selectVisible();
-        return;
     }
-    if (event.ctrlKey || event.metaKey || event.altKey || !/^[0-8]$/.test(event.key)) return;
-    const rows = visibleIndexes().filter(i => state.selected.has(i));
-    if (!rows.length) return setStatus('先に行を選んでください', 'error');
-    event.preventDefault();
-    const n = Number(event.key);
-    if (n === 0) guarded(sendMarks)('/set_mark', {rows, mark: ''});
-    else if (n <= 4) guarded(markOne)(rows, state.markChoices.one[n - 1]);
-    else guarded(markMany)(rows, state.markChoices.many[n - 5]);
 }
 
 // 長押し（1秒）でマークの列を全行クリア。短く押しただけなら案内だけ出す
@@ -1514,7 +1513,7 @@ async function clearMarks(column) {
     if (!res.success) return setStatus(res.message, 'error');
     setDirty(true);
     await refreshTable();
-    setStatus(`全行の ${column === 'mark' ? 'A〜D' : '★●▲■'} を消しました`, 'ok');
+    setStatus(`全行の ${markRange(state.markChoices[column === 'mark' ? 'one' : 'many'])} を消しました`, 'ok');
 }
 
 async function deselectAll() {
