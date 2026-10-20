@@ -1,6 +1,10 @@
 import io
+import json
 import os
+import re
 import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from PIL import Image
@@ -58,6 +62,57 @@ def copy_legacy_fixture(kind, base_dir):
     shutil.copytree(FIXTURES_DIR / "legacy_v0" / kind, base_dir, dirs_exist_ok=True)
 
 
+class FakeComfy:
+    """ComfyUI の代わり（/upload/image・/prompt・/history だけ）。受け取ったものを覚え、answer を答える
+
+    status を success 以外にすると、実行に失敗したことにする
+    """
+
+    def __init__(self, answer=""):
+        self.answer, self.status = answer, "success"
+        self.uploads, self.prompts = [], []  # 受け取った画像（multipart のまま）と、送られたノードのつながり
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.handler())
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def handler(self):
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def reply(self, data):
+                body = json.dumps(data).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                if self.path == "/upload/image":
+                    fake.uploads.append(body)
+                    name = re.search(rb'filename="([^"]+)"', body).group(1).decode()
+                    self.reply({"name": name, "subfolder": "pictag", "type": "input"})
+                else:
+                    fake.prompts.append(json.loads(body))
+                    self.reply({"prompt_id": f"p{len(fake.prompts)}"})
+
+            def do_GET(self):
+                prompt_id = self.path.rsplit("/", 1)[-1]
+                status = {"completed": True, "status_str": fake.status,
+                          "messages": [["execution_error", {"exception_message": "out of memory"}]]}
+                self.reply({prompt_id: {"status": status, "outputs": {"show": {"text": [fake.answer]}}}})
+
+        return Handler
+
+
 class Api:
     """テスト用の薄い API ラッパー（レスポンスの JSON を返す）"""
 
@@ -89,6 +144,9 @@ class Api:
 
     def save(self):
         return self.post("/save_data")
+
+    def qwen_fill(self, row_index):
+        return self.post("/qwen_fill", {"row_index": row_index})
 
     def table(self):
         r = self.c.get("/get_table_data")

@@ -19,8 +19,10 @@ const state = {
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
     foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
     foldedSections: new Set(),  // 畳んだ段落の列（プロジェクトごとにブラウザに覚える）
-    sideView: 'hint',     // hint の列に出すもの（hint / preview。hint が無ければ preview。プロジェクトごとにブラウザに覚える）
+    sideView: 'hint',     // hint の列に出すもの（hint / preview / hint_by_qwen。出せないものなら先頭。プロジェクトごとにブラウザに覚える）
     thumbZoomed: false,   // サムネイルを 1.5 倍に広げているか（プロジェクトごとにブラウザに覚える）
+    qwen: false,          // qwen 版で起動したか（🤖 の列と hint_by_qwen を出す）
+    qwenBusy: new Set(),  // Qwen が書いている行の index
     thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
@@ -469,6 +471,7 @@ function headHtml() {
     return [
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
+        ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする">🤖</th>'] : []),
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
         sideHeadHtml(),
@@ -476,13 +479,21 @@ function headHtml() {
 }
 
 const PREVIEW_TITLE = '書き出すキャプション（保存したときの文面。読むだけ）';
+const SIDE_TITLES = {hint: '画像と同じ名前の .txt（読むだけ。保存には影響しない）', preview: PREVIEW_TITLE,
+    hint_by_qwen: 'Qwen が返した文面（読むだけ。🤖 で作る）'};
 
-// hint の列の見出し: hint があれば hint / preview の切り替えボタン（押している方が on）、無ければ preview の文字だけ
+// hint の列に出せるもの: hint（あるとき）・preview・hint_by_qwen（qwen 版のとき）
+const sideViews = () => [...(state.hasHints ? ['hint'] : []), 'preview', ...(state.qwen ? ['hint_by_qwen'] : [])];
+// 今出しているもの（選んだものが出せなければ先頭: hint があれば hint、無ければ preview）
+const sideView = () => (sideViews().includes(state.sideView) ? state.sideView : sideViews()[0]);
+
+// hint の列の見出し: 出せるものが2つ以上なら切り替えボタン（押している方が on）、preview だけなら文字だけ
 function sideHeadHtml() {
-    if (!state.hasHints) return `<th class="hint-head" title="${PREVIEW_TITLE}">preview</th>`;
-    const button = (view, title) => `<button type="button" class="side-view${state.sideView === view ? ' on' : ''}" ` +
-        `data-view="${view}" title="${title}">${view}</button>`;
-    return `<th class="hint-head">${button('hint', '画像と同じ名前の .txt（読むだけ。保存には影響しない）')}${button('preview', PREVIEW_TITLE)}</th>`;
+    const views = sideViews();
+    if (views.length === 1) return `<th class="hint-head" title="${PREVIEW_TITLE}">preview</th>`;
+    const button = view => `<button type="button" class="side-view${sideView() === view ? ' on' : ''}" ` +
+        `data-view="${view}" title="${SIDE_TITLES[view]}">${view}</button>`;
+    return `<th class="hint-head">${views.map(button).join('')}</th>`;
 }
 
 // マークの欄: 縦長の 2 列 × 4 行。左の列が排他（A〜D のどれか1つ）、右の列が複数（★●▲■）
@@ -512,16 +523,20 @@ function hintHtml(row) {
         `<textarea readonly rows="1" aria-label="hint">${escapeHtml(row.hint)}</textarea></td>`;
 }
 
-// hint の列に preview を出すか: hint が無いときと、見出しで preview を選んだとき
-const showsPreview = () => !state.hasHints || state.sideView === 'preview';
-
 // preview の欄: 書き出すキャプションの全文（読むだけ。見た目と動きは hint と同じ）。入力の無い行は空
 function previewHtml(row) {
     if (!row.caption) return '<td class="hint preview"></td>';
     return `<td class="hint preview"><textarea readonly rows="1" aria-label="preview">${escapeHtml(row.caption)}</textarea></td>`;
 }
 
-const sideHtml = row => (showsPreview() ? previewHtml(row) : hintHtml(row));
+// hint_by_qwen の欄: Qwen が返した文面のまま（読むだけ。見た目と動きは preview と同じ）。答えの無い行は空
+function qwenHintHtml(row) {
+    if (!row.qwen_hint) return '<td class="hint preview"></td>';
+    return `<td class="hint preview"><textarea readonly rows="1" aria-label="hint_by_qwen">${escapeHtml(row.qwen_hint)}</textarea></td>`;
+}
+
+const SIDE_HTML = {hint: hintHtml, preview: previewHtml, hint_by_qwen: qwenHintHtml};
+const sideHtml = row => SIDE_HTML[sideView()](row);
 
 // hint の高さを中身に合わせる（CSS の field-sizing が効かないブラウザ向け。先に全部読んでから書き、描き直しを1回にする）
 function fitHints(root) {
@@ -557,7 +572,7 @@ const sideViewKey = () => `pictag:side-view:${state.projectName}`;
 
 function loadSideView() {
     try {
-        return localStorage.getItem(sideViewKey()) === 'preview' ? 'preview' : 'hint';
+        return localStorage.getItem(sideViewKey()) || 'hint';  // 出せないものは sideView() が先頭に置き換える
     } catch {
         return 'hint';
     }
@@ -663,6 +678,64 @@ function metaHtml(row) {
     return `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'}\n/ ${state.tokenLimit}</div>`;
 }
 
+const QWEN_SAMPLES = 10;  // 🤖 に要る見本の数（上にある行の、空でないキャプション。qwen.py の SAMPLE_COUNT と同じ）
+
+// 行より上にある見本の数（削除済みの行は数えない。QWEN_SAMPLES まで数えれば足りる）
+function samplesAbove(index) {
+    let count = 0;
+    for (const row of state.rows) {
+        if (row.index === index || count >= QWEN_SAMPLES) break;
+        if (!row.is_dead && row.caption) count += 1;
+    }
+    return count;
+}
+
+// 🤖 の欄（qwen 版だけ）: Qwen でその行の空の欄を下書きする。上に見本が 10 行無ければ押せない。書いている間は ⏳
+function qwenHtml(row) {
+    const busy = state.qwenBusy.has(row.index);
+    const samples = samplesAbove(row.index);
+    const ready = !row.is_dead && samples >= QWEN_SAMPLES;
+    const title = busy ? 'Qwen が書いています' : ready ? 'Qwen で、この行の空の欄を下書きする'
+        : row.is_dead ? '元の画像がありません' : `上に見本（キャプションのある行）が ${QWEN_SAMPLES} 行必要です（今 ${samples} 行）`;
+    return `<td class="qwen"><button type="button" class="qwen-btn" title="${title}"${ready && !busy ? '' : ' disabled'}>` +
+        `${busy ? '⏳' : '🤖'}</button></td>`;
+}
+
+// 🤖 の欄だけを描き直す（キャプションが変わると、下の行の見本の数も変わる）
+function paintQwenButtons() {
+    if (!state.qwen) return;
+    const trs = new Map([...$('gridBody').rows].map(tr => [Number(tr.dataset.index), tr]));
+    for (const row of state.rows) {
+        const td = trs.get(row.index)?.querySelector('td.qwen');
+        if (td) td.outerHTML = qwenHtml(row);
+    }
+}
+
+// 🤖: Qwen（ComfyUI）に下書きさせ、その行の空の欄に入れる（数秒。ComfyUI が初めて Qwen を読むときは数十秒）
+async function qwenFill(index) {
+    commitEdit();
+    const name = state.byIndex.get(index)['サムネイル'];
+    state.qwenBusy.add(index);
+    paintQwenButtons();
+    setStatus(`${name} を Qwen が書いています…`);
+    try {
+        const res = await postJson('/qwen_fill', {row_index: index});
+        if (!res.success) {
+            setStatus(res.message, 'error');
+            return;
+        }
+        replaceRow(res.row);
+        setDirty(true);
+        refreshWords();
+        setStatus(res.filled.length
+            ? `${name} の ${res.filled.join('・')} に下書きを入れました（Qwen の答えは hint_by_qwen で見られます）`
+            : `${name}: 入れられる空の欄がありませんでした（Qwen の答えは hint_by_qwen で見られます）`, res.filled.length ? 'ok' : 'warn');
+    } finally {
+        state.qwenBusy.delete(index);
+        paintQwenButtons();
+    }
+}
+
 // view のボタン（各組の先頭の ☓ でその組の語句を消す）。押されている語句は on
 // 🎥 は絵文字だけ、👀 は絵文字と A, B（女性・男性で色を変える）。語句はマウスを載せると見える
 function choicesHtml(row) {
@@ -761,7 +834,7 @@ function rowHtml(row) {
     const cells = state.sections.map(s => cellTd(s, row)).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt="" title="${escapeHtml(name)}"></td>` +
-        `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${sideHtml(row)}</tr>`;
+        `<td class="meta">${metaHtml(row)}</td>${state.qwen ? qwenHtml(row) : ''}${marksHtml(row)}${cells}${sideHtml(row)}</tr>`;
 }
 
 const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}"]`);
@@ -812,6 +885,7 @@ async function refreshTable() {
     state.autoKeys = body.auto_keys;
     state.othersSection = body.others_section;
     state.candidateGroups = body.candidate_groups;
+    state.qwen = body.qwen;
     state.viewChoices = body.view_choices;
     if (state.markChoices.one.length === 0) fillMarkFilters(body.mark_choices);
     state.markChoices = body.mark_choices;
@@ -931,7 +1005,7 @@ async function sendText(row, section, text) {
     if (tr) {
         tr.querySelector('td.meta').innerHTML = metaHtml(row);
         // preview を出していれば、書き出す文面も描き直す
-        if (showsPreview()) {
+        if (sideView() === 'preview') {
             tr.querySelector('td.hint').outerHTML = previewHtml(row);
             fitHints(tr);
         }
@@ -939,6 +1013,7 @@ async function sendText(row, section, text) {
         const picture = tr.querySelector('td.cell[data-section="picture"]');
         if (picture && !picture.querySelector('textarea') && !picture.classList.contains('folded')) picture.innerHTML = cellHtml('picture', row);
     }
+    paintQwenButtons();  // キャプションが空になった・空でなくなったら、下の行の見本の数が変わる
     setDirty(true);
     refreshWords();
 }
@@ -1387,6 +1462,11 @@ function wire() {
         const markButton = event.target.closest('.mark-btn');
         if (markButton) {
             guarded(clickMark)(markButton);
+            return;
+        }
+        const qwenButton = event.target.closest('.qwen-btn');
+        if (qwenButton) {
+            guarded(qwenFill)(Number(qwenButton.closest('tr').dataset.index));
             return;
         }
         const td = event.target.closest('td');
