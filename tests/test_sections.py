@@ -191,6 +191,18 @@ def test_caption_has_characters_of_subjects_with_text(api, imgs):
     assert b["characters"] == "" and b["caption"] == ""
 
 
+def test_else_is_not_counted_but_its_keys_join_characters(api, imgs):
+    # else は人物に数えず（1 else にしない）、行のキーを数なしで足す。キャプションにはほかの段落と同じ形で出す
+    api.load(imgs)
+    api.add_section("else")
+    row = api.row_index("a.png")
+    api.write(row, "looks: standing")
+    res = api.write(row, "dog: brown fur, sitting\ncat: black", section="else")
+    assert res["characters"] == "1 girl + dog + cat"
+    assert res["caption"] == ("picture:\n  - characters: 1 girl + dog + cat\n\n"
+                              "girl:\n  - looks: standing\n\nelse:\n  - dog: brown fur, sitting\n  - cat: black")
+
+
 def test_set_choice_keeps_one_phrase_per_group_on_rows(api, tool, imgs):
     api.load(imgs)
     rows = [api.row_index("a.png"), api.row_index("b.png")]
@@ -227,6 +239,14 @@ def test_table_data_has_view_choices_for_current_subjects(api, imgs):
     assert body["view_choices"]["camera"] == [CAMERA, VERTICAL, SHOTS]
     assert set(body["view_choices"]["camera_emoji"]) == {*CAMERA, *VERTICAL, *SHOTS}
     assert body["view_choices"]["targeted"] == ["close-up"]  # 後ろに対象を書ける（close-up face）
+    assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["third-person POV", "girl POV", "guy POV"]
+
+
+def test_table_data_names_else_and_leaves_it_out_of_pov(api, imgs):
+    api.load(imgs)
+    api.add_section("else")
+    body = api.table()
+    assert body["others_section"] == "else"  # 画面は else の欄に確定タグを出さない
     assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["third-person POV", "girl POV", "guy POV"]
 
 

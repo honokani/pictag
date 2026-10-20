@@ -516,6 +516,25 @@ def test_picture_shows_characters_automatically(page, imgs):
     expect(cell(page, "b.png", "picture").locator(".ln.auto")).to_have_text("characters:")
 
 
+def test_else_has_no_template_keys_and_its_keys_join_characters(page, imgs):
+    # else は人物でない物（dog: / cat:）の段落: 確定タグも POV のボタンも無く、characters にはキーを数なしで足す
+    load_dir(page, imgs)
+    page.fill("#sectionName", "else")
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(5)
+    expect(cell(page, "a.png", "else").locator(".ln")).to_have_count(0)
+    expect(open_editor(page, "a.png", "else")).to_have_value("")
+    page.keyboard.press("Escape")
+
+    write(page, "a.png", "looks: standing")
+    write(page, "a.png", "dog: brown fur, sitting\ncat: black", section="else")
+    expect(cell(page, "a.png", "picture").locator(".ln.auto")).to_have_text("characters: 1 girl + dog + cat")
+    expect(cell(page, "a.png", "picture").locator(".choice-row.pov .choice")).to_have_text(["☓", "👥", "👧", "👨"])
+    wait_for_phrase(page, "black")
+    page.select_option("#bulkSection", "else")
+    assert set(option_values(page, "#bulkKey")) == {"", "cat", "dog"}  # 確定タグは無く、使ったキーだけ
+
+
 def test_adding_girl_twice_names_them_a_and_b(page, imgs):
     load_dir(page, imgs)
     page.fill("#sectionName", "girl")

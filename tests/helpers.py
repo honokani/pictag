@@ -21,7 +21,7 @@ def caption_of(text, section=SECTION):
     """1つの段落だけに入力したときのキャプション（人物の段落に入力があれば、picture に characters が付く）"""
     if section in ("picture", "action") or not phrases_of(text):
         return render_caption([(section, text)])
-    return render_caption([("picture", f"characters: {characters_of([section])}"), (section, text)])
+    return render_caption([("picture", f"characters: {characters_of([(section, text)])}"), (section, text)])
 
 
 def word_tokenizer():
