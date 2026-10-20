@@ -1,7 +1,7 @@
 """Qwen（ComfyUI の TextGenerate。Krea2 のテキストエンコーダーと同じ Qwen3-VL-4B）で、空の欄を下書きする
 
 - 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、
-  見本（キャプション 10 個。🤖 は上にある行から近い順、🎲 はほかの行からランダム）
+  見本（キャプション 10 個。🤖 は上にある行から近い順、🔖 は同じマークの行を先にランダム、🎲 はほかの行からランダム）
 - 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）
 - ComfyUI の呼び方は pj_loratrain（loratrain/backends.py）と同じ。ComfyUI の起動・停止はしない（起動しておいたものに乗るだけ）
 """
@@ -67,6 +67,21 @@ def pick_random_samples(captions, count=SAMPLE_COUNT):
     """キャプションの中から、空でないものをランダムに count 個（押すたびに選び直す）。足りなければ []"""
     present = [caption for caption in captions if caption]
     return random.sample(present, count) if len(present) >= count else []
+
+
+def pick_tiered_samples(tiers, count=SAMPLE_COUNT):
+    """先の段から順に、空でないキャプションをランダムに選んで count 個にする（その段で足りない分は次の段から）
+
+    tiers: [[(行, キャプション)]]。同じ行が後の段にあっても選ぶのは1回。並びは後の段が先で、最初の段が最後
+    （いちばん似た見本を、頼む文の直前に置く）。全部で count 個に満たなければ []
+    """
+    chosen, picked = set(), []
+    for tier in tiers:
+        pool = [(row, caption) for row, caption in tier if caption and row not in chosen]
+        taken = random.sample(pool, min(len(pool), count - len(chosen)))
+        chosen.update(row for row, _ in taken)
+        picked.append([caption for _, caption in taken])
+    return [caption for captions in reversed(picked) for caption in captions] if len(chosen) == count else []
 
 
 # ---- 答えの分け方と、空の欄への入れ方 ----
