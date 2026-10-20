@@ -64,13 +64,19 @@ def field(page, name, key, section="girl"):
 
 
 def write(page, name, text, section="girl"):
-    """入力欄に書いて確定する（キーの欄は空にし、全部を「その他」の欄に書く。フォーカスを外すと送信する）"""
-    editor = open_editor(page, name, section)
-    editor.wait_for()
+    """入力欄に書いて確定する（キーの欄は空にし、全部を「その他」の欄に書く。「その他」の無い段落（picture）は、
+    キーの行をそのキーの欄に書く。フォーカスを外すと送信する）"""
+    other = open_editor(page, name, section)
+    cell(page, name, section).locator("textarea").first.wait_for()
     for key_field in cell(page, name, section).locator('textarea:not([data-key=""])').all():
         key_field.fill("")
-    editor.fill(text)
-    editor.evaluate("el => el.blur()")
+    if other.count():
+        other.fill(text)
+    else:
+        for line in text.split("\n"):
+            key, _, value = line.partition(":")
+            field(page, name, key.strip(), section).fill(value.strip())
+    page.evaluate("document.activeElement.blur()")
     expect(filled(page, name, section)).to_have_text(text.split("\n"))
 
 
@@ -176,6 +182,43 @@ def test_key_lines_written_in_the_other_field_join_their_key(page, imgs):
     open_editor(page, "a.png")
     expect(field(page, "a.png", "looks")).to_have_value("standing, smiling")
     expect(field(page, "a.png", "")).to_have_value("girl is smiling\neyes: blue eyes")
+
+
+def test_cell_shows_values_under_their_key_like_the_editor(page, imgs):
+    # クリックする前も入力欄と同じく、キーの名前の下に値（値の無いキーは名前だけ）。キーの無い文などは「その他:」の下
+    load_dir(page, imgs)
+    write(page, "a.png", "looks: standing\nbody: long hair\ngirl is smiling")
+    looks = cell(page, "a.png").locator(".ln", has_text="looks:")
+    expect(looks.locator(".key")).to_have_text("looks:")
+    expect(looks.locator(".val")).to_have_text("standing")
+    key, value = looks.locator(".key").bounding_box(), looks.locator(".val").bounding_box()
+    assert value["y"] >= key["y"] + key["height"] - 0.5  # 値はキーの名前の次の行
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["clothes:"])
+    expect(cell(page, "a.png").locator(".ln.empty .val")).to_have_count(0)
+    expect(cell(page, "a.png").locator(".others")).to_have_text("その他:")
+
+    write(page, "b.png", "looks: standing")
+    expect(cell(page, "b.png").locator(".others")).to_have_count(0)  # ほかの行が無ければ出さない
+    write(page, "a.png", "pose: standing", section="action")
+    expect(cell(page, "a.png", "action").locator(".key")).to_have_count(0)  # 確定タグの無い段落は今のまま
+
+
+def test_picture_editor_has_no_other_field_because_of_extra(page, imgs):
+    # 確定タグに extra のある段落（picture）は「その他」の欄を出さない。前に書いたほかの行があるときだけ、消えないように出す
+    load_dir(page, imgs)
+    cell(page, "a.png", "picture").locator(".text").click()
+    expect(cell(page, "a.png", "picture").locator(".field-key")).to_have_text(["place:", "vibes:", "view:", "extra:"])
+    expect(field(page, "a.png", "", "picture")).to_have_count(0)
+    expect(field(page, "a.png", "place", "picture")).to_be_focused()
+    page.keyboard.press("Escape")
+
+    page.select_option("#bulkSection", "picture")  # 入力欄を開いた行は選択状態
+    page.select_option("#bulkKey", "")
+    page.locator("#bulkText").fill("an old photo")
+    page.click("text=選択行に追加")
+    expect(cell(page, "a.png", "picture").locator(".others")).to_have_text("その他:")
+    cell(page, "a.png", "picture").locator(".text").click()
+    expect(field(page, "a.png", "", "picture")).to_have_value("an old photo")
 
 
 def test_edit_updates_tokens_and_preview_then_saves(page, imgs, tool):
@@ -914,7 +957,7 @@ def test_clicking_beside_view_buttons_does_not_open_editor(page, imgs):
     expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(0)
 
     cell(page, "a.png", "picture").locator(".text").click()
-    expect(field(page, "a.png", "", "picture")).to_have_count(1)
+    expect(field(page, "a.png", "place", "picture")).to_have_count(1)
 
 
 def test_hint_column_shows_same_name_txt_read_only(page, imgs, tool):
