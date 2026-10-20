@@ -65,7 +65,7 @@ def test_picture_column_ends_10px_after_close_up_and_keeps_its_width_while_editi
     picture = td(page, 'td.cell[data-section="picture"]')
     before = width(picture)
     picture.locator(".text").click()
-    expect(picture.locator("textarea")).to_be_visible()
+    expect(picture.locator("textarea").first).to_be_visible()
     assert abs(width(picture) - before) < 0.5
 
 
