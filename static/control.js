@@ -621,8 +621,6 @@ function toggleThumbZoom() {
     zoomThumbnails();
 }
 
-const ROW_GAP = 10;  // 見えていた行を見出しの下に見せ直すときの空き（px）
-
 // 列の見出しの下端（画面上の位置。見出しのセルは表の上に張り付く）
 const headBottom = () => $('gridHead').querySelector('th').getBoundingClientRect().bottom;
 
@@ -635,21 +633,25 @@ function firstWholeRow() {
         || rows.find(tr => tr.getBoundingClientRect().bottom > top);
 }
 
-// 行を、列の見出しの下端から ROW_GAP だけ下に見せる（表の端で届かないときは、届くところまで）
-function showRowBelowHead(index) {
+// 行の上端の、列の見出しの下端からの距離（px）
+const belowHead = tr => tr.getBoundingClientRect().top - headBottom();
+
+// 行を、列の見出しの下端から gap だけ下に見せる（表の端で届かないときは、届くところまで）
+function showRowBelowHead(index, gap) {
     const tr = rowElement(index);
-    if (tr) $('imagesView').scrollTop += tr.getBoundingClientRect().top - headBottom() - ROW_GAP;
+    if (tr) $('imagesView').scrollTop += belowHead(tr) - gap;
 }
 
 // hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
-// hint と preview は行ごとに高さが違うので、見えていた最初の行（上が切れていない行）を見出しのすぐ下に見せ直す
+// hint と preview は行ごとに高さが違うので、見えていた最初の行（上が切れていない行）を、押す前と同じ位置に見せ直す
 function switchSideView(view) {
     commitEdit();
     const anchor = firstWholeRow();
+    const gap = anchor ? belowHead(anchor) : 0;
     state.sideView = view;
     saveSideView();
     renderTable();
-    if (anchor) showRowBelowHead(Number(anchor.dataset.index));
+    if (anchor) showRowBelowHead(Number(anchor.dataset.index), gap);
 }
 
 // token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
