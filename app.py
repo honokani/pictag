@@ -1,3 +1,4 @@
+import argparse
 import os
 import json
 import logging
@@ -13,8 +14,10 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
+from qwen import (DEFAULT_URL, SAMPLE_COUNT, fill_text, generate, jpeg_of, match_section, parse_caption, pick_samples,
+                  system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, characters_of, insert_position,
-                      name_for_new, pov_choices)
+                      name_for_new, pov_choices, template_keys)
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
@@ -38,6 +41,7 @@ SHARED_FILE = 'shared.json'  # data_work/ 直下。共用辞書（freeze した�
 SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォルダは SDXL 版のプロジェクト
 CAPTION_EXT = '.caption'  # 書き出すキャプションの拡張子（captions/<画像名>.caption）
 HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡張子のファイルは hint（読むだけ）
+QWEN_DIR = 'qwen'  # data_work/<フォルダ名>/ の下の、Qwen の答えの置き場（<画像名>.txt。右端の列の hint_by_qwen で見る）
 FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
 DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl', 'guy']  # 新規プロジェクトの段落（dog などは必要なときに足す。空の段落は出力しない）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
@@ -172,6 +176,7 @@ class CaptionTool:
         self.df = pd.DataFrame()
         self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
         self.hints = {}  # 画像名 → hint（画像フォルダの同じ名前の .txt）
+        self.qwen_hints = {}  # 画像名 → Qwen の答え（data_work/<フォルダ名>/qwen/ の同じ名前の .txt）
         self.shared = read_shared(self.data_work_dir / SHARED_FILE)
         self.last_error = ''  # 直近の失敗理由（API が画面へ返す）
 
@@ -259,8 +264,9 @@ class CaptionTool:
         # 画像ファイル存在チェックと dead/alive 状態管理
         self.manage_dead_alive_status()
 
-        # hint（読むだけ。保存やキャプションには使わない）
+        # hint（読むだけ。保存やキャプションには使わない）と、前に Qwen が書いた答え
         self.hints = read_hints(self.image_dir, self.df['サムネイル'].tolist())
+        self.qwen_hints = read_hints(self.data_work_target / QWEN_DIR, self.df['サムネイル'].tolist())
 
         logger.info(f"DataFrame created: {len(self.df)} rows, {len(self.df.columns)} columns")
 
@@ -723,19 +729,65 @@ class CaptionTool:
             texts['picture'] = with_line(texts['picture'], 'characters', characters, keys)
         return texts, characters
 
+    def caption_of(self, record, sections):
+        """1行のキャプション（書き出す文面）"""
+        texts, _ = self.row_texts(record, sections)
+        return render_caption([(s, texts[s]) for s in sections])
+
     def row_view(self, index, record, sections):
-        """画面に渡す1行（入力・characters・キャプション・トークン数）"""
+        """画面に渡す1行（入力・characters・キャプション・トークン数・hint・Qwen の答え）"""
         texts, characters = self.row_texts(record, sections)
         caption = render_caption([(s, texts[s]) for s in sections])
         return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
                 'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
-                'hint': self.hints.get(record['サムネイル'], ''),
+                'hint': self.hints.get(record['サムネイル'], ''), 'qwen_hint': self.qwen_hints.get(record['サムネイル'], ''),
                 'mark': to_text(record['mark']), 'marks': to_text(record['marks']),
                 'caption': caption, 'tokens': token_counter.count(caption)}
 
     def row_views(self, indexes):
         sections = section_names(self.df)
         return [self.row_view(i, self.df.loc[i].to_dict(), sections) for i in dict.fromkeys(indexes)]
+
+    def save_qwen_hint(self, image_name, text):
+        """Qwen の答えを data_work/<フォルダ名>/qwen/<画像名>.txt に残す（同じ画像は上書き）"""
+        folder = self.data_work_target / QWEN_DIR
+        folder.mkdir(exist_ok=True)
+        (folder / f"{Path(image_name).stem}{HINT_EXT}").write_text(text, encoding='utf-8', newline='\n')
+        self.qwen_hints[image_name] = text
+
+    def qwen_fill(self, row_index, url):
+        """Qwen に下書きさせ、その行の空の欄（値の無いキーと、文の無い段落）に入れる
+
+        見本は上にある行（削除済みは除く）の空でないキャプションを近い順に 10 個。(画面に渡す1行, 入れた段落) を返す。
+        行・見本・画像の問題は ValueError、ComfyUI の問題は OSError（繋がらない・時間切れ）か RuntimeError（実行の失敗）
+        """
+        if not self.is_row(row_index):
+            raise ValueError('行がありません')
+        sections = section_names(self.df)
+        records = self.df.to_dict('records')
+        position = list(self.df.index).index(row_index)
+        name = records[position]['サムネイル']
+        if to_flag(records[position]['is_dead']) or not (self.image_dir / name).is_file():
+            raise ValueError(f'{name} は元の画像がありません')
+        samples = pick_samples([self.caption_of(r, sections) for r in records[:position] if not to_flag(r['is_dead'])])
+        if not samples:
+            raise ValueError(f'上に見本（キャプションのある行）が {SAMPLE_COUNT} 行必要です')
+        keys = {s: template_keys(s, self.shared['templates'], FIXED_SECTIONS) for s in sections}
+        answer = generate(url, jpeg_of(self.image_dir / name), f"{self.dir_name}_{Path(name).stem}.jpg",
+                          user_prompt(samples), system_prompt([(s, keys[s]) for s in sections]))
+        self.save_qwen_hint(name, answer)
+        filled = set()
+        for block, lines in parse_caption(answer):
+            section = match_section(block, sections)
+            if section is None:
+                continue
+            before = to_text(self.df.at[row_index, section])
+            after = fill_text(before, lines, keys[section])
+            if after != before:
+                self.update_text(row_index, section, after)
+                filled.add(section)
+        logger.info(f"Qwen filled {name}: {sorted(filled)}")
+        return self.row_views([row_index])[0], [s for s in sections if s in filled]
 
     def save_data(self):
         """データ保存"""
@@ -877,7 +929,7 @@ def get_table_data():
               'auto_keys': AUTO_KEYS, 'others_section': OTHERS, 'candidate_groups': CANDIDATE_GROUPS,
               'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'targeted': TARGETED,
                                'pov': pov_choices(caption_tool.subjects())},
-              'mark_choices': {'one': ONE, 'many': MANY}}
+              'mark_choices': {'one': ONE, 'many': MANY}, 'qwen': bool(app.config.get('QWEN_URL'))}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})
 
@@ -977,6 +1029,23 @@ def freeze_dictionary():
     except OSError as e:
         logger.error(f"Failed to freeze dictionary: {e}")
         return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/qwen_fill', methods=['POST'])
+def qwen_fill():
+    """🤖: Qwen に下書きさせ、その行の空の欄に入れる（{row_index}。qwen 版で起動したときだけ）。入れた段落と、行を返す"""
+    url = app.config.get('QWEN_URL')
+    if not url:
+        return jsonify({'success': False, 'message': 'qwen 版で起動していません（--qwen を付けて起動）'})
+    try:
+        row, filled = caption_tool.qwen_fill((request.get_json() or {}).get('row_index'), url)
+    except (ValueError, RuntimeError) as e:  # 行・見本・画像の問題と、ComfyUI での実行の失敗
+        return jsonify({'success': False, 'message': str(e)})
+    except TimeoutError as e:
+        return jsonify({'success': False, 'message': f'ComfyUI（{url}）の答えを待ちきれませんでした（{e}）'})
+    except OSError as e:  # 繋がらない（URLError も含む）
+        logger.error(f"Failed to reach ComfyUI at {url}: {e}")
+        return jsonify({'success': False, 'message': f'ComfyUI（{url}）に繋がりません。WSL で ComfyUI を起動してください（{e}）'})
+    return jsonify({'success': True, 'row': row, 'filled': filled})
 
 @app.route('/update_text', methods=['POST'])
 def update_text():
@@ -1121,7 +1190,16 @@ def server_options(env):
     """起動設定（既定は 127.0.0.1 のみ。LAN へ公開するときは PICTAG_HOST=0.0.0.0）"""
     return {'host': env.get('PICTAG_HOST', '127.0.0.1'), 'port': 5000, 'debug': True}
 
+def qwen_url(argv):
+    """起動の引数から、qwen 版の ComfyUI の宛先を読む（--qwen が無ければ None。宛先は --comfyui-url、既定は 127.0.0.1:8189）"""
+    parser = argparse.ArgumentParser(description='pictag（Krea 2 の LoRA 学習用キャプション）')
+    parser.add_argument('--qwen', action='store_true', help='Qwen（ComfyUI の TextGenerate）で空の欄を下書きする 🤖 を使う')
+    parser.add_argument('--comfyui-url', default=DEFAULT_URL, help=f'ComfyUI の宛先（既定は {DEFAULT_URL}）')
+    args = parser.parse_args(argv)
+    return args.comfyui_url.rstrip('/') if args.qwen else None
+
 if __name__ == '__main__':
+    app.config['QWEN_URL'] = qwen_url(sys.argv[1:])
     options = server_options(os.environ)
     # トークナイザーは裏で取得する。debug のリローダーでは親プロセスで取得しない（子プロセスと二重になるため）
     if not options['debug'] or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
