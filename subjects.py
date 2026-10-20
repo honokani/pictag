@@ -13,6 +13,8 @@ EMOJI = {'girl': '👧', 'woman': '👩', 'guy': '👨', 'man': '👨', 'boy': '
 OTHER_EMOJI = '👤'
 FEMALE = {'girl', 'woman'}
 MALE = {'guy', 'man', 'boy'}
+# 語句の候補をまとめる名前の組（女性・男性）。ほかの段落の候補は種類ごと（A, B を除いた名前）
+CANDIDATE_GROUPS = [sorted(FEMALE), sorted(MALE)]
 THIRD_PERSON = {'emoji': '👥', 'label': '', 'tone': '', 'phrase': 'third-person POV'}
 
 # view の 🎥 の選択肢。組の中は1つだけ（☓ で組の語句を消す）。view の行には自由記述も書ける

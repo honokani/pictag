@@ -15,6 +15,7 @@ const state = {
     fixedSections: [],    // 固定の段落（外せない・改名できない）
     autoKeys: [],         // 自動で作るキー（characters。入力欄には出さない）
     othersSection: '',    // 人物でない物の段落の名前（else。確定タグを持たない）
+    candidateGroups: [],  // 語句の候補をまとめる名前の組（女性・男性。ほかの段落は種類ごと）
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
     foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
@@ -264,10 +265,19 @@ function keepBest(items) {
 
 const wordBonus = (w, section) => (w.section === section ? 3 : 0) + Math.log1p(w.count);
 
-// キーのある行: そのキーで使われた語句（打っていなくても使用回数の多い順に出す）。同じグループの語句が入っていれば出さない
+// 語句の候補の種類: 女性（girl・woman）・男性（guy・man・boy）はそれぞれ組でまとめ、ほかは A, B を除いた名前
+function kindOf(section) {
+    const base = baseName(section);
+    return (state.candidateGroups.find(group => group.includes(base)) || [base])[0];
+}
+
+const sameKind = (a, b) => kindOf(a) === kindOf(b);
+
+// キーのある行: 同じ種類の段落でそのキーに使われた語句（打っていなくても使用回数の多い順に出す）。同じグループの語句が入っていれば出さない
 function phraseCandidates(section, ctx) {
     return keepBest(state.phrases
-        .filter(p => p.key === ctx.key && !ctx.current.includes(p.phrase) && !blockedIn(ctx.cellPhrases, p.key, p.phrase))
+        .filter(p => p.key === ctx.key && sameKind(p.section, section) && !ctx.current.includes(p.phrase)
+            && !blockedIn(ctx.cellPhrases, p.key, p.phrase))
         .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
 }
 
@@ -277,14 +287,14 @@ function wordCandidates(section, ctx) {
     return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
 }
 
-// 行頭: キー、キー付きの語句、キーなしの文、単語（1文字以上打ったときだけ）
+// 行頭: キー、キー付きの語句（同じ種類の段落のもの）、キーなしの文、単語（1文字以上打ったときだけ）
 function lineStartCandidates(section, ctx) {
     if (!ctx.query) return [];
     return keepBest([
         ...state.phrases.flatMap(p => {
             const bonus = wordBonus(p, section);
             if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
-            const keyed = blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
+            const keyed = !sameKind(p.section, section) || blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
                 : [{kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus}];
             return [{kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1}, ...keyed];
         }),
@@ -620,6 +630,7 @@ async function refreshTable() {
     state.fixedSections = body.fixed_sections;
     state.autoKeys = body.auto_keys;
     state.othersSection = body.others_section;
+    state.candidateGroups = body.candidate_groups;
     state.viewChoices = body.view_choices;
     if (state.markChoices.one.length === 0) fillMarkFilters(body.mark_choices);
     state.markChoices = body.mark_choices;

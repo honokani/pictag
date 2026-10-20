@@ -250,6 +250,12 @@ def test_table_data_names_else_and_leaves_it_out_of_pov(api, imgs):
     assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["third-person POV", "girl POV", "guy POV"]
 
 
+def test_table_data_has_groups_that_share_phrase_suggestions(api, imgs):
+    # 語句の候補は同じ種類の段落のものだけ。女性・男性はそれぞれ1つの組にまとめる（ほかは種類ごと）
+    api.load(imgs)
+    assert api.table()["candidate_groups"] == [["girl", "woman"], ["boy", "guy", "man"]]
+
+
 def test_choice_replaces_close_up_with_a_target(api, tool, imgs):
     api.load(imgs)
     api.write(0, "view: close-up face, from below", section="picture")

@@ -13,7 +13,8 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from subjects import CAMERA_EMOJI, CAMERA_GROUPS, OTHERS, TARGETED, characters_of, insert_position, name_for_new, pov_choices
+from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, characters_of, insert_position,
+                      name_for_new, pov_choices)
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
@@ -869,11 +870,11 @@ def get_table_data():
     sections: 段落の並び。data: 行ごとの {index, サムネイル, is_dead, texts, characters, caption, tokens}
     サムネイル列は画像ファイル名（URL はフロントで /thumbnail/<名前>, /image/<名前> を組み立てる）
     tokens はトークナイザーの準備ができるまで null。view_choices は view のボタン（🎥 の組と、人物ごとの 👀）
-    others_section は確定タグを持たない段落（else）の名前
+    others_section は確定タグを持たない段落（else）の名前。candidate_groups は語句の候補をまとめる名前の組（女性・男性）
     """
     df = caption_tool.df
     common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS,
-              'auto_keys': AUTO_KEYS, 'others_section': OTHERS,
+              'auto_keys': AUTO_KEYS, 'others_section': OTHERS, 'candidate_groups': CANDIDATE_GROUPS,
               'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'targeted': TARGETED,
                                'pov': pov_choices(caption_tool.subjects())},
               'mark_choices': {'one': ONE, 'many': MANY}}
