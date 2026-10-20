@@ -106,7 +106,8 @@ td.meta { width: 56px; min-width: 56px; cursor: pointer; user-select: none; }
 td.meta .tokens { white-space: pre-line; text-align: right; color: #666; font-variant-numeric: tabular-nums; }
 td.meta .tokens.over { color: #c62828; font-weight: 700; }
 
-td.cell { min-width: 220px; max-width: 380px; cursor: text; }
+/* --lend: サムネイルを広げたときに、picture より右の畳んでいない列と右端の列から借りる幅（JS が入れる。picture と畳んだ列は自分の幅が優先） */
+td.cell { min-width: calc(220px - var(--lend, 0px)); max-width: calc(380px - var(--lend, 0px)); cursor: text; }
 td.cell .text { white-space: pre-wrap; word-break: break-word; min-height: 1.5em; }
 td.cell .ln.empty { color: #b8b8b8; }
 td.cell .ln.auto { font-style: italic; color: #4a5a7a; }
@@ -114,7 +115,7 @@ td.cell .ln.auto.empty { color: #b8b8b8; }
 td.cell .ln.conflict { color: #c62828; }
 td.cell .ln.conflict::before { content: '⚠ '; }
 
-/* picture の列は close-up の右端 + 10px（幅は JS が測って --picture-width に入れる）。残りの幅は hint、無ければほかの段落へ */
+/* picture の列は close-up の右端 + 10px（幅は JS が測って --picture-width に入れる）。残りの幅は hint の列（hint が無いときは preview） */
 td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width: var(--picture-width, 420px); }
 .choice-row.camera { flex-wrap: nowrap; }
 .choices { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; font-size: 12px; }
@@ -135,7 +136,7 @@ td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 
 /* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture の幅より後ろに置いて優先する） */
 th .section-head { display: flex; align-items: center; }
-th .fold-section { margin-left: auto; border: none; background: none; padding: 0 4px; color: #888; }
+th .fold-section, th .thumb-zoom { margin-left: auto; border: none; background: none; padding: 0 4px; color: #888; }  /* サムネイルの ▶ / ◀ も同じ見た目 */
 th.folded, td.cell.folded { width: 28px; min-width: 28px; max-width: 28px; padding: 4px 0; text-align: center; }
 td.cell.folded { color: #888; cursor: pointer; }
 
@@ -162,8 +163,8 @@ span.ws > .ws-marks { white-space: pre; }
 .ws-marks .sp::after { content: ''; position: absolute; left: -.5px; right: -.5px; bottom: .2em; height: .22em; border: 1px solid #bbb; border-top: 0; }
 .ws-marks .nl::after { content: '↵'; position: absolute; left: 2px; color: #bbb; }
 
-/* hint は全文を出す（高さは中身に合わせ、中でスクロールしない）。右上のボタンで畳む */
-td.hint { min-width: 220px; width: 100%; position: relative; }
+/* hint と preview は全文を出す（高さは中身に合わせ、中でスクロールしない）。hint は右上のボタンで畳む */
+td.hint { min-width: calc(220px - var(--lend, 0px)); width: 100%; position: relative; }
 td.hint textarea {
     display: block;
     width: 100%;
@@ -177,6 +178,11 @@ td.hint textarea {
 }
 .hint-toggle { position: absolute; top: 6px; right: 8px; padding: 0 5px; font-size: 12px; line-height: 1.4; color: #777; }
 td.hint.folded .hint-toggle { position: static; }
+/* hint の列には preview（書き出すキャプション）も出す。hint があれば見出しの hint / preview で切り替える（押している方が黒） */
+td.hint.preview textarea { padding-right: 6px; }  /* preview には畳むボタンが無い */
+th .side-view { padding: 0 6px; font-size: 12px; line-height: 1.6; color: #555; border-color: #ccc; }
+th .side-view + .side-view { margin-left: 2px; }
+th .side-view.on { background: #1f1f1f; border-color: #1f1f1f; color: #fff; cursor: default; }
 
 td.marks { width: 63px; }  /* ボタン2つ分（24px × 2 + 間 2px + 左右の余白） */
 .mark-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 2px; }

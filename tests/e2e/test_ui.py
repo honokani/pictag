@@ -187,6 +187,39 @@ def test_suggestion_completes_phrase_of_the_line_key(page, imgs):
     expect(filled(page, "a.png")).to_have_text(["body: long hair"])
 
 
+def test_phrase_chosen_inside_a_line_is_separated_by_commas(page, imgs):
+    # キーのある行の途中で語句を選ぶと、カンマの直後なら前に空白、後ろに語が続けばカンマで区切る（行末は今どおり ", "）
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: short hair")
+    wait_for_phrase(page, "short hair")
+
+    editor = open_editor(page, "a.png")
+    for at in [len("looks: cool,"), len("looks: cool, ")]:  # カンマの直後 / カンマと空白の後
+        editor.fill("looks: cool, 40 yo")
+        editor.evaluate(f"el => el.setSelectionRange({at}, {at})")
+        editor.press("ArrowRight")
+        editor.press("ArrowLeft")  # カーソルを動かすと候補が出る
+        expect(page.locator("#suggestions:visible li.active")).to_contain_text("short hair")
+        editor.press("Tab")
+        assert editor.input_value() == "looks: cool, short hair, 40 yo"
+
+
+def test_line_start_does_not_suggest_phrases_already_in_the_cell(page, imgs):
+    # 行頭の「キー: 語句」の候補に、その欄の同じキーにもう入っている語句は出さない
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: cold eyes")
+    write(page, "a.png", "looks: cool")
+    wait_for_phrase(page, "cool")
+
+    editor = open_editor(page, "a.png")
+    editor.press("Control+End")
+    editor.press("Enter")
+    editor.press_sequentially("co")
+    suggestions = page.locator("#suggestions:visible")
+    expect(suggestions).to_contain_text("looks: cold eyes")
+    expect(suggestions).not_to_contain_text("looks: cool")
+
+
 def test_suggestion_at_line_start_adds_key_and_phrase(page, imgs):
     load_dir(page, imgs)
     write(page, "b.png", "body: long hair")
@@ -565,6 +598,19 @@ def test_folding_picture_keeps_the_thumbnail_size(page, imgs):
     assert thumb.evaluate("el => el.getBoundingClientRect().width") == size
 
 
+def test_zoomed_thumbnails_are_remembered_per_project(page, imgs):
+    load_dir(page, imgs)
+    zoom = page.locator("#gridHead .thumb-zoom")
+    expect(zoom).to_have_text("▶")
+    thumb = row(page, "a.png").locator("td.thumb img")
+    size = thumb.evaluate("el => el.getBoundingClientRect().width")
+    zoom.click()
+    expect(zoom).to_have_text("◀")
+    load_dir(page, imgs)  # 読み込み直しても広げたまま
+    expect(zoom).to_have_text("◀")
+    assert abs(thumb.evaluate("el => el.getBoundingClientRect().width") - size * 1.5) <= 1
+
+
 def test_dead_rows_toggle_and_remove(page, imgs):
     load_dir(page, imgs)
     page.click("#saveButton")
@@ -789,7 +835,7 @@ def test_clicking_beside_view_buttons_does_not_open_editor(page, imgs):
 def test_hint_column_shows_same_name_txt_read_only(page, imgs, tool):
     (imgs / "a.txt").write_text("1girl, solo, smile", encoding="utf-8")
     load_dir(page, imgs)
-    expect(page.locator("#gridHead th.hint-head")).to_have_text("hint")
+    expect(page.locator("#gridHead .side-view.on")).to_have_text("hint")  # hint があれば、最初は hint を出す
     hint = row(page, "a.png").locator("td.hint textarea")
     expect(hint).to_have_value("1girl, solo, smile")
     expect(hint).to_have_attribute("readonly", "")
@@ -817,10 +863,41 @@ def test_hint_shows_the_whole_text_and_can_be_folded(page, imgs):
     expect(row(page, "a.png").locator("td.hint textarea")).to_have_value(long_hint)
 
 
-def test_no_hint_column_without_txt_files(page, imgs):
+CAPTION_A = "picture:\n  - characters: 1 girl\n\ngirl:\n  - looks: standing"
+
+
+def test_without_hint_files_the_column_shows_the_caption_preview(page, imgs):
+    # hint が無ければ、同じ列に preview（書き出すキャプション）を出す。欄を書き換えると、その行の preview もすぐ変わる
     load_dir(page, imgs)
-    expect(page.locator("#gridHead th.hint-head")).to_have_count(0)
-    expect(page.locator("td.hint")).to_have_count(0)
+    expect(page.locator("#gridHead th.hint-head")).to_have_text("preview")
+    expect(page.locator("#gridHead .side-view")).to_have_count(0)  # 切り替えるものが無いのでボタンにしない
+    preview = row(page, "a.png").locator("td.hint textarea")
+    expect(preview).to_have_count(0)  # 入力の無い行の preview は空
+    write(page, "a.png", "looks: standing")
+    expect(preview).to_have_value(CAPTION_A)
+    expect(preview).to_have_attribute("readonly", "")
+
+
+def test_hint_and_preview_buttons_switch_the_column(page, imgs):
+    # hint があれば、見出しの hint / preview のボタンで列の中身を切り替える（どちらを出すかはプロジェクトごとに覚える）
+    (imgs / "a.txt").write_text("1girl, solo, smile", encoding="utf-8")
+    load_dir(page, imgs)
+    side = row(page, "a.png").locator("td.hint textarea")
+    hint_button, preview_button = (page.locator(f'#gridHead .side-view[data-view="{view}"]') for view in ["hint", "preview"])
+    expect(hint_button).to_have_class(re.compile(r"\bon\b"))
+    expect(side).to_have_value("1girl, solo, smile")
+
+    preview_button.click()
+    expect(preview_button).to_have_class(re.compile(r"\bon\b"))
+    expect(side).to_have_count(0)  # 入力の無い行の preview は空
+    expect(row(page, "a.png").locator(".hint-toggle")).to_have_count(0)  # 畳むのは hint だけ
+    load_dir(page, imgs)  # 読み込み直しても preview のまま
+    expect(preview_button).to_have_class(re.compile(r"\bon\b"))
+    write(page, "a.png", "looks: standing")
+    expect(side).to_have_value(CAPTION_A)
+
+    hint_button.click()
+    expect(side).to_have_value("1girl, solo, smile")
 
 
 def option_values(page, selector):

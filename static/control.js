@@ -19,6 +19,9 @@ const state = {
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
     foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
     foldedSections: new Set(),  // 畳んだ段落の列（プロジェクトごとにブラウザに覚える）
+    sideView: 'hint',     // hint の列に出すもの（hint / preview。hint が無ければ preview。プロジェクトごとにブラウザに覚える）
+    thumbZoomed: false,   // サムネイルを 1.5 倍に広げているか（プロジェクトごとにブラウザに覚える）
+    thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
@@ -231,6 +234,9 @@ const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
 
 // 選んだ単語の後ろに付ける区切り: 行末なら ", "（欄を離れると行末のカンマは消える）。後ろに語が続けば空白、空白かカンマが続けば付けない
 const wordSeparator = after => (!after.trim() ? ', ' : /^[\s,]/.test(after) ? '' : ' ');
+// キーのある行の語句の前後: カンマ（キーのコロン）のすぐ後ろに入れるときは前に空白。後ろに語が続けばカンマで区切り、行末は ", "
+const phraseBefore = (value, at) => (/[,:]/.test(value[at - 1] || '') ? ' ' : '');
+const phraseAfter = after => (!after.trim() ? ', ' : /^\s*,/.test(after) ? '' : /^\s/.test(after) ? ',' : ', ');
 
 // 入力欄のカーソル位置の文脈
 // mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
@@ -242,7 +248,7 @@ function contextOf(el) {
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
     const after = value.slice(caret, lineEnd);
-    const base = {caret, after, restEmpty: after.trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+    const base = {caret, after, current: parseLine(value.slice(lineStart, lineEnd)).phrases,
         cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
@@ -295,14 +301,15 @@ function wordCandidates(section, ctx) {
     return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
 }
 
-// 行頭: キー、キー付きの語句（同じ種類の段落のもの）、キーなしの文、単語（1文字以上打ったときだけ）
+// 行頭: キー、キー付きの語句（同じ種類の段落のもの。その欄の同じキーにもう入っているものは出さない）、キーなしの文、単語（1文字以上打ったときだけ）
 function lineStartCandidates(section, ctx) {
     if (!ctx.query) return [];
     return keepBest([
         ...state.phrases.flatMap(p => {
             const bonus = wordBonus(p, section);
             if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
-            const keyed = !sameKind(p.section, section) || blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
+            const inCell = (ctx.cellPhrases[p.key] || []).includes(p.phrase);
+            const keyed = inCell || !sameKind(p.section, section) || blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
                 : [{kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus}];
             return [{kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1}, ...keyed];
         }),
@@ -374,7 +381,7 @@ function accept(item) {
     } else {
         const text = {
             key: () => `${item.key}: `,
-            phrase: () => item.phrase + (ctx.restEmpty ? ', ' : ''),
+            phrase: () => phraseBefore(el.value, ctx.queryStart) + item.phrase + phraseAfter(ctx.after),
             word: () => item.word + wordSeparator(ctx.after),
             line: () => item.phrase,
         }[item.kind]();
@@ -450,14 +457,30 @@ function sectionHeadHtml(s) {
         `<button type="button" class="fold-section" title="この列を畳む" aria-label="${name} を畳む">◀</button></div></th>`;
 }
 
+// サムネイルの見出し: 右端の ▶ で 1.5 倍に広げ、◀ で元の大きさに戻す
+function thumbHeadHtml() {
+    const [mark, title] = state.thumbZoomed ? ['◀', 'サムネイルを元の大きさに戻す'] : ['▶', 'サムネイルを 1.5 倍に広げる'];
+    return `<th><div class="section-head">サムネイル<button type="button" class="thumb-zoom" title="${title}" aria-label="${title}">${mark}</button></div></th>`;
+}
+
 function headHtml() {
     return [
-        '<th>サムネイル</th>',
+        thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
-        ...(state.hasHints ? ['<th class="hint-head" title="画像と同じ名前の .txt（読むだけ。保存には影響しない）">hint</th>'] : []),
+        sideHeadHtml(),
     ].join('');
+}
+
+const PREVIEW_TITLE = '書き出すキャプション（保存したときの文面。読むだけ）';
+
+// hint の列の見出し: hint があれば hint / preview の切り替えボタン（押している方が on）、無ければ preview の文字だけ
+function sideHeadHtml() {
+    if (!state.hasHints) return `<th class="hint-head" title="${PREVIEW_TITLE}">preview</th>`;
+    const button = (view, title) => `<button type="button" class="side-view${state.sideView === view ? ' on' : ''}" ` +
+        `data-view="${view}" title="${title}">${view}</button>`;
+    return `<th class="hint-head">${button('hint', '画像と同じ名前の .txt（読むだけ。保存には影響しない）')}${button('preview', PREVIEW_TITLE)}</th>`;
 }
 
 // マークの欄: 縦長の 2 列 × 4 行。左の列が排他（A〜D のどれか1つ）、右の列が複数（★●▲■）
@@ -486,6 +509,17 @@ function hintHtml(row) {
     return '<td class="hint"><button type="button" class="hint-toggle" title="この画像の hint を畳む">－</button>' +
         `<textarea readonly rows="1" aria-label="hint">${escapeHtml(row.hint)}</textarea></td>`;
 }
+
+// hint の列に preview を出すか: hint が無いときと、見出しで preview を選んだとき
+const showsPreview = () => !state.hasHints || state.sideView === 'preview';
+
+// preview の欄: 書き出すキャプションの全文（読むだけ。見た目と動きは hint と同じ）。入力の無い行は空
+function previewHtml(row) {
+    if (!row.caption) return '<td class="hint preview"></td>';
+    return `<td class="hint preview"><textarea readonly rows="1" aria-label="preview">${escapeHtml(row.caption)}</textarea></td>`;
+}
+
+const sideHtml = row => (showsPreview() ? previewHtml(row) : hintHtml(row));
 
 // hint の高さを中身に合わせる（CSS の field-sizing が効かないブラウザ向け。先に全部読んでから書き、描き直しを1回にする）
 function fitHints(root) {
@@ -516,6 +550,44 @@ function saveFolded(kind, names) {
     }
 }
 
+// hint の列に出すもの（hint / preview）も、プロジェクトごとにブラウザに覚える
+const sideViewKey = () => `pictag:side-view:${state.projectName}`;
+
+function loadSideView() {
+    try {
+        return localStorage.getItem(sideViewKey()) === 'preview' ? 'preview' : 'hint';
+    } catch {
+        return 'hint';
+    }
+}
+
+function saveSideView() {
+    try {
+        localStorage.setItem(sideViewKey(), state.sideView);
+    } catch {
+        // 覚えられなくても、切り替えはできる
+    }
+}
+
+// サムネイルを広げているかも、プロジェクトごとにブラウザに覚える
+const thumbZoomKey = () => `pictag:thumb-zoom:${state.projectName}`;
+
+function loadThumbZoom() {
+    try {
+        return localStorage.getItem(thumbZoomKey()) === 'on';
+    } catch {
+        return false;
+    }
+}
+
+function saveThumbZoom() {
+    try {
+        localStorage.setItem(thumbZoomKey(), state.thumbZoomed ? 'on' : 'off');
+    } catch {
+        // 覚えられなくても、広げる・戻すはできる
+    }
+}
+
 function toggleHint(button) {
     const tr = button.closest('tr');
     const name = tr.dataset.name;
@@ -539,6 +611,22 @@ function toggleSection(section) {
 function openSection(section, index) {
     toggleSection(section);
     startEdit(rowElement(index).querySelector(`td.cell[data-section="${CSS.escape(section)}"]`));
+}
+
+// サムネイルを広げる・戻す（見出しの ▶ / ◀）。表は描き直さず、見出しと大きさ・借りる幅だけを変える
+function toggleThumbZoom() {
+    state.thumbZoomed = !state.thumbZoomed;
+    saveThumbZoom();
+    $('gridHead').innerHTML = headHtml();
+    zoomThumbnails();
+}
+
+// hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
+function switchSideView(view) {
+    commitEdit();
+    state.sideView = view;
+    saveSideView();
+    renderTable();
 }
 
 // token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
@@ -588,11 +676,26 @@ function fitPictureColumn() {
 // サムネイルは正方形で、picture の欄の中身の高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る
 // picture を畳んでいるときは測らない（畳む前の大きさのまま）
 function fitThumbnails() {
-    if (state.foldedSections.has('picture')) return;
-    const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
-        .filter(td => td.getBoundingClientRect().height > 0)
-        .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
-    if (heights.length) $('grid').style.setProperty('--thumb-size', `${Math.floor(Math.min(...heights))}px`);
+    if (!state.foldedSections.has('picture')) {
+        const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
+            .filter(td => td.getBoundingClientRect().height > 0)
+            .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
+        if (heights.length) state.thumbBase = Math.floor(Math.min(...heights));
+    }
+    zoomThumbnails();
+}
+
+const THUMB_ZOOM = 1.5;     // ▶ で広げたときの大きさ（元の大きさの倍率）
+const THUMB_DEFAULT = 96;  // 測れていないとき（picture を畳んだまま開いたとき）の大きさ（CSS の既定と同じ）
+
+// サムネイルの大きさを入れる。広げているときは 1.5 倍にし、増えた幅は picture より右の畳んでいない列（右端の列も）から
+// 同じだけずつ借りる（--lend の分だけ各列の最小・最大の幅を下げる。段落は最小の幅で、残りは右端の列が取っているため）
+function zoomThumbnails() {
+    const base = state.thumbBase || THUMB_DEFAULT;
+    const extra = state.thumbZoomed ? Math.round(base * (THUMB_ZOOM - 1)) : 0;
+    const lenders = state.sections.filter(s => s !== 'picture' && !state.foldedSections.has(s)).length + 1;
+    $('grid').style.setProperty('--thumb-size', `${base + extra}px`);
+    $('grid').style.setProperty('--lend', `${extra / lenders}px`);
 }
 
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
@@ -631,7 +734,7 @@ function rowHtml(row) {
     const cells = state.sections.map(s => cellTd(s, row)).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt="" title="${escapeHtml(name)}"></td>` +
-        `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
+        `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${sideHtml(row)}</tr>`;
 }
 
 const rowElement = index => $('gridBody').querySelector(`tr[data-index="${index}"]`);
@@ -800,6 +903,11 @@ async function sendText(row, section, text) {
     const tr = rowElement(row.index);
     if (tr) {
         tr.querySelector('td.meta').innerHTML = metaHtml(row);
+        // preview を出していれば、書き出す文面も描き直す
+        if (showsPreview()) {
+            tr.querySelector('td.hint').outerHTML = previewHtml(row);
+            fitHints(tr);
+        }
         // 人物の段落を書き換えると characters が変わるので picture の欄を描き直す（編集中なら触らない）
         const picture = tr.querySelector('td.cell[data-section="picture"]');
         if (picture && !picture.querySelector('textarea') && !picture.classList.contains('folded')) picture.innerHTML = cellHtml('picture', row);
@@ -960,6 +1068,8 @@ async function opened(name) {
     state.projectName = name;
     state.foldedHints = loadFolded('hints');
     state.foldedSections = loadFolded('sections');
+    state.sideView = loadSideView();
+    state.thumbZoomed = loadThumbZoom();
     state.selected = new Set();
     state.anchor = null;
     state.dirty = false;
@@ -1174,7 +1284,7 @@ function bulkContext(el) {
     const before = value.slice(0, caret);
     const after = value.slice(caret);
     const current = key ? splitPhrases(value) : [];
-    const base = {caret, after, restEmpty: after.trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
+    const base = {caret, after, current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
         const raw = before.slice(segment);
@@ -1272,6 +1382,9 @@ function wire() {
     $('gridHead').addEventListener('click', event => {
         const fold = event.target.closest('.fold-section');
         if (fold) toggleSection(fold.closest('th').dataset.section);
+        const view = event.target.closest('.side-view');
+        if (view) switchSideView(view.dataset.view);
+        if (event.target.closest('.thumb-zoom')) toggleThumbZoom();
         const button = event.target.closest('.remove-section');
         if (button) guarded(removeSection)(button.closest('th').dataset.section);
     });
