@@ -15,7 +15,7 @@ from PIL import Image
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
 from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, match_section, parse_caption,
-                  pick_random_samples, pick_samples, system_prompt, user_prompt)
+                  pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, characters_of, insert_position,
                       name_for_new, pov_choices, template_keys)
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
@@ -42,7 +42,7 @@ SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォ�
 CAPTION_EXT = '.caption'  # 書き出すキャプションの拡張子（captions/<画像名>.caption）
 HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡張子のファイルは hint（読むだけ）
 QWEN_DIR = 'qwen'  # data_work/<フォルダ名>/ の下の、Qwen の答えの置き場（<画像名>.txt。右端の列の hint_by_qwen で見る）
-QWEN_MODES = ('near', 'random')  # 見本の選び方: 🤖 は上の行から近い順、🎲 はほかの行からランダム
+QWEN_MODES = ('near', 'mark', 'random')  # 見本の選び方: 🤖 は上の行から近い順、🔖 は同じマークの行を先に、🎲 はほかの行からランダム
 FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
 DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl', 'guy']  # 新規プロジェクトの段落（dog などは必要なときに足す。空の段落は出力しない）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
@@ -760,6 +760,7 @@ class CaptionTool:
         """Qwen に下書きさせ、その行の空の欄（値の無いキーと、文の無い段落）に入れる
 
         見本は空でないキャプション 10 個（削除済みの行は除く）。mode が near（🤖）なら上にある行から近い順に、
+        mark（🔖）なら A〜D が同じ行 → ★●▲■ を共有する行 → ほかの行の順にランダムに、
         random（🎲）ならその行のほかの全部の行からランダムに。(画面に渡す1行, 入れた段落) を返す。
         行・見本・画像の問題は ValueError、ComfyUI の問題は OSError（繋がらない・時間切れ）か RuntimeError（実行の失敗）
         """
@@ -777,8 +778,16 @@ class CaptionTool:
             samples = pick_samples([self.caption_of(r, sections) for r in records[:position] if not to_flag(r['is_dead'])])
             missing = f'上に見本（キャプションのある行）が {SAMPLE_COUNT} 行必要です'
         else:
-            samples = pick_random_samples([self.caption_of(r, sections) for i, r in enumerate(records)
-                                           if i != position and not to_flag(r['is_dead'])])
+            others = [(i, r) for i, r in enumerate(records) if i != position and not to_flag(r['is_dead'])]
+            captions = [(i, self.caption_of(r, sections)) for i, r in others]
+            if mode == 'random':
+                samples = pick_random_samples([caption for _, caption in captions])
+            else:  # mark: A〜D が同じ行 → ★●▲■ を共有する行 → ほかの行
+                one, many = to_text(records[position]['mark']), set(to_text(records[position]['marks']))
+                marks = {i: (to_text(r['mark']), set(to_text(r['marks']))) for i, r in others}
+                samples = pick_tiered_samples([[(i, c) for i, c in captions if one and marks[i][0] == one],
+                                               [(i, c) for i, c in captions if many & marks[i][1]],
+                                               captions])
             missing = f'見本（キャプションのある行）がほかに {SAMPLE_COUNT} 行必要です'
         if not samples:
             raise ValueError(missing)
@@ -1066,7 +1075,7 @@ def freeze_dictionary():
 
 @app.route('/qwen_fill', methods=['POST'])
 def qwen_fill():
-    """🤖 / 🎲: Qwen に下書きさせ、その行の空の欄に入れる（{row_index, mode: near（既定）/ random}。qwen 版で起動したときだけ）
+    """🤖 / 🔖 / 🎲: Qwen に下書きさせ、その行の空の欄に入れる（{row_index, mode: near（既定）/ mark / random}。qwen 版のときだけ）
 
     入れた段落と、行を返す
     """

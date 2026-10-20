@@ -472,7 +472,8 @@ function headHtml() {
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
         ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。' +
-            '🤖（上）: 上の 10 行を見本に / 🎲（下）: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
+            '🤖（上）: 上の 10 行を見本に / 🔖（中）: 同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行を見本に / ' +
+            '🎲（下）: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
         sideHeadHtml(),
@@ -708,6 +709,8 @@ function qwenHtml(row) {
     };
     return '<td class="qwen">' +
         button('near', '🤖', samplesAbove(row.index), '上の 10 行', `上に見本（キャプションのある行）が ${QWEN_SAMPLES} 行必要です`) +
+        button('mark', '🔖', elsewhere, '同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行',
+            `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
         button('random', '🎲', elsewhere, 'ほかの行からランダムに 10 行', `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
         '</td>';
 }

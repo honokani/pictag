@@ -61,25 +61,32 @@ def robot(page, name):
     return row(page, name).locator('.qwen-btn[data-mode="near"]')
 
 
+def marker(page, name):
+    """🔖: 同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行を見本に"""
+    return row(page, name).locator('.qwen-btn[data-mode="mark"]')
+
+
 def dice(page, name):
     """🎲: ほかの行からランダムに 10 行を見本に"""
     return row(page, name).locator('.qwen-btn[data-mode="random"]')
 
 
 def test_qwen_column_sits_between_token_and_marks_at_half_the_token_width(page, project, qwen_mode):
-    # 列は token の半分の幅のまま。🤖 と 🎲 は横に並べず、縦に積む（🤖 が上）
+    # 列は token の半分の幅のまま。🤖・🔖・🎲 は横に並べず、上から縦に積む
     open_project(page)
     head = page.locator("#gridHead th")
     expect(head.nth(1)).to_have_text("token")
     expect(head.nth(2)).to_have_text("🤖")
     expect(head.nth(3)).to_have_text("マーク")
     expect(robot(page, "r10.png")).to_have_text("🤖")
+    expect(marker(page, "r10.png")).to_have_text("🔖")
     expect(dice(page, "r10.png")).to_have_text("🎲")
     width = "el => el.getBoundingClientRect().width"
     meta = row(page, "r10.png").locator("td.meta").evaluate(width)
     assert abs(row(page, "r10.png").locator("td.qwen").evaluate(width) - meta / 2) <= 1
-    top, bottom = robot(page, "r10.png").bounding_box(), dice(page, "r10.png").bounding_box()
-    assert bottom["y"] >= top["y"] + top["height"] - 0.5  # 🎲 は 🤖 の下
+    boxes = [button(page, "r10.png").bounding_box() for button in (robot, marker, dice)]
+    for upper, lower in zip(boxes, boxes[1:]):
+        assert lower["y"] >= upper["y"] + upper["height"] - 0.5  # 🤖 の下に 🔖、その下に 🎲
     expect(dice(page, "r09.png")).to_be_disabled()  # ほかの見本は r00〜r08 の 9 行
 
 
@@ -90,6 +97,7 @@ def test_robot_needs_ten_samples_above_and_dice_ten_elsewhere(page, project, qwe
     expect(robot(page, "r05.png")).to_be_disabled()  # 上は 5 行
     expect(robot(page, "r05.png")).to_have_attribute("title", re.compile("10"))
     expect(dice(page, "r05.png")).to_be_enabled()  # ほかに 10 行
+    expect(marker(page, "r05.png")).to_be_enabled()  # 🔖 も足りない分はランダムなので、🎲 と同じ
     expect(robot(page, "r10.png")).to_be_enabled()
 
 
