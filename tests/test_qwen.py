@@ -28,10 +28,10 @@ def test_system_prompt_is_instructions_and_skeleton():
 
 
 def test_system_prompt_sends_actions_to_action_and_states_to_each_character():
-    # 行動（していること・関わり）だけを action へ、状態（表情・視線・姿勢・見た目・服）は人物の段落へ、と指示する
+    # 行動（していること・姿勢（girl is standing.）・関わり）だけを action へ、状態（表情・視線・見た目・服）は人物の段落へ、と指示する
     prompt = system_prompt([("action", []), ("girl", SUBJECT)])
-    assert "Put only actions in action (what the characters are doing and how they interact)" in prompt
-    assert "pose, appearance and clothing belong to each character's section, never to action" in prompt
+    assert "Put only actions in action (what the characters are doing, including their posture, and how they interact)" in prompt
+    assert "Expressions, gaze, appearance and clothing belong to each character's section, never to action" in prompt
 
 
 def test_user_prompt_lists_samples_and_asks_for_this_image():
