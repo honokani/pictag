@@ -46,6 +46,8 @@ input[type=text], select, textarea {
 
 #bulkText { width: 170px; }
 #bulkSection, #bulkKey { max-width: 120px; }
+#movePhrase { width: 150px; }
+#moveSection, #moveFrom, #moveTo { max-width: 100px; }
 
 button {
     font: inherit;

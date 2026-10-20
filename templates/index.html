@@ -37,6 +37,15 @@
         <label class="group"><input id="showDead" type="checkbox" checked> 削除済み画像を表示</label>
         <button id="removeDeadButton" type="button">削除済みを完全削除</button>
         <button id="freezeButton" type="button" title="今使っている語句・単語を共用辞書に入れます（使われなくなっても候補に残ります）">共用辞書に入れる</button>
+        <!-- キーを移す: 段落（girl A・girl B も）のキーの語句を、ほかのキーへ（開いているプロジェクトの全行と共用辞書） -->
+        <form id="moveForm" class="group" title="段落（A, B も）のキーの語句を、ほかのキーへ移します（開いているプロジェクトの全行と共用辞書。保存はまだ）">
+            <select id="moveSection" aria-label="移す段落"></select>
+            <select id="moveFrom" aria-label="移す元のキー"></select>
+            <input id="movePhrase" type="text" placeholder="語句" autocomplete="off" aria-label="移す語句">
+            →
+            <select id="moveTo" aria-label="移す先のキー"></select>
+            <button type="submit">移す</button>
+        </form>
         <!-- 2段目（選択中は一括入力が並ぶ）を1行に収めて、選択で表がずれないようにここに置く -->
         <span id="markTools-clear" class="group clear-marks">
             <button type="button" class="hold" data-column="mark" title="1秒長押しで、全行の A〜D を消す">A〜D をクリア</button>
