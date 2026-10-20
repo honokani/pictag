@@ -496,6 +496,56 @@ def test_sections_add_rename_remove(page, imgs):
     expect(page.locator("#gridHead .section-name")).to_have_count(4)
 
 
+def fold_button(page, section):
+    return page.locator(f'#gridHead th[data-section="{section}"] .fold-section')
+
+
+def test_section_column_folds_narrow_and_opens_again(page, imgs):
+    # 見出しの右端の ◀ で列を細く畳み（入力のある行に ●）、▶ で元の幅に戻す
+    load_dir(page, imgs)
+    write(page, "a.png", "looks: standing")
+    width = "el => el.getBoundingClientRect().width"
+    expect(fold_button(page, "girl")).to_have_text("◀")
+    fold_button(page, "girl").click()
+    expect(fold_button(page, "girl")).to_have_text("▶")
+    expect(cell(page, "a.png")).to_have_text("●")
+    expect(cell(page, "b.png")).to_have_text("")
+    assert cell(page, "a.png").evaluate(width) < 40
+
+    fold_button(page, "girl").click()
+    expect(filled(page, "a.png")).to_have_text(["looks: standing"])
+    assert cell(page, "a.png").evaluate(width) >= 220
+
+
+def test_clicking_a_folded_cell_opens_the_column_and_starts_editing(page, imgs):
+    load_dir(page, imgs)
+    fold_button(page, "guy").click()
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    cell(page, "b.png", "guy").click()
+    expect(cell(page, "b.png", "guy").locator("textarea")).to_be_focused()
+    expect(fold_button(page, "guy")).to_have_text("◀")
+
+
+def test_folded_columns_are_remembered_per_project(page, imgs, tmp_path):
+    load_dir(page, imgs)
+    fold_button(page, "guy").click()
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    load_dir(page, imgs)  # 読み込み直しても畳んだまま
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    load_dir(page, make_images(tmp_path / "imgs" / "other", {"x.png": (100, 100)}))  # ほかのプロジェクトは開いたまま
+    expect(fold_button(page, "guy")).to_have_text("◀")
+
+
+def test_folding_picture_keeps_the_thumbnail_size(page, imgs):
+    # サムネイルは picture の欄の高さに合わせるが、畳んだ picture には合わせない（畳む前の大きさのまま）
+    load_dir(page, imgs)
+    thumb = row(page, "a.png").locator("td.thumb img")
+    size = thumb.evaluate("el => el.getBoundingClientRect().width")
+    fold_button(page, "picture").click()
+    expect(fold_button(page, "picture")).to_have_text("▶")
+    assert thumb.evaluate("el => el.getBoundingClientRect().width") == size
+
+
 def test_dead_rows_toggle_and_remove(page, imgs):
     load_dir(page, imgs)
     page.click("#saveButton")
