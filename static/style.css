@@ -106,7 +106,8 @@ td.meta { width: 56px; min-width: 56px; cursor: pointer; user-select: none; }
 td.meta .tokens { white-space: pre-line; text-align: right; color: #666; font-variant-numeric: tabular-nums; }
 td.meta .tokens.over { color: #c62828; font-weight: 700; }
 
-td.cell { min-width: 220px; max-width: 380px; cursor: text; }
+/* --lend: サムネイルを広げたときに、picture より右の畳んでいない列と右端の列から借りる幅（JS が入れる。picture と畳んだ列は自分の幅が優先） */
+td.cell { min-width: calc(220px - var(--lend, 0px)); max-width: calc(380px - var(--lend, 0px)); cursor: text; }
 td.cell .text { white-space: pre-wrap; word-break: break-word; min-height: 1.5em; }
 td.cell .ln.empty { color: #b8b8b8; }
 td.cell .ln.auto { font-style: italic; color: #4a5a7a; }
@@ -135,7 +136,7 @@ td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 
 /* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture の幅より後ろに置いて優先する） */
 th .section-head { display: flex; align-items: center; }
-th .fold-section { margin-left: auto; border: none; background: none; padding: 0 4px; color: #888; }
+th .fold-section, th .thumb-zoom { margin-left: auto; border: none; background: none; padding: 0 4px; color: #888; }  /* サムネイルの ▶ / ◀ も同じ見た目 */
 th.folded, td.cell.folded { width: 28px; min-width: 28px; max-width: 28px; padding: 4px 0; text-align: center; }
 td.cell.folded { color: #888; cursor: pointer; }
 
@@ -163,7 +164,7 @@ span.ws > .ws-marks { white-space: pre; }
 .ws-marks .nl::after { content: '↵'; position: absolute; left: 2px; color: #bbb; }
 
 /* hint と preview は全文を出す（高さは中身に合わせ、中でスクロールしない）。hint は右上のボタンで畳む */
-td.hint { min-width: 220px; width: 100%; position: relative; }
+td.hint { min-width: calc(220px - var(--lend, 0px)); width: 100%; position: relative; }
 td.hint textarea {
     display: block;
     width: 100%;

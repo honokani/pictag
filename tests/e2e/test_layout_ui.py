@@ -104,3 +104,29 @@ def test_without_hint_the_preview_takes_the_rest_of_the_width(page, imgs):
         assert round(width(td(page, f'td.cell[data-section="{section}"]'))) == 220, section  # hint があるときと同じ
     assert width(td(page, "td.hint")) > 400  # 残りは preview
     assert 9.5 <= spare_after_close_up(page) <= 11  # picture は広げない
+
+
+def test_thumbnail_zooms_in_with_width_from_unfolded_columns_right_of_picture(page, imgs):
+    # サムネイルの見出しの ▶ で 1.5 倍に広げる。増えた幅は、picture より右の畳んでいない列（右端の列も）から同じだけずつ借りる。◀ で戻す
+    load_dir(page, imgs)
+    page.locator('#gridHead th[data-section="guy"] .fold-section').click()  # 畳んだ列からは借りない
+    expect(page.locator('#gridHead th[data-section="guy"]')).to_have_class("folded")
+    img = td(page, "td.thumb img")
+    columns = {"picture": td(page, 'td.cell[data-section="picture"]'), "action": td(page, 'td.cell[data-section="action"]'),
+               "girl": td(page, 'td.cell[data-section="girl"]'), "guy": td(page, 'td.cell[data-section="guy"]'),
+               "side": td(page, "td.hint")}
+    size = width(img)
+    before = {name: width(column) for name, column in columns.items()}
+
+    page.locator("#gridHead .thumb-zoom").click()
+    expect(page.locator("#gridHead .thumb-zoom")).to_have_text("◀")
+    assert abs(width(img) - size * 1.5) <= 1
+    lent = {name: before[name] - width(column) for name, column in columns.items()}
+    for name in ["action", "girl", "side"]:  # 増えた幅（0.5 倍）を3つの列で分ける
+        assert abs(lent[name] - size * 0.5 / 3) <= 1.5, name
+    assert abs(lent["picture"]) < 0.5 and abs(lent["guy"]) < 0.5  # picture と畳んだ列は変えない
+    assert overflow(page) == 0
+
+    page.locator("#gridHead .thumb-zoom").click()
+    expect(page.locator("#gridHead .thumb-zoom")).to_have_text("▶")
+    assert abs(width(img) - size) <= 0.5
