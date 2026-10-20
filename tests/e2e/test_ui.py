@@ -204,6 +204,23 @@ def test_phrase_chosen_inside_a_line_is_separated_by_commas(page, imgs):
         assert editor.input_value() == "looks: cool, short hair, 40 yo"
 
 
+def test_choosing_a_candidate_replaces_the_selected_text(page, imgs):
+    # 範囲を選んだ状態で候補を選ぶと、選んだ文字と置き換える（区切りは行の途中で選んだときと同じ）
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: long hair")
+    wait_for_phrase(page, "long hair")
+
+    editor = open_editor(page, "a.png")
+    editor.fill("looks: cool, short hair, 40 yo")
+    start = len("looks: cool, ")
+    editor.evaluate(f"el => el.setSelectionRange({start}, {start})")
+    for _ in "short hair":
+        editor.press("Shift+ArrowRight")  # short hair を選ぶ
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("long hair")
+    editor.press("Tab")
+    assert editor.input_value() == "looks: cool, long hair, 40 yo"
+
+
 def test_line_start_does_not_suggest_phrases_already_in_the_cell(page, imgs):
     # 行頭の「キー: 語句」の候補に、その欄の同じキーにもう入っている語句は出さない
     load_dir(page, imgs)
