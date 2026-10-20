@@ -565,6 +565,19 @@ def test_folding_picture_keeps_the_thumbnail_size(page, imgs):
     assert thumb.evaluate("el => el.getBoundingClientRect().width") == size
 
 
+def test_zoomed_thumbnails_are_remembered_per_project(page, imgs):
+    load_dir(page, imgs)
+    zoom = page.locator("#gridHead .thumb-zoom")
+    expect(zoom).to_have_text("▶")
+    thumb = row(page, "a.png").locator("td.thumb img")
+    size = thumb.evaluate("el => el.getBoundingClientRect().width")
+    zoom.click()
+    expect(zoom).to_have_text("◀")
+    load_dir(page, imgs)  # 読み込み直しても広げたまま
+    expect(zoom).to_have_text("◀")
+    assert abs(thumb.evaluate("el => el.getBoundingClientRect().width") - size * 1.5) <= 1
+
+
 def test_dead_rows_toggle_and_remove(page, imgs):
     load_dir(page, imgs)
     page.click("#saveButton")

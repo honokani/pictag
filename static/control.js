@@ -20,6 +20,8 @@ const state = {
     foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
     foldedSections: new Set(),  // 畳んだ段落の列（プロジェクトごとにブラウザに覚える）
     sideView: 'hint',     // hint の列に出すもの（hint / preview。hint が無ければ preview。プロジェクトごとにブラウザに覚える）
+    thumbZoomed: false,   // サムネイルを 1.5 倍に広げているか（プロジェクトごとにブラウザに覚える）
+    thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
@@ -451,9 +453,15 @@ function sectionHeadHtml(s) {
         `<button type="button" class="fold-section" title="この列を畳む" aria-label="${name} を畳む">◀</button></div></th>`;
 }
 
+// サムネイルの見出し: 右端の ▶ で 1.5 倍に広げ、◀ で元の大きさに戻す
+function thumbHeadHtml() {
+    const [mark, title] = state.thumbZoomed ? ['◀', 'サムネイルを元の大きさに戻す'] : ['▶', 'サムネイルを 1.5 倍に広げる'];
+    return `<th><div class="section-head">サムネイル<button type="button" class="thumb-zoom" title="${title}" aria-label="${title}">${mark}</button></div></th>`;
+}
+
 function headHtml() {
     return [
-        '<th>サムネイル</th>',
+        thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
@@ -557,6 +565,25 @@ function saveSideView() {
     }
 }
 
+// サムネイルを広げているかも、プロジェクトごとにブラウザに覚える
+const thumbZoomKey = () => `pictag:thumb-zoom:${state.projectName}`;
+
+function loadThumbZoom() {
+    try {
+        return localStorage.getItem(thumbZoomKey()) === 'on';
+    } catch {
+        return false;
+    }
+}
+
+function saveThumbZoom() {
+    try {
+        localStorage.setItem(thumbZoomKey(), state.thumbZoomed ? 'on' : 'off');
+    } catch {
+        // 覚えられなくても、広げる・戻すはできる
+    }
+}
+
 function toggleHint(button) {
     const tr = button.closest('tr');
     const name = tr.dataset.name;
@@ -580,6 +607,14 @@ function toggleSection(section) {
 function openSection(section, index) {
     toggleSection(section);
     startEdit(rowElement(index).querySelector(`td.cell[data-section="${CSS.escape(section)}"]`));
+}
+
+// サムネイルを広げる・戻す（見出しの ▶ / ◀）。表は描き直さず、見出しと大きさ・借りる幅だけを変える
+function toggleThumbZoom() {
+    state.thumbZoomed = !state.thumbZoomed;
+    saveThumbZoom();
+    $('gridHead').innerHTML = headHtml();
+    zoomThumbnails();
 }
 
 // hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
@@ -637,11 +672,26 @@ function fitPictureColumn() {
 // サムネイルは正方形で、picture の欄の中身の高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る
 // picture を畳んでいるときは測らない（畳む前の大きさのまま）
 function fitThumbnails() {
-    if (state.foldedSections.has('picture')) return;
-    const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
-        .filter(td => td.getBoundingClientRect().height > 0)
-        .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
-    if (heights.length) $('grid').style.setProperty('--thumb-size', `${Math.floor(Math.min(...heights))}px`);
+    if (!state.foldedSections.has('picture')) {
+        const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
+            .filter(td => td.getBoundingClientRect().height > 0)
+            .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
+        if (heights.length) state.thumbBase = Math.floor(Math.min(...heights));
+    }
+    zoomThumbnails();
+}
+
+const THUMB_ZOOM = 1.5;     // ▶ で広げたときの大きさ（元の大きさの倍率）
+const THUMB_DEFAULT = 96;  // 測れていないとき（picture を畳んだまま開いたとき）の大きさ（CSS の既定と同じ）
+
+// サムネイルの大きさを入れる。広げているときは 1.5 倍にし、増えた幅は picture より右の畳んでいない列（右端の列も）から
+// 同じだけずつ借りる（--lend の分だけ各列の最小・最大の幅を下げる。段落は最小の幅で、残りは右端の列が取っているため）
+function zoomThumbnails() {
+    const base = state.thumbBase || THUMB_DEFAULT;
+    const extra = state.thumbZoomed ? Math.round(base * (THUMB_ZOOM - 1)) : 0;
+    const lenders = state.sections.filter(s => s !== 'picture' && !state.foldedSections.has(s)).length + 1;
+    $('grid').style.setProperty('--thumb-size', `${base + extra}px`);
+    $('grid').style.setProperty('--lend', `${extra / lenders}px`);
 }
 
 const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c.phrase) : state.viewChoices.camera[Number(group.slice(6))]);
@@ -1015,6 +1065,7 @@ async function opened(name) {
     state.foldedHints = loadFolded('hints');
     state.foldedSections = loadFolded('sections');
     state.sideView = loadSideView();
+    state.thumbZoomed = loadThumbZoom();
     state.selected = new Set();
     state.anchor = null;
     state.dirty = false;
@@ -1329,6 +1380,7 @@ function wire() {
         if (fold) toggleSection(fold.closest('th').dataset.section);
         const view = event.target.closest('.side-view');
         if (view) switchSideView(view.dataset.view);
+        if (event.target.closest('.thumb-zoom')) toggleThumbZoom();
         const button = event.target.closest('.remove-section');
         if (button) guarded(removeSection)(button.closest('th').dataset.section);
     });
