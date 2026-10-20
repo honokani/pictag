@@ -129,6 +129,36 @@ def test_rename_rejects_unknown_same_or_bad_names(api, tmp_path):
     assert "smile" in girl_texts(api)["titanic.png"]
 
 
+# ---- キーを移す ----
+
+def test_move_phrases_in_sections_of_the_same_name_and_in_shared(api, tmp_path):
+    # A, B を除いた名前が同じ段落（dog A・dog B）の全行と、共用辞書のその段落の語句を移す。ほかの段落（girl）は変えない
+    rows = load_scenes(api, movies(tmp_path), ["titanic.png", "lady_and_tramp.png"])
+    api.write(rows["titanic.png"], "looks: lying, smile")
+    api.post("/register_entries", {"phrases": [{"key": "looks", "phrase": "lying"}]})
+
+    res = api.post("/move_phrases", {"section": "dog", "from_key": "looks", "to_key": "body", "phrases": ["lying"]})
+    assert res["success"] and res["changed"] == 1, res
+    texts = {r["サムネイル"]: r["texts"] for r in api.rows()}
+    assert texts["lady_and_tramp.png"]["dog A"] == "body: tan fur, long ears, lying"
+    assert texts["lady_and_tramp.png"]["dog B"] == "body: gray/scruffy fur, lying"
+    assert texts["titanic.png"]["girl"] == "looks: lying, smile"
+    assert entry(api, "body", "lying") == {"dog A": (1, True), "dog B": (1, True)}
+    assert entry(api, "looks", "lying") == {"girl": (1, True)}
+
+
+def test_move_phrases_rejects_the_same_key_unknown_phrases_or_bad_names(api, tmp_path):
+    load_scenes(api, movies(tmp_path), ["titanic.png"])
+    for payload in [{"section": "girl", "from_key": "looks", "to_key": "looks", "phrases": ["smile"]},  # 同じキー
+                    {"section": "girl", "from_key": "looks", "to_key": "body", "phrases": ["flying"]},  # どこにも無い
+                    {"section": "cat", "from_key": "looks", "to_key": "body", "phrases": ["smile"]},  # 無い段落
+                    {"section": "girl", "from_key": "looks", "to_key": "", "phrases": ["smile"]},  # 移す先のキーが無い
+                    {"section": "girl", "from_key": "looks", "to_key": "body", "phrases": []}]:  # 語句が無い
+        res = api.post("/move_phrases", payload)
+        assert not res["success"] and res["message"], payload
+    assert girl_texts(api)["titanic.png"].startswith("looks: standing, eyes closed, smile\n")
+
+
 # ---- 「1つだけ」のグループ ----
 
 def test_group_registers_its_phrases_and_is_listed(api, tmp_path, base_dir):

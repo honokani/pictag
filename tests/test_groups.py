@@ -2,10 +2,11 @@
 import pytest
 
 from groups import blocked_by, group_of, normalize_groups
-from words import (check_phrase, empty_shared, group_phrases, register_phrases, register_words, rename_phrase,
-                   rename_registered, ungroup_phrases, unregister_phrases, unregister_words)
+from words import (check_phrase, empty_shared, group_phrases, move_phrases, move_registered, register_phrases, register_words,
+                   rename_phrase, rename_registered, ungroup_phrases, unregister_phrases, unregister_words)
 
 POSTURES = ["standing", "sitting", "lying"]
+SUBJECT_KEYS = ["looks", "clothes", "body"]
 
 
 def test_normalize_merges_groups_sharing_a_phrase_and_drops_small_ones():
@@ -65,6 +66,45 @@ def test_rename_registered_merges_duplicates_and_renames_in_groups():
     assert out["phrases"] == [{"section": "girl", "key": "looks", "phrase": "standing"},
                               {"section": "guy", "key": "looks", "phrase": "standing"}]
     assert out["groups"] == [{"key": "looks", "phrases": ["standing", "sitting"]}]
+
+
+def test_move_phrases_to_the_line_of_another_key():
+    text = "looks: black ponytail hair, smile\nbody: bare hands"
+    assert move_phrases(text, "looks", "body", ["black ponytail hair"], SUBJECT_KEYS) == (
+        "looks: smile\nbody: bare hands, black ponytail hair")
+    assert move_phrases("looks: a, b, c", "looks", "body", ["a", "c", "a"], SUBJECT_KEYS) == "looks: b\nbody: a, c"
+
+
+def test_move_phrases_puts_a_new_key_line_in_template_order_and_drops_an_emptied_line():
+    text = "looks: black ponytail hair\nclothes: school uniform\ngirl is smiling"
+    assert move_phrases(text, "looks", "body", ["black ponytail hair"], SUBJECT_KEYS) == (
+        "clothes: school uniform\nbody: black ponytail hair\ngirl is smiling")
+
+
+def test_move_phrases_already_in_the_destination_only_leave_the_source():
+    text = "looks: smile, black ponytail hair\nbody: black ponytail hair"
+    assert move_phrases(text, "looks", "body", ["black ponytail hair"], SUBJECT_KEYS) == "looks: smile\nbody: black ponytail hair"
+
+
+def test_move_phrases_to_a_key_outside_the_template_keeps_its_line_or_goes_last():
+    text = "looks: smile, ponytail\nhair: black\ngirl is smiling"
+    assert move_phrases(text, "looks", "hair", ["ponytail"], SUBJECT_KEYS) == "looks: smile\nhair: black, ponytail\ngirl is smiling"
+    assert move_phrases("looks: ponytail\nbody: bare hands", "looks", "hair", ["ponytail"], SUBJECT_KEYS) == (
+        "body: bare hands\nhair: ponytail")
+
+
+def test_move_phrases_leaves_text_without_them_alone():
+    text = "looks: smile\nclothes: ponytail\nponytail"  # 別のキーとキーなしの文の語句は動かさない
+    assert move_phrases(text, "looks", "body", ["ponytail"], SUBJECT_KEYS) == text
+
+
+def test_move_registered_changes_the_key_in_the_chosen_sections_only():
+    shared = register_phrases(empty_shared(), [("dog A", "looks", "lying"), ("dog B", "looks", "lying"),
+                                               ("girl", "looks", "lying"), ("dog A", "body", "lying")])
+    out = move_registered(shared, lambda section: section.startswith("dog"), "looks", "body", ["lying"])
+    assert out["phrases"] == [{"section": "dog A", "key": "body", "phrase": "lying"},  # 重なれば1つに
+                              {"section": "dog B", "key": "body", "phrase": "lying"},
+                              {"section": "girl", "key": "looks", "phrase": "lying"}]
 
 
 def test_rename_phrase_in_input_lines_of_the_key_only():

@@ -364,7 +364,15 @@ function keylessCandidates(section, ctx) {
     ]);
 }
 
-const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates};
+// キーを移す語句の欄: その段落（A, B も。section は A, B を除いた名前）のそのキーで使っている語句
+function movingCandidates(section, ctx) {
+    return keepBest(state.phrases
+        .filter(p => p.key === ctx.key && baseName(p.section) === section && !ctx.current.includes(p.phrase))
+        .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: Math.log1p(p.count)})));
+}
+
+const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates,
+    moving: movingCandidates};
 
 function candidates(section, ctx) {
     return CANDIDATE_SOURCES[ctx.mode](section, ctx)
@@ -499,6 +507,7 @@ function applyDictionary(body) {
         state.autoKeys = body.auto_keys;
     }
     fillBulkKeys();
+    fillMoveKeys();
     if (groupsChanged && state.loaded) rerenderRows();
     document.dispatchEvent(new CustomEvent('pictag:dictionary'));
 }
@@ -932,6 +941,7 @@ function renderTable() {
     $('bulkSection').innerHTML = state.sections.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
     if (state.sections.includes(bulkSection)) $('bulkSection').value = bulkSection;
     fillBulkKeys();
+    fillMoveSections();
     $('emptyNote').hidden = state.loaded;
     $('tools').hidden = !state.loaded || state.view !== 'images';
     $('markTools').hidden = !state.loaded || state.view !== 'images';
@@ -1522,6 +1532,63 @@ function bulkContext(el) {
     return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
 }
 
+// ---- キーを移す（帯の「共用辞書に入れる」の右。段落（A, B も）のキーの語句を、ほかのキーへ。開いているプロジェクトの全行と共用辞書） ----
+
+// 段落の選択肢: A, B を除いた名前（表の並び）
+function fillMoveSections() {
+    const keep = $('moveSection').value;
+    const names = [...new Set(state.sections.map(baseName))];
+    $('moveSection').innerHTML = names.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+    if (names.includes(keep)) $('moveSection').value = keep;
+    fillMoveKeys();
+}
+
+// キーの選択肢: 確定タグのキー（自動のキーは除く）と、その段落（A, B も）で使っているキー。移す先は移す元を除く
+function fillMoveKeys() {
+    const section = $('moveSection').value;
+    const template = editKeys(section);
+    const used = state.phrases.filter(p => p.key && baseName(p.section) === section && !state.autoKeys.includes(p.key)).map(p => p.key);
+    const keys = [...new Set([...template, ...used])];
+    const fill = (select, list) => {
+        const keep = select.value;
+        select.innerHTML = list.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join('');
+        if (list.includes(keep)) select.value = keep;
+    };
+    fill($('moveFrom'), keys);
+    fill($('moveTo'), keys.filter(k => k !== $('moveFrom').value));
+}
+
+// 語句の欄の文脈: 移す元のキーの語句（カンマで区切って何個でも）。選んだ範囲は無いものとして見る
+function moveContext(el) {
+    const caret = el.selectionStart;
+    const end = el.selectionEnd;
+    const value = el.value.slice(0, caret) + el.value.slice(end);
+    const before = value.slice(0, caret);
+    const segment = before.lastIndexOf(',') + 1;
+    const raw = before.slice(segment);
+    const query = raw.trimStart();
+    return {end, after: value.slice(caret), current: splitPhrases(value), cellPhrases: {}, mode: 'moving', key: $('moveFrom').value,
+        query, queryStart: segment + (raw.length - query.length)};
+}
+
+async function movePhrases() {
+    const [section, from, to] = [$('moveSection').value, $('moveFrom').value, $('moveTo').value];
+    const phrases = splitPhrases($('movePhrase').value);
+    commitEdit();
+    await settled();
+    const res = await postJson('/move_phrases', {section, from_key: from, to_key: to, phrases});
+    if (!res.success) return setStatus(res.message, 'error');
+    $('movePhrase').value = '';
+    paintWhitespace($('movePhrase'));
+    if (res.changed) {
+        setDirty(true);
+        await refreshTable();
+    }
+    applyDictionary(res.dictionary);
+    const where = res.changed ? `開いているプロジェクトの ${res.changed} 行。保存はまだです` : '共用辞書だけ';
+    setStatus(`${section} の ${from} の ${phrases.join('・')} を ${to} に移しました（${where}）`, 'ok');
+}
+
 function openImage(name) {
     $('imageTitle').textContent = name;
     $('imageFull').src = `/image/${encodeURIComponent(name)}`;
@@ -1558,6 +1625,22 @@ function wire() {
     $('bulkKey').addEventListener('change', hideSuggestions);
     $('bulkText').addEventListener('keydown', handleSuggestKey);
     $('bulkText').addEventListener('blur', hideSuggestions);
+    $('moveForm').addEventListener('submit', event => {
+        event.preventDefault();
+        guarded(movePhrases)();
+    });
+    withWhitespaceMarks($('movePhrase'));
+    $('movePhrase').addEventListener('input', () => showSuggestions($('movePhrase'), $('moveSection').value, moveContext));
+    $('movePhrase').addEventListener('keydown', handleSuggestKey);
+    $('movePhrase').addEventListener('blur', hideSuggestions);
+    $('moveSection').addEventListener('change', () => {
+        fillMoveKeys();
+        hideSuggestions();
+    });
+    $('moveFrom').addEventListener('change', () => {
+        fillMoveKeys();
+        hideSuggestions();
+    });
 
     $('filterOne').addEventListener('change', applyFilter);
     $('filterMany').addEventListener('change', applyFilter);
