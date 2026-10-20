@@ -989,6 +989,36 @@ async function refreshTable() {
     refreshWords();
 }
 
+// ---- 英字だけ（キャプションや辞書に入る欄。全角は半角に、日本語などは消す） ----
+
+// キャプションや辞書に入る欄（表の入力欄・一括入力・キーを移す・段落を追加・共用辞書の足す語句と改名）
+const ENGLISH_FIELDS = 'td.cell textarea, #bulkText, #movePhrase, #sectionName, #dictAddText, .rename-input';
+// 英字の記号にそろえる文字（全角の英数字・記号・空白は NFKD で半角になる）
+const ENGLISH_MARKS = {'、': ',', '。': '.', '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '\t': ' '};
+
+// 英字にそろえ（全角は半角、アクセントは外す、「、」「。」と曲がった引用符・ダッシュは英字の記号、タブは空白）、
+// そろえても英字（半角の英数字・記号・空白。複数行の欄は改行も）にならない文字は消す。{clean: 残した文字, removed: 消した文字}
+function splitEnglish(text, multiline) {
+    const allowed = multiline ? /[\x20-\x7e\n]/ : /[\x20-\x7e]/;
+    const chars = [...text.normalize('NFKD').replace(/[̀-ͯ]/g, '')].map(ch => ENGLISH_MARKS[ch] ?? ch);
+    return {clean: chars.filter(ch => allowed.test(ch)).join(''), removed: chars.filter(ch => !allowed.test(ch)).join('')};
+}
+
+const englishOnly = (text, multiline = true) => splitEnglish(text, multiline).clean;
+const warnNotEnglish = removed => setStatus(`英字以外は入れられません（${removed} を外しました）`, 'warn');
+
+// 欄の文字を英字だけにする（カーソルは、そろえたあとの同じ位置に）。消した文字があれば知らせる。変えたら true
+function keepEnglish(el) {
+    const multiline = el.tagName === 'TEXTAREA';
+    const {clean, removed} = splitEnglish(el.value, multiline);
+    if (clean === el.value) return false;
+    const caret = englishOnly(el.value.slice(0, el.selectionStart), multiline).length;
+    el.value = clean;
+    el.setSelectionRange(caret, caret);
+    if (removed) warnNotEnglish(removed);
+    return true;
+}
+
 // ---- 空白と改行の印（打っている欄の上に、同じ文字組みの層を重ねて ␣ と ↵ だけを描く。文字には入らない） ----
 
 // 欄から印の層へ写す文字組み（折り返しと文字の位置をそろえる）
@@ -1255,8 +1285,11 @@ async function addSection() {
 }
 
 async function renameSection(old) {
-    const name = window.prompt('新しい段落名', old);
-    if (name === null || name.trim() === old) return;
+    const typed = window.prompt('新しい段落名', old);
+    if (typed === null) return;
+    const {clean: name, removed} = splitEnglish(typed, false);  // 段落の名前もキャプションに出るので英字だけ
+    if (removed) warnNotEnglish(removed);
+    if (!name.trim() || name.trim() === old) return;
     await settled();
     const res = await postJson('/rename_section', {old, new: name});
     if (!res.success) return setStatus(res.message, 'error');
@@ -1625,6 +1658,15 @@ function wire() {
     $('bulkKey').addEventListener('change', hideSuggestions);
     $('bulkText').addEventListener('keydown', handleSuggestKey);
     $('bulkText').addEventListener('blur', hideSuggestions);
+    // キャプションや辞書に入る欄は英字だけ。欄の input より先に直す（候補・高さ・印は直した文字で描く）。IME の変換中は待ち、確定したら直す
+    document.addEventListener('input', event => {
+        if (!event.isComposing && event.target instanceof Element && event.target.matches(ENGLISH_FIELDS)) keepEnglish(event.target);
+    }, true);
+    document.addEventListener('compositionend', event => {
+        if (event.target instanceof Element && event.target.matches(ENGLISH_FIELDS) && keepEnglish(event.target)) {
+            event.target.dispatchEvent(new Event('input'));
+        }
+    }, true);
     $('moveForm').addEventListener('submit', event => {
         event.preventDefault();
         guarded(movePhrases)();

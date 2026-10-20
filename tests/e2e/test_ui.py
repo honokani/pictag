@@ -574,6 +574,46 @@ def test_leaving_action_ends_sentences_with_periods(page, imgs):
     expect(filled(page, "a.png")).to_have_text(["smiling"])
 
 
+def test_text_is_tidied_to_english(page, imgs):
+    # 英字にそろえる: 全角の英数字・記号・空白は半角、アクセントは外す、「、」「。」と曲がった引用符・ダッシュは英字の記号、タブは空白。
+    # そろえても英字（半角の英数字・記号・空白。入力欄は改行も）にならないかな・漢字などは消す
+    load_dir(page, imgs)
+    assert page.evaluate("englishOnly('ｌｏｎｇ　ｈａｉｒ，ｃａｆé、girl’s “wave” — ok。\\t黒髪\\nnext 😀')") == (
+        "long hair,cafe,girl's \"wave\" - ok. \nnext ")
+    assert page.evaluate("englishOnly('a\\nb', false)") == "ab"  # 1行の欄は改行も消す
+
+
+def test_fields_for_captions_take_english_only(page, imgs):
+    # キャプションや辞書に入る欄は、打ったそばから英字にそろえ、英字以外を消したときだけ知らせる。IME の変換中は待つ
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png", section="action")
+    editor.fill("girl ｓｍｉｌｅｓ")
+    expect(editor).to_have_value("girl smiles")
+    expect(page.locator("#status")).not_to_have_text(re.compile("英字以外"))  # 半角に直しただけなら知らせない
+    editor.fill("girl smiles 笑顔")
+    expect(editor).to_have_value("girl smiles ")
+    expect(page.locator("#status")).to_have_text("英字以外は入れられません（笑顔 を外しました）")
+
+    editor.fill("")
+    editor.evaluate("el => { el.value = 'あ'; el.dispatchEvent(new InputEvent('input', {isComposing: true})); }")
+    expect(editor).to_have_value("あ")  # 変換中は触らない
+    editor.evaluate("el => el.dispatchEvent(new CompositionEvent('compositionend'))")
+    expect(editor).to_have_value("")  # 確定したら直す
+    page.keyboard.press("Escape")
+
+    open_editor(page, "a.png")
+    field(page, "a.png", "looks").fill("ｓｔａｎｄｉｎｇ")
+    expect(field(page, "a.png", "looks")).to_have_value("standing")
+    page.keyboard.press("Escape")
+
+    for selector in ["#bulkText", "#movePhrase", "#sectionName"]:  # 一括入力（入力欄を開いた行は選択中）・キーを移す・段落を追加
+        page.locator(selector).fill("ｄｏｇ犬")
+        expect(page.locator(selector)).to_have_value("dog")
+    page.once("dialog", lambda dialog: dialog.accept("ｂｏｙ"))  # 段落の改名
+    page.locator('#gridHead th[data-section="guy"] .section-name').dblclick()
+    expect(page.locator('#gridHead th[data-section="boy"]')).to_be_attached()
+
+
 def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):
     load_dir(page, imgs)
     write(page, "a.png", "body: long hair")
