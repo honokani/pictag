@@ -388,6 +388,11 @@ function accept(item) {
 function handleSuggestKey(event) {
     const s = state.suggest;
     if (!s || s.el !== event.target) return false;
+    if (event.key === 'ArrowDown' && s.active === s.items.length - 1) {
+        // 一番下で ↓: 候補を閉じ、ふつうの ↓ としてカーソルを下の行へ動かす
+        hideSuggestions();
+        return false;
+    }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         moveActive(event.key === 'ArrowDown' ? 1 : -1);
     } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (s.ctx.query || s.moved))) {
