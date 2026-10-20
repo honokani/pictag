@@ -14,7 +14,7 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from qwen import (DEFAULT_URL, SAMPLE_COUNT, fill_text, generate, jpeg_of, match_section, parse_caption,
+from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, match_section, parse_caption,
                   pick_random_samples, pick_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, characters_of, insert_position,
                       name_for_new, pov_choices, template_keys)
@@ -786,18 +786,42 @@ class CaptionTool:
         answer = generate(url, jpeg_of(self.image_dir / name), f"{self.dir_name}_{Path(name).stem}.jpg",
                           user_prompt(samples), system_prompt([(s, keys[s]) for s in sections]))
         self.save_qwen_hint(name, answer)
-        filled = set()
+        # 押し直したときは、前に Qwen が入れて、そのあと直していないもの（前の下書き）を消してから入れる
+        before = {s: to_text(self.df.at[row_index, s]) for s in sections}
+        drafts = self.read_qwen_drafts(name)
+        texts = {s: clear_drafts(before[s], drafts.get(s, {})) for s in sections}
+        added = {}
         for block, lines in parse_caption(answer):
             section = match_section(block, sections)
             if section is None:
                 continue
-            before = to_text(self.df.at[row_index, section])
-            after = fill_text(before, lines, keys[section])
-            if after != before:
-                self.update_text(row_index, section, after)
-                filled.add(section)
-        logger.info(f"Qwen filled {name}: {sorted(filled)}")
-        return self.row_views([row_index])[0], [s for s in sections if s in filled]
+            texts[section], put = fill_section(texts[section], lines, keys[section])
+            drafted = added.setdefault(section, {'keys': {}, 'sentences': []})
+            drafted['keys'].update(put['keys'])
+            drafted['sentences'] += put['sentences']
+        for section in sections:
+            if texts[section] != before[section]:
+                self.update_text(row_index, section, texts[section])
+        added = {s: d for s, d in added.items() if d['keys'] or d['sentences']}
+        self.save_qwen_drafts(name, added)
+        logger.info(f"Qwen filled {name}: {sorted(added)}")
+        return self.row_views([row_index])[0], [s for s in sections if s in added]
+
+    def qwen_drafts_file(self, image_name):
+        """Qwen が欄に入れたもの（前の下書き）の置き場: data_work/<フォルダ名>/qwen/<画像名>.json"""
+        return self.data_work_target / QWEN_DIR / f"{Path(image_name).stem}.json"
+
+    def read_qwen_drafts(self, image_name):
+        """前の下書き {段落: {'keys': {キー: 値}, 'sentences': [文]}}（無い・壊れているときは空）"""
+        try:
+            return json.loads(self.qwen_drafts_file(image_name).read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return {}
+
+    def save_qwen_drafts(self, image_name, drafts):
+        path = self.qwen_drafts_file(image_name)
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps(drafts, ensure_ascii=False, indent=1), encoding='utf-8', newline='\n')
 
     def save_data(self):
         """データ保存"""
