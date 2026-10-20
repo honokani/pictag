@@ -229,6 +229,60 @@ def test_enter_after_accepting_makes_a_new_line(page, imgs):
     assert editor.input_value() == "body: long hair, \nlooks: standing"
 
 
+def test_down_on_the_last_suggestion_closes_them_and_moves_down(page, imgs):
+    # 候補の一番下で ↓ を押すと、候補を閉じて、ふつうのテキストのように下の行へカーソルが動く
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair, bare hands")
+    wait_for_phrase(page, "bare hands")
+
+    editor = open_editor(page, "a.png")
+    editor.fill("body: \nlooks: standing")
+    editor.evaluate("el => el.setSelectionRange(6, 6)")  # body: の行末
+    editor.press_sequentially("a")
+    expect(page.locator("#suggestions:visible li")).to_have_count(2)
+    editor.press("ArrowDown")  # 一番下の候補へ
+    expect(page.locator("#suggestions li").last).to_have_class(re.compile(r"\bactive\b"))
+    editor.press("ArrowDown")  # 一番下で ↓
+    expect(page.locator("#suggestions")).to_be_hidden()
+    assert editor.evaluate("el => el.value.slice(0, el.selectionStart).split('\\n').length") == 2  # 下の行
+    assert editor.input_value() == "body: a\nlooks: standing"
+
+
+def test_phrase_suggestions_are_split_by_kind(page, imgs):
+    # 語句の候補は同じ種類の段落で使ったものだけ。女性（girl・woman）・男性（guy・man・boy）はそれぞれまとめ、ほかは種類ごと
+    load_dir(page, imgs)
+    for name in ["woman", "dog"]:
+        page.fill("#sectionName", name)
+        page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(6)
+    write(page, "a.png", "looks: standing")
+    write(page, "a.png", "looks: muscular", section="guy")
+    wait_for_phrase(page, "muscular")
+    suggestions = page.locator("#suggestions:visible")
+
+    for section, shown, other in [("girl", "standing", "muscular"), ("woman", "standing", "muscular"),
+                                  ("guy", "muscular", "standing")]:
+        open_editor(page, "b.png", section).fill("looks: ")
+        expect(suggestions).to_contain_text(shown)
+        expect(suggestions).not_to_contain_text(other)
+    open_editor(page, "b.png", "dog").fill("looks: ")  # dog ではまだ使っていない
+    expect(page.locator("#suggestions")).to_be_hidden()
+
+    editor = open_editor(page, "b.png")  # 行頭の「キー: 語句」も同じ
+    editor.fill("")
+    editor.press_sequentially("mus")
+    expect(page.locator("#suggestions")).to_be_hidden()
+    editor.fill("")
+    editor.evaluate("el => el.blur()")
+
+    row(page, "a.png").locator("td.meta").click()  # 一括入力も同じ
+    page.select_option("#bulkSection", "guy")
+    page.select_option("#bulkKey", "looks")
+    page.locator("#bulkText").press_sequentially("s")
+    expect(suggestions).to_contain_text("muscular")
+    expect(suggestions).not_to_contain_text("standing")
+
+
 def test_action_suggests_words_inside_a_sentence(page, imgs):
     load_dir(page, imgs)
     write(page, "a.png", "girl spread arms\nguy grab girl's waist", section="action")
@@ -324,15 +378,40 @@ def test_leaving_the_editor_tidies_commas_and_spaces(page, imgs):
     editor.fill("\n".join([
         "a,, b", "c, , d", "e,  ,f",  # カンマの連なりは1つに
         "g,h", "i,  j", "k , l",      # カンマの後ろは空白1つ
-        ", m  n,",                    # 頭と行末のカンマは消す。語の間の空白は1つ
+        ", m  n,",                    # 頭のカンマは消す。語の間の空白は1つ（行末のカンマは、action の文では「.」）
     ]))
     editor.evaluate("el => el.blur()")
-    expect(filled(page, "a.png", "action")).to_have_text(["a, b", "c, d", "e, f", "g, h", "i, j", "k, l", "m n"])
+    expect(filled(page, "a.png", "action")).to_have_text(["a, b", "c, d", "e, f", "g, h", "i, j", "k, l", "m n."])
 
     editor = open_editor(page, "a.png")
     editor.fill("looks:  , standing,,smiling\nbody: long  hair ,  bare hands,")
     editor.evaluate("el => el.blur()")
     expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "body: long hair, bare hands"])
+
+
+def test_leaving_the_editor_merges_a_repeated_key(page, imgs):
+    # 行頭で重なった同じキーは1つにまとめる（looks: looks : → looks:。値の無いキーは保存しない）
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png")
+    editor.fill("looks: looks :\nclothes:clothes: clothes : skirt\nbody: body: long hair")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["clothes: skirt", "body: long hair"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:"])
+
+
+def test_leaving_action_ends_sentences_with_periods(page, imgs):
+    # action のキーの無い文だけ: 「, .」と行末のカンマは「.」（最後の行も）。キーのある行とほかの段落は行末のカンマを消す
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png", section="action")
+    editor.fill("girl spread arms, \nguy dancing, .\ngirl smiles,. guy waves\npose: standing, \nboy jumps,")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png", "action")).to_have_text(
+        ["girl spread arms.", "guy dancing.", "girl smiles. guy waves", "pose: standing", "boy jumps."])
+
+    editor = open_editor(page, "a.png")
+    editor.fill("smiling, ")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["smiling"])
 
 
 def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):
@@ -434,6 +513,56 @@ def test_sections_add_rename_remove(page, imgs):
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator('#gridHead th[data-section="dog A"] .remove-section').click()
     expect(page.locator("#gridHead .section-name")).to_have_count(4)
+
+
+def fold_button(page, section):
+    return page.locator(f'#gridHead th[data-section="{section}"] .fold-section')
+
+
+def test_section_column_folds_narrow_and_opens_again(page, imgs):
+    # 見出しの右端の ◀ で列を細く畳み（入力のある行に ●）、▶ で元の幅に戻す
+    load_dir(page, imgs)
+    write(page, "a.png", "looks: standing")
+    width = "el => el.getBoundingClientRect().width"
+    expect(fold_button(page, "girl")).to_have_text("◀")
+    fold_button(page, "girl").click()
+    expect(fold_button(page, "girl")).to_have_text("▶")
+    expect(cell(page, "a.png")).to_have_text("●")
+    expect(cell(page, "b.png")).to_have_text("")
+    assert cell(page, "a.png").evaluate(width) < 40
+
+    fold_button(page, "girl").click()
+    expect(filled(page, "a.png")).to_have_text(["looks: standing"])
+    assert cell(page, "a.png").evaluate(width) >= 220
+
+
+def test_clicking_a_folded_cell_opens_the_column_and_starts_editing(page, imgs):
+    load_dir(page, imgs)
+    fold_button(page, "guy").click()
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    cell(page, "b.png", "guy").click()
+    expect(cell(page, "b.png", "guy").locator("textarea")).to_be_focused()
+    expect(fold_button(page, "guy")).to_have_text("◀")
+
+
+def test_folded_columns_are_remembered_per_project(page, imgs, tmp_path):
+    load_dir(page, imgs)
+    fold_button(page, "guy").click()
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    load_dir(page, imgs)  # 読み込み直しても畳んだまま
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    load_dir(page, make_images(tmp_path / "imgs" / "other", {"x.png": (100, 100)}))  # ほかのプロジェクトは開いたまま
+    expect(fold_button(page, "guy")).to_have_text("◀")
+
+
+def test_folding_picture_keeps_the_thumbnail_size(page, imgs):
+    # サムネイルは picture の欄の高さに合わせるが、畳んだ picture には合わせない（畳む前の大きさのまま）
+    load_dir(page, imgs)
+    thumb = row(page, "a.png").locator("td.thumb img")
+    size = thumb.evaluate("el => el.getBoundingClientRect().width")
+    fold_button(page, "picture").click()
+    expect(fold_button(page, "picture")).to_have_text("▶")
+    assert thumb.evaluate("el => el.getBoundingClientRect().width") == size
 
 
 def test_dead_rows_toggle_and_remove(page, imgs):
