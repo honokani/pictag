@@ -1,9 +1,12 @@
 """Qwen（ComfyUI の TextGenerate）で空の欄を下書きする: 送る文面・答えの分け方・空の欄への入れ方・API"""
+import re
+
 import pytest
 
 import app as pictag
 from helpers import FakeComfy, make_images
-from qwen import INSTRUCTIONS, fill_text, match_section, parse_caption, pick_samples, skeleton, system_prompt, user_prompt
+from qwen import (INSTRUCTIONS, fill_text, match_section, parse_caption, pick_random_samples, pick_samples, skeleton,
+                  system_prompt, user_prompt)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
@@ -36,6 +39,13 @@ def test_pick_samples_takes_the_nearest_ten_non_empty_captions_in_table_order():
     assert pick_samples(["c"] * 9 + [""]) == []  # 10 個に満たなければ渡さない
 
 
+def test_pick_random_samples_takes_ten_different_non_empty_captions():
+    captions = [f"c{i}" if i % 3 else "" for i in range(30)]  # 空でないものは 20 個
+    picked = pick_random_samples(captions)
+    assert len(set(picked)) == 10 and set(picked) <= set(captions) - {""}
+    assert pick_random_samples([f"c{i}" for i in range(9)] + [""]) == []  # 10 個に満たなければ渡さない
+
+
 # ---- 答えの分け方と、空の欄への入れ方 ----
 
 def test_parse_caption_splits_sections_and_lines():
@@ -65,6 +75,13 @@ def test_fill_text_fills_keys_without_values_and_keeps_the_rest():
 def test_fill_text_adds_sentences_only_when_there_are_none():
     assert fill_text("", ["girl waves.", "guy smiles."], []) == "girl waves.\nguy smiles."
     assert fill_text("girl sits.", ["girl waves."], []) == "girl sits."
+
+
+def test_fill_text_treats_none_and_nan_as_no_tag():
+    # Qwen がたまに返す「none」「nan」は、タグが無いものとして入れない（大文字・小文字と文末の . は問わない。ほかの語句は入れる）
+    assert fill_text("", ["looks: nan", "clothes: None, red dress", "body: NaN"], SUBJECT) == "clothes: red dress"
+    assert fill_text("", ["none"], []) == ""
+    assert fill_text("", ["none.", "girl waves."], []) == "girl waves."
 
 
 def test_fill_text_adds_keys_outside_the_template_at_the_end():
@@ -128,6 +145,22 @@ def test_qwen_answer_stays_for_hint_by_qwen_after_reopening(qwen_api):
 def test_qwen_fill_needs_ten_samples_above(qwen_api, comfy):
     res = qwen_api.qwen_fill(qwen_api.row_index("r05.png"))
     assert res["success"] is False and "10" in res["message"]
+    assert comfy.prompts == []
+
+
+def test_qwen_fill_random_takes_samples_from_the_whole_project(qwen_api, comfy):
+    # 🎲: その行と削除済みを除く、キャプションのある行からランダムに 10 個（下の行も）
+    row = qwen_api.row_index("r05.png")
+    assert qwen_api.qwen_fill(row, mode="random")["success"] is False  # ほかの行は r00〜r04・r06〜r09 の 9 行だけ
+    qwen_api.write(qwen_api.row_index("r11.png"), "looks: pose11")
+    res = qwen_api.qwen_fill(row, mode="random")
+    assert res["success"], res
+    used = sorted(int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]))
+    assert used == [0, 1, 2, 3, 4, 6, 7, 8, 9, 11]  # ほかに 10 行なので全部。その行（5）は入らない
+
+
+def test_qwen_fill_rejects_an_unknown_mode(qwen_api, comfy):
+    assert qwen_api.qwen_fill(qwen_api.row_index("r10.png"), mode="zzz")["success"] is False
     assert comfy.prompts == []
 
 

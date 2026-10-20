@@ -56,28 +56,52 @@ def row(page, name):
     return page.locator(f'#gridBody tr[data-name="{name}"]')
 
 
-def test_robot_column_sits_between_token_and_marks_at_half_the_token_width(page, project, qwen_mode):
+def robot(page, name):
+    """🤖: 上の 10 行を見本に"""
+    return row(page, name).locator('.qwen-btn[data-mode="near"]')
+
+
+def dice(page, name):
+    """🎲: ほかの行からランダムに 10 行を見本に"""
+    return row(page, name).locator('.qwen-btn[data-mode="random"]')
+
+
+def test_qwen_column_sits_between_token_and_marks_as_wide_as_token(page, project, qwen_mode):
     open_project(page)
     head = page.locator("#gridHead th")
     expect(head.nth(1)).to_have_text("token")
-    expect(head.nth(2)).to_have_text("🤖")
+    expect(head.nth(2)).to_have_text("🤖🎲")
     expect(head.nth(3)).to_have_text("マーク")
+    expect(robot(page, "r10.png")).to_have_text("🤖")
+    expect(dice(page, "r10.png")).to_have_text("🎲")
     width = "el => el.getBoundingClientRect().width"
     meta = row(page, "r10.png").locator("td.meta").evaluate(width)
-    assert abs(row(page, "r10.png").locator("td.qwen").evaluate(width) - meta / 2) <= 1
+    assert abs(row(page, "r10.png").locator("td.qwen").evaluate(width) - meta) <= 1
+    expect(dice(page, "r09.png")).to_be_disabled()  # ほかの見本は r00〜r08 の 9 行
 
 
-def test_robot_needs_ten_samples_above(page, project, qwen_mode):
+def test_robot_needs_ten_samples_above_and_dice_ten_elsewhere(page, project, qwen_mode):
+    project.write(project.row_index("r11.png"), "looks: pose11")  # 見本は r00〜r09 と r11 の 11 行
+    project.save()
     open_project(page)
-    button = row(page, "r09.png").locator(".qwen-btn")  # 上の見本は 9 行
-    expect(button).to_be_disabled()
-    expect(button).to_have_attribute("title", re.compile("10"))
-    expect(row(page, "r10.png").locator(".qwen-btn")).to_be_enabled()
+    expect(robot(page, "r05.png")).to_be_disabled()  # 上は 5 行
+    expect(robot(page, "r05.png")).to_have_attribute("title", re.compile("10"))
+    expect(dice(page, "r05.png")).to_be_enabled()  # ほかに 10 行
+    expect(robot(page, "r10.png")).to_be_enabled()
+
+
+def test_dice_fills_with_samples_from_the_whole_project(page, project, qwen_mode, comfy):
+    project.write(project.row_index("r11.png"), "looks: pose11")
+    project.save()
+    open_project(page)
+    dice(page, "r05.png").click()
+    expect(row(page, "r05.png").locator('td.cell[data-section="action"] .ln')).to_have_text(["girl waves."])
+    assert "looks: pose11" in comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]  # 下の行も見本に入る
 
 
 def test_robot_fills_empty_keys_and_hint_by_qwen_shows_the_answer(page, project, qwen_mode):
     open_project(page)
-    row(page, "r10.png").locator(".qwen-btn").click()
+    robot(page, "r10.png").click()
     girl = row(page, "r10.png").locator('td.cell[data-section="girl"] .ln:not(.empty)')
     expect(girl).to_have_text(["looks: standing", "clothes: red dress"])
     expect(row(page, "r10.png").locator('td.cell[data-section="action"] .ln')).to_have_text(["girl waves."])

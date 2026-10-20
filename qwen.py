@@ -1,11 +1,13 @@
 """Qwen（ComfyUI の TextGenerate。Krea2 のテキストエンコーダーと同じ Qwen3-VL-4B）で、空の欄を下書きする
 
-- 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、見本（上にある行のキャプション 10 個）
+- 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、
+  見本（キャプション 10 個。🤖 は上にある行から近い順、🎲 はほかの行からランダム）
 - 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）
 - ComfyUI の呼び方は pj_loratrain（loratrain/backends.py）と同じ。ComfyUI の起動・停止はしない（起動しておいたものに乗るだけ）
 """
 import io
 import json
+import random
 import time
 import urllib.request
 import uuid
@@ -31,6 +33,8 @@ INSTRUCTIONS = ("You write training captions for an image generation model. Desc
 # キーの無い段落に添える書き方の例（else は物ごとにキーで書く。ほかは短い文）
 KEYLESS_EXAMPLES = {OTHERS: '(e.g. dog: brown fur, sitting)'}
 SENTENCE_EXAMPLE = '(e.g. boy is sitting.)'
+# Qwen がたまに「値が無い」の意味で返す語（人のいない画像の looks: nan、action: none など）。タグが無いものとして入れない
+NO_TAGS = {'none', 'nan'}
 
 
 # ---- 送る文面 ----
@@ -57,6 +61,12 @@ def pick_samples(captions_above, count=SAMPLE_COUNT):
     """上にある行のキャプション（表の並び）から、空でないものを近い順に count 個（並びは表のまま）。足りなければ []"""
     nearest = [caption for caption in reversed(captions_above) if caption][:count]
     return nearest[::-1] if len(nearest) == count else []
+
+
+def pick_random_samples(captions, count=SAMPLE_COUNT):
+    """キャプションの中から、空でないものをランダムに count 個（押すたびに選び直す）。足りなければ []"""
+    present = [caption for caption in captions if caption]
+    return random.sample(present, count) if len(present) >= count else []
 
 
 # ---- 答えの分け方と、空の欄への入れ方 ----
@@ -90,13 +100,22 @@ def with_key(text, key, value, keys):
     return '\n'.join([*(line for line in text.splitlines() if parse_line(line)[0] != key), f'{key}: {value}'])
 
 
+def is_tag(phrase):
+    """答えの語句がタグか（none・nan は、大文字・小文字と文末の . を問わずタグではない）"""
+    return phrase.strip(' .').lower() not in NO_TAGS
+
+
 def fill_text(text, lines, keys):
-    """入力 text に、答えの行 lines を入れる。入れるのは値の無いキー（自動のキーは除く）と、文が1つも無いときの文だけ"""
+    """入力 text に、答えの行 lines を入れる。入れるのは値の無いキー（自動のキーは除く）と、文が1つも無いときの文だけ
+
+    答えの none・nan は捨て、語句が残らなかったキー・文は入れない
+    """
     present = [parse_line(line) for line in text.splitlines()]
     filled = {key for key, phrases in present if key and phrases}
     has_sentence = any(not key and phrases for key, phrases in present)
     for line in lines:
         key, phrases = parse_line(line)
+        phrases = [phrase for phrase in phrases if is_tag(phrase)]
         if not phrases or key in AUTO_KEYS or (key and key in filled) or (not key and has_sentence):
             continue
         value = ', '.join(phrases)

@@ -14,8 +14,8 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from qwen import (DEFAULT_URL, SAMPLE_COUNT, fill_text, generate, jpeg_of, match_section, parse_caption, pick_samples,
-                  system_prompt, user_prompt)
+from qwen import (DEFAULT_URL, SAMPLE_COUNT, fill_text, generate, jpeg_of, match_section, parse_caption,
+                  pick_random_samples, pick_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, characters_of, insert_position,
                       name_for_new, pov_choices, template_keys)
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
@@ -42,6 +42,7 @@ SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォ�
 CAPTION_EXT = '.caption'  # 書き出すキャプションの拡張子（captions/<画像名>.caption）
 HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡張子のファイルは hint（読むだけ）
 QWEN_DIR = 'qwen'  # data_work/<フォルダ名>/ の下の、Qwen の答えの置き場（<画像名>.txt。右端の列の hint_by_qwen で見る）
+QWEN_MODES = ('near', 'random')  # 見本の選び方: 🤖 は上の行から近い順、🎲 はほかの行からランダム
 FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
 DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl', 'guy']  # 新規プロジェクトの段落（dog などは必要なときに足す。空の段落は出力しない）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
@@ -755,12 +756,15 @@ class CaptionTool:
         (folder / f"{Path(image_name).stem}{HINT_EXT}").write_text(text, encoding='utf-8', newline='\n')
         self.qwen_hints[image_name] = text
 
-    def qwen_fill(self, row_index, url):
+    def qwen_fill(self, row_index, url, mode='near'):
         """Qwen に下書きさせ、その行の空の欄（値の無いキーと、文の無い段落）に入れる
 
-        見本は上にある行（削除済みは除く）の空でないキャプションを近い順に 10 個。(画面に渡す1行, 入れた段落) を返す。
+        見本は空でないキャプション 10 個（削除済みの行は除く）。mode が near（🤖）なら上にある行から近い順に、
+        random（🎲）ならその行のほかの全部の行からランダムに。(画面に渡す1行, 入れた段落) を返す。
         行・見本・画像の問題は ValueError、ComfyUI の問題は OSError（繋がらない・時間切れ）か RuntimeError（実行の失敗）
         """
+        if mode not in QWEN_MODES:
+            raise ValueError(f'見本の選び方が正しくありません: {mode}')
         if not self.is_row(row_index):
             raise ValueError('行がありません')
         sections = section_names(self.df)
@@ -769,9 +773,15 @@ class CaptionTool:
         name = records[position]['サムネイル']
         if to_flag(records[position]['is_dead']) or not (self.image_dir / name).is_file():
             raise ValueError(f'{name} は元の画像がありません')
-        samples = pick_samples([self.caption_of(r, sections) for r in records[:position] if not to_flag(r['is_dead'])])
+        if mode == 'near':
+            samples = pick_samples([self.caption_of(r, sections) for r in records[:position] if not to_flag(r['is_dead'])])
+            missing = f'上に見本（キャプションのある行）が {SAMPLE_COUNT} 行必要です'
+        else:
+            samples = pick_random_samples([self.caption_of(r, sections) for i, r in enumerate(records)
+                                           if i != position and not to_flag(r['is_dead'])])
+            missing = f'見本（キャプションのある行）がほかに {SAMPLE_COUNT} 行必要です'
         if not samples:
-            raise ValueError(f'上に見本（キャプションのある行）が {SAMPLE_COUNT} 行必要です')
+            raise ValueError(missing)
         keys = {s: template_keys(s, self.shared['templates'], FIXED_SECTIONS) for s in sections}
         answer = generate(url, jpeg_of(self.image_dir / name), f"{self.dir_name}_{Path(name).stem}.jpg",
                           user_prompt(samples), system_prompt([(s, keys[s]) for s in sections]))
@@ -1032,12 +1042,16 @@ def freeze_dictionary():
 
 @app.route('/qwen_fill', methods=['POST'])
 def qwen_fill():
-    """🤖: Qwen に下書きさせ、その行の空の欄に入れる（{row_index}。qwen 版で起動したときだけ）。入れた段落と、行を返す"""
+    """🤖 / 🎲: Qwen に下書きさせ、その行の空の欄に入れる（{row_index, mode: near（既定）/ random}。qwen 版で起動したときだけ）
+
+    入れた段落と、行を返す
+    """
     url = app.config.get('QWEN_URL')
     if not url:
         return jsonify({'success': False, 'message': 'qwen 版で起動していません（--qwen を付けて起動）'})
+    data = request.get_json() or {}
     try:
-        row, filled = caption_tool.qwen_fill((request.get_json() or {}).get('row_index'), url)
+        row, filled = caption_tool.qwen_fill(data.get('row_index'), url, data.get('mode', 'near'))
     except (ValueError, RuntimeError) as e:  # 行・見本・画像の問題と、ComfyUI での実行の失敗
         return jsonify({'success': False, 'message': str(e)})
     except TimeoutError as e:
