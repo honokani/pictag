@@ -130,3 +130,18 @@ def test_thumbnail_zooms_in_with_width_from_unfolded_columns_right_of_picture(pa
     page.locator("#gridHead .thumb-zoom").click()
     expect(page.locator("#gridHead .thumb-zoom")).to_have_text("▶")
     assert abs(width(img) - size) <= 0.5
+
+
+def test_save_button_stays_at_the_top_right(page, imgs):
+    # 保存はいつも上の帯の右上の端。メッセージはその左に出し、長くても保存は動かない
+    load_dir(page, imgs, width=1200)
+    header = page.locator("header.bar")
+    padding = header.evaluate("el => parseFloat(getComputedStyle(el).paddingRight)")
+    for message in ["保存しました", "とても長いメッセージ " * 12]:
+        page.evaluate("text => setStatus(text, 'ok')", message)
+        head = header.bounding_box()
+        save = page.locator("#saveButton").bounding_box()
+        status = page.locator("#status").bounding_box()
+        assert abs(head["x"] + head["width"] - padding - (save["x"] + save["width"])) <= 1, message  # 右の端
+        assert save["y"] - head["y"] <= 10, message  # 上の端
+        assert status["x"] + status["width"] <= save["x"], message  # メッセージは保存の左

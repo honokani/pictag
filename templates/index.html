@@ -8,23 +8,25 @@
 </head>
 <body>
     <header class="bar">
-        <strong class="app-name">pictag</strong>
-        <nav class="tabs" aria-label="画面の切り替え">
-            <button type="button" class="tab on" data-view="images" aria-pressed="true">画像</button>
-            <button type="button" class="tab" data-view="dictionary" aria-pressed="false">共用辞書</button>
-        </nav>
-        <label>既存プロジェクト
-            <select id="projectSelect">
-                <option value="">選んでください</option>
-            </select>
-        </label>
-        <label class="grow">画像フォルダ
-            <input id="imageDir" type="text" placeholder="C:\path\to\images">
-        </label>
-        <button id="browseButton" type="button" title="このPCでフォルダを選んで読み込む">参照…</button>
-        <button id="loadButton" type="button">読み込み</button>
+        <div class="head-main">
+            <strong class="app-name">pictag</strong>
+            <nav class="tabs" aria-label="画面の切り替え">
+                <button type="button" class="tab on" data-view="images" aria-pressed="true">画像</button>
+                <button type="button" class="tab" data-view="dictionary" aria-pressed="false">共用辞書</button>
+            </nav>
+            <label>既存プロジェクト
+                <select id="projectSelect">
+                    <option value="">選んでください</option>
+                </select>
+            </label>
+            <label class="grow">画像フォルダ
+                <input id="imageDir" type="text" placeholder="C:\path\to\images">
+            </label>
+            <button id="browseButton" type="button" title="このPCでフォルダを選んで読み込む">参照…</button>
+            <button id="loadButton" type="button">読み込み</button>
+            <span class="group"><span id="statusTime"></span><span id="status" role="status"></span></span>
+        </div>
         <button id="saveButton" type="button" class="primary" disabled title="Ctrl+S">保存</button>
-        <span class="group"><span id="statusTime"></span><span id="status" role="status"></span></span>
     </header>
 
     <section id="tools" class="bar tools" hidden>

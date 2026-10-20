@@ -6,7 +6,7 @@ import pytest
 import app as pictag
 from helpers import FakeComfy, make_images
 from qwen import (INSTRUCTIONS, clear_drafts, fill_section, fill_text, match_section, parse_caption, pick_random_samples,
-                  pick_samples, skeleton, system_prompt, user_prompt)
+                  pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
@@ -44,6 +44,19 @@ def test_pick_random_samples_takes_ten_different_non_empty_captions():
     picked = pick_random_samples(captions)
     assert len(set(picked)) == 10 and set(picked) <= set(captions) - {""}
     assert pick_random_samples([f"c{i}" for i in range(9)] + [""]) == []  # 10 個に満たなければ渡さない
+
+
+def test_pick_tiered_samples_fills_from_the_first_tier_then_the_next():
+    # 先の段からランダムに選び、足りない分は次の段から（同じ行は1回）。並びは後の段が先、最初の段が最後（頼む文の直前）
+    same = [(i, f"a{i}") for i in range(3)]  # A〜D が同じ（3 行）
+    shared = [(0, "a0")] + [(i, f"s{i}") for i in range(3, 8)]  # ★●▲■ を共有（5 行。a0 は前の段で選び済み）
+    rest = same + shared[1:] + [(i, f"r{i}") for i in range(8, 30)]
+    picked = pick_tiered_samples([same, shared, rest])
+    assert len(set(picked)) == 10
+    assert sorted(picked[-3:]) == ["a0", "a1", "a2"]
+    assert sorted(picked[2:7]) == ["s3", "s4", "s5", "s6", "s7"]
+    assert all(p.startswith("r") for p in picked[:2])
+    assert pick_tiered_samples([[(0, "a")], [(1, "b"), (2, "")]]) == []  # 全部で 10 個に満たなければ渡さない
 
 
 # ---- 答えの分け方と、空の欄への入れ方 ----
@@ -192,6 +205,20 @@ def test_qwen_fill_random_takes_samples_from_the_whole_project(qwen_api, comfy):
     assert res["success"], res
     used = sorted(int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]))
     assert used == [0, 1, 2, 3, 4, 6, 7, 8, 9, 11]  # ほかに 10 行なので全部。その行（5）は入らない
+
+
+def test_qwen_fill_mark_takes_rows_with_the_same_marks_first(qwen_api, comfy):
+    # 🔖: A〜D が同じ行 → ★●▲■ を共有する行 → ほかの行からランダム、の順に 10 個（A〜D が同じ行が頼む文の直前）
+    qwen_api.write(qwen_api.row_index("r11.png"), "looks: pose11")  # その行のほかに 11 行
+    index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(12)}
+    qwen_api.post("/set_mark", {"rows": [index[1], index[2], index[10]], "mark": "A"})
+    qwen_api.post("/set_mark", {"rows": [index[4]], "mark": "B"})
+    qwen_api.post("/set_marks", {"rows": [index[3], index[10]], "mark": "★", "on": True})
+    res = qwen_api.qwen_fill(index[10], mode="mark")
+    assert res["success"], res
+    used = [int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"])]
+    assert len(set(used)) == 10 and 10 not in used
+    assert sorted(used[-2:]) == [1, 2] and used[-3] == 3  # A の行が最後、その前に ★ の行
 
 
 def test_qwen_fill_rejects_an_unknown_mode(qwen_api, comfy):
