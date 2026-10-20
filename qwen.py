@@ -118,8 +118,8 @@ def with_key(text, key, value, keys):
 
 
 def is_tag(phrase):
-    """答えの語句がタグか（none・nan は、大文字・小文字と文末の . を問わずタグではない）"""
-    return phrase.strip(' .').lower() not in NO_TAGS
+    """答えの語句がタグか（none・nan は、大文字・小文字、前後の括弧（(none)）、文末の . を問わずタグではない）"""
+    return phrase.strip(' .()').lower() not in NO_TAGS
 
 
 def fill_section(text, lines, keys):
