@@ -240,15 +240,17 @@ const phraseAfter = after => (!after.trim() ? ', ' : /^\s*,/.test(after) ? '' : 
 
 // 入力欄のカーソル位置の文脈
 // mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
+// 範囲を選んでいるときは、選んだ文字を候補で置き換えるので、無いものとして見る（end は置き換える範囲の終わり）
 function contextOf(el) {
-    const value = el.value;
     const caret = el.selectionStart;
+    const end = el.selectionEnd;
+    const value = el.value.slice(0, caret) + el.value.slice(end);
     const lineStart = value.lastIndexOf('\n', caret - 1) + 1;
     const lineEndAt = value.indexOf('\n', caret);
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
     const after = value.slice(caret, lineEnd);
-    const base = {caret, after, current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+    const base = {end, after, current: parseLine(value.slice(lineStart, lineEnd)).phrases,
         cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
@@ -373,7 +375,7 @@ function accept(item) {
     const {el, ctx} = state.suggest;
     if (item.kind === 'keyed' && el.tagName === 'TEXTAREA') {
         // 打ちかけの文字を消し、同じキーの行へ足す（無ければ行を足す）
-        const without = el.value.slice(0, ctx.queryStart) + el.value.slice(ctx.caret);
+        const without = el.value.slice(0, ctx.queryStart) + el.value.slice(ctx.end);
         el.value = addPhrase(without.split('\n').filter(line => line.trim()).join('\n'), item.key, item.phrase);
         el.setSelectionRange(el.value.length, el.value.length);
     } else if (item.kind === 'keyed') {
@@ -385,8 +387,8 @@ function accept(item) {
             word: () => item.word + wordSeparator(ctx.after),
             line: () => item.phrase,
         }[item.kind]();
-        // 候補を出すために2つ続けたスペースは、1つにまとめる
-        el.setRangeText(text, calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart, ctx.caret, 'end');
+        // 候補を出すために2つ続けたスペースは、1つにまとめる。範囲を選んでいれば、選んだ文字も置き換える
+        el.setRangeText(text, calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart, ctx.end, 'end');
     }
     el.dispatchEvent(new Event('input'));
 }
@@ -621,8 +623,6 @@ function toggleThumbZoom() {
     zoomThumbnails();
 }
 
-const ROW_GAP = 10;  // 見えていた行を見出しの下に見せ直すときの空き（px）
-
 // 列の見出しの下端（画面上の位置。見出しのセルは表の上に張り付く）
 const headBottom = () => $('gridHead').querySelector('th').getBoundingClientRect().bottom;
 
@@ -635,21 +635,25 @@ function firstWholeRow() {
         || rows.find(tr => tr.getBoundingClientRect().bottom > top);
 }
 
-// 行を、列の見出しの下端から ROW_GAP だけ下に見せる（表の端で届かないときは、届くところまで）
-function showRowBelowHead(index) {
+// 行の上端の、列の見出しの下端からの距離（px）
+const belowHead = tr => tr.getBoundingClientRect().top - headBottom();
+
+// 行を、列の見出しの下端から gap だけ下に見せる（表の端で届かないときは、届くところまで）
+function showRowBelowHead(index, gap) {
     const tr = rowElement(index);
-    if (tr) $('imagesView').scrollTop += tr.getBoundingClientRect().top - headBottom() - ROW_GAP;
+    if (tr) $('imagesView').scrollTop += belowHead(tr) - gap;
 }
 
 // hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
-// hint と preview は行ごとに高さが違うので、見えていた最初の行（上が切れていない行）を見出しのすぐ下に見せ直す
+// hint と preview は行ごとに高さが違うので、見えていた最初の行（上が切れていない行）を、押す前と同じ位置に見せ直す
 function switchSideView(view) {
     commitEdit();
     const anchor = firstWholeRow();
+    const gap = anchor ? belowHead(anchor) : 0;
     state.sideView = view;
     saveSideView();
     renderTable();
-    if (anchor) showRowBelowHead(Number(anchor.dataset.index));
+    if (anchor) showRowBelowHead(Number(anchor.dataset.index), gap);
 }
 
 // token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
@@ -1300,14 +1304,16 @@ function fillBulkKeys() {
 }
 
 // 一括入力の語句の欄の文脈: キーは選んだもの。キーなしなら文と単語
+// 入力欄と同じく、選んだ範囲は無いものとして見る
 function bulkContext(el) {
     const key = $('bulkKey').value;
-    const value = el.value;
     const caret = el.selectionStart;
+    const end = el.selectionEnd;
+    const value = el.value.slice(0, caret) + el.value.slice(end);
     const before = value.slice(0, caret);
     const after = value.slice(caret);
     const current = key ? splitPhrases(value) : [];
-    const base = {caret, after, current, cellPhrases: key ? {[key]: current} : {}};
+    const base = {end, after, current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
         const raw = before.slice(segment);
