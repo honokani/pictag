@@ -41,6 +41,13 @@ def plural(word, count):
     return IRREGULAR_PLURALS.get(word, f'{word}s')
 
 
+def template_keys(section, templates, fixed_sections):
+    """段落の確定タグのキー（画面の templateKeys と同じ）: 自分の名前の確定タグ。無ければ、固定の段落と else は無し、ほかは subject"""
+    if section in templates:
+        return templates[section]
+    return [] if section in fixed_sections or base_name(section) == OTHERS else templates.get('subject', [])
+
+
 def characters_of(present):
     """入力のある人物などの段落 [(段落, 入力)]（表の並び順）から characters の値を作る: 1 girl + 2 guys (guy A, guy B) + dog
 
