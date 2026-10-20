@@ -359,15 +359,40 @@ def test_leaving_the_editor_tidies_commas_and_spaces(page, imgs):
     editor.fill("\n".join([
         "a,, b", "c, , d", "e,  ,f",  # カンマの連なりは1つに
         "g,h", "i,  j", "k , l",      # カンマの後ろは空白1つ
-        ", m  n,",                    # 頭と行末のカンマは消す。語の間の空白は1つ
+        ", m  n,",                    # 頭のカンマは消す。語の間の空白は1つ（行末のカンマは、action の文では「.」）
     ]))
     editor.evaluate("el => el.blur()")
-    expect(filled(page, "a.png", "action")).to_have_text(["a, b", "c, d", "e, f", "g, h", "i, j", "k, l", "m n"])
+    expect(filled(page, "a.png", "action")).to_have_text(["a, b", "c, d", "e, f", "g, h", "i, j", "k, l", "m n."])
 
     editor = open_editor(page, "a.png")
     editor.fill("looks:  , standing,,smiling\nbody: long  hair ,  bare hands,")
     editor.evaluate("el => el.blur()")
     expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "body: long hair, bare hands"])
+
+
+def test_leaving_the_editor_merges_a_repeated_key(page, imgs):
+    # 行頭で重なった同じキーは1つにまとめる（looks: looks : → looks:。値の無いキーは保存しない）
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png")
+    editor.fill("looks: looks :\nclothes:clothes: clothes : skirt\nbody: body: long hair")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["clothes: skirt", "body: long hair"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:"])
+
+
+def test_leaving_action_ends_sentences_with_periods(page, imgs):
+    # action のキーの無い文だけ: 「, .」と行末のカンマは「.」（最後の行も）。キーのある行とほかの段落は行末のカンマを消す
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png", section="action")
+    editor.fill("girl spread arms, \nguy dancing, .\ngirl smiles,. guy waves\npose: standing, \nboy jumps,")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png", "action")).to_have_text(
+        ["girl spread arms.", "guy dancing.", "girl smiles. guy waves", "pose: standing", "boy jumps."])
+
+    editor = open_editor(page, "a.png")
+    editor.fill("smiling, ")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["smiling"])
 
 
 def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):

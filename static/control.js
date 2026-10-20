@@ -116,18 +116,25 @@ function addPhrase(text, key, phrase) {
     return [...lines.slice(0, at), renderInputLine(key, [...parsed[at].phrases, phrase]), ...lines.slice(at + 1)].join('\n');
 }
 
-// 1行を整える: 続いたカンマ（",, " ", ," ",  ,"）は1つにして、カンマの後ろは空白1つ（"a,b" "a,  b" "a , b" → "a, b"）。
-// 語の間に続いた空白は1つ。値の頭と行末のカンマ・空白（候補の確定で付く ", "）は落とす
+// 1行を整える: 行頭で重なった同じキー（"looks: looks :"）は1つにまとめる。続いたカンマ（",, " ", ," ",  ,"）は1つにして、
+// カンマの後ろは空白1つ（"a,b" "a,  b" "a , b" → "a, b"）。語の間に続いた空白は1つ。値の頭と行末のカンマ・空白（候補の確定で付く ", "）は落とす
 const tidyLine = line => line
+    .replace(/^(\s*-*\s*)([^\s,:][^,:]*?)\s*:(?:\s*\2\s*:)+/, '$1$2:')
     .replace(/\s*,[\s,]*/g, ', ')
     .replace(/(?<=\S)\s{2,}(?=\S)/g, ' ')
     .replace(/^(\s*-*\s*[^,:]*:)?\s*,\s*/, (match, head) => (head ? `${head} ` : ''))
     .replace(/[\s,]+$/, '');
 
+// action のキーの無い文を「.」で終える: 「, .」は「.」、行末のカンマも「.」（「.」の後ろのカンマは、整えるときに落とすだけ）
+const endSentence = line => line
+    .replace(/(?<=\S)\s*,[\s,]*\./g, '.')
+    .replace(/(?<=[^\s,.])\s*,[\s,]*$/, '.');
+
 // 保存する形に整える: 各行を整え、空行と値の無いキーの行を落とす
-function tidyInput(text) {
+function tidyInput(text, section) {
+    const sentence = line => section === 'action' && !parseLine(line).key;
     return text.split('\n')
-        .map(tidyLine)
+        .map(line => tidyLine(sentence(line) ? endSentence(line) : line))
         .filter(line => parseLine(line).phrases.length > 0)
         .join('\n');
 }
@@ -730,7 +737,7 @@ function commitEdit() {
     state.editor = null;
     hideSuggestions();
     const row = state.byIndex.get(editor.index);
-    const text = tidyInput(editor.el.value);
+    const text = tidyInput(editor.el.value, editor.section);
     const changed = text !== (row.texts[editor.section] || '');
     row.texts[editor.section] = text;
     editor.td.innerHTML = cellHtml(editor.section, row);
