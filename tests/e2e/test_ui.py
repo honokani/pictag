@@ -187,6 +187,39 @@ def test_suggestion_completes_phrase_of_the_line_key(page, imgs):
     expect(filled(page, "a.png")).to_have_text(["body: long hair"])
 
 
+def test_phrase_chosen_inside_a_line_is_separated_by_commas(page, imgs):
+    # キーのある行の途中で語句を選ぶと、カンマの直後なら前に空白、後ろに語が続けばカンマで区切る（行末は今どおり ", "）
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: short hair")
+    wait_for_phrase(page, "short hair")
+
+    editor = open_editor(page, "a.png")
+    for at in [len("looks: cool,"), len("looks: cool, ")]:  # カンマの直後 / カンマと空白の後
+        editor.fill("looks: cool, 40 yo")
+        editor.evaluate(f"el => el.setSelectionRange({at}, {at})")
+        editor.press("ArrowRight")
+        editor.press("ArrowLeft")  # カーソルを動かすと候補が出る
+        expect(page.locator("#suggestions:visible li.active")).to_contain_text("short hair")
+        editor.press("Tab")
+        assert editor.input_value() == "looks: cool, short hair, 40 yo"
+
+
+def test_line_start_does_not_suggest_phrases_already_in_the_cell(page, imgs):
+    # 行頭の「キー: 語句」の候補に、その欄の同じキーにもう入っている語句は出さない
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: cold eyes")
+    write(page, "a.png", "looks: cool")
+    wait_for_phrase(page, "cool")
+
+    editor = open_editor(page, "a.png")
+    editor.press("Control+End")
+    editor.press("Enter")
+    editor.press_sequentially("co")
+    suggestions = page.locator("#suggestions:visible")
+    expect(suggestions).to_contain_text("looks: cold eyes")
+    expect(suggestions).not_to_contain_text("looks: cool")
+
+
 def test_suggestion_at_line_start_adds_key_and_phrase(page, imgs):
     load_dir(page, imgs)
     write(page, "b.png", "body: long hair")

@@ -234,6 +234,9 @@ const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
 
 // 選んだ単語の後ろに付ける区切り: 行末なら ", "（欄を離れると行末のカンマは消える）。後ろに語が続けば空白、空白かカンマが続けば付けない
 const wordSeparator = after => (!after.trim() ? ', ' : /^[\s,]/.test(after) ? '' : ' ');
+// キーのある行の語句の前後: カンマ（キーのコロン）のすぐ後ろに入れるときは前に空白。後ろに語が続けばカンマで区切り、行末は ", "
+const phraseBefore = (value, at) => (/[,:]/.test(value[at - 1] || '') ? ' ' : '');
+const phraseAfter = after => (!after.trim() ? ', ' : /^\s*,/.test(after) ? '' : /^\s/.test(after) ? ',' : ', ');
 
 // 入力欄のカーソル位置の文脈
 // mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
@@ -245,7 +248,7 @@ function contextOf(el) {
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
     const after = value.slice(caret, lineEnd);
-    const base = {caret, after, restEmpty: after.trim() === '', current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+    const base = {caret, after, current: parseLine(value.slice(lineStart, lineEnd)).phrases,
         cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
@@ -298,14 +301,15 @@ function wordCandidates(section, ctx) {
     return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
 }
 
-// 行頭: キー、キー付きの語句（同じ種類の段落のもの）、キーなしの文、単語（1文字以上打ったときだけ）
+// 行頭: キー、キー付きの語句（同じ種類の段落のもの。その欄の同じキーにもう入っているものは出さない）、キーなしの文、単語（1文字以上打ったときだけ）
 function lineStartCandidates(section, ctx) {
     if (!ctx.query) return [];
     return keepBest([
         ...state.phrases.flatMap(p => {
             const bonus = wordBonus(p, section);
             if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
-            const keyed = !sameKind(p.section, section) || blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
+            const inCell = (ctx.cellPhrases[p.key] || []).includes(p.phrase);
+            const keyed = inCell || !sameKind(p.section, section) || blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
                 : [{kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus}];
             return [{kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1}, ...keyed];
         }),
@@ -377,7 +381,7 @@ function accept(item) {
     } else {
         const text = {
             key: () => `${item.key}: `,
-            phrase: () => item.phrase + (ctx.restEmpty ? ', ' : ''),
+            phrase: () => phraseBefore(el.value, ctx.queryStart) + item.phrase + phraseAfter(ctx.after),
             word: () => item.word + wordSeparator(ctx.after),
             line: () => item.phrase,
         }[item.kind]();
@@ -1280,7 +1284,7 @@ function bulkContext(el) {
     const before = value.slice(0, caret);
     const after = value.slice(caret);
     const current = key ? splitPhrases(value) : [];
-    const base = {caret, after, restEmpty: after.trim() === '', current, cellPhrases: key ? {[key]: current} : {}};
+    const base = {caret, after, current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
         const raw = before.slice(segment);
