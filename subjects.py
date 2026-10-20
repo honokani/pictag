@@ -1,10 +1,12 @@
 """人物などの段落（girl / guy A / dog …）: 自動の命名、characters の自動計算、view の選択肢"""
 import re
 
-from caption_format import group_in_order
+from caption_format import group_in_order, phrases_of
 
 LETTERED = re.compile(r'^(.*\S) ([A-Z])$')  # guy A の「 A」
 IRREGULAR_PLURALS = {'man': 'men', 'woman': 'women', 'person': 'people', 'child': 'children'}
+# 人物でない物（dog: / cat: …）をキーで書き分ける段落。確定タグと POV のボタンを持たず、characters にはキーを数なしで並べる
+OTHERS = 'else'
 
 # POV のボタンの絵文字（段落の名前の A, B を除いた部分で決める）と色（女性・男性）
 EMOJI = {'girl': '👧', 'woman': '👩', 'guy': '👨', 'man': '👨', 'boy': '👦', 'dog': '🐕', 'cat': '🐈'}
@@ -38,12 +40,19 @@ def plural(word, count):
 
 
 def characters_of(present):
-    """入力のある人物の段落（表の並び順）から characters の値を作る: 1 girl + 2 guys (guy A, guy B)"""
-    def part(base, names):
+    """入力のある人物などの段落 [(段落, 入力)]（表の並び順）から characters の値を作る: 1 girl + 2 guys (guy A, guy B) + dog
+
+    else は人物に数えず、行のキー（dog: / cat: …）を数なしで並べる（同じキーは1回。キーの無い文は入れない）
+    """
+    def part(base, sections):
+        if base == OTHERS:
+            return ' + '.join(dict.fromkeys(key for _, text in sections for key, _ in phrases_of(text) if key))
+        names = [name for name, _ in sections]
         lettered = [name for name in names if name != base]
         return f'{len(names)} {plural(base, len(names))}' + (f" ({', '.join(lettered)})" if lettered else '')
 
-    return ' + '.join(part(base, names) for base, names in group_in_order((base_name(s), s) for s in present))
+    parts = (part(base, sections) for base, sections in group_in_order((base_name(s), (s, text)) for s, text in present))
+    return ' + '.join(filter(None, parts))
 
 
 def name_for_new(name, sections):
@@ -76,7 +85,7 @@ def insert_position(name, columns):
 
 
 def pov_choices(subjects):
-    """view の 👀 の選択肢: 第三者の POV（先頭）と、人物ごとの POV
+    """view の 👀 の選択肢: 第三者の POV（先頭）と、人物ごとの POV（else は人物でないので出さない）
 
     ボタンは絵文字と A, B の文字（girl A → 👧 A）。絵文字の決まっていない名前は、見分けられるよう名前を残す（👤 alien）
     """
@@ -86,4 +95,4 @@ def pov_choices(subjects):
         label = (lettered.group(2) if lettered else '') if base in EMOJI else section
         return {'emoji': EMOJI.get(base, OTHER_EMOJI), 'label': label, 'tone': tone_of(base), 'phrase': f'{section} POV'}
 
-    return [THIRD_PERSON, *map(choice, subjects)]
+    return [THIRD_PERSON, *(choice(s) for s in subjects if base_name(s) != OTHERS)]

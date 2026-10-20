@@ -14,6 +14,7 @@ const state = {
     templates: {},        // 確定タグ {picture: [...], subject: [...]}
     fixedSections: [],    // 固定の段落（外せない・改名できない）
     autoKeys: [],         // 自動で作るキー（characters。入力欄には出さない）
+    othersSection: '',    // 人物でない物の段落の名前（else。確定タグを持たない）
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
     foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
@@ -130,10 +131,13 @@ function tidyInput(text) {
         .join('\n');
 }
 
-// 段落の確定タグ（キーの並び）。固定の段落は自分の名前で、人物などの段落は subject を使う
+const baseName = section => section.replace(/ [A-Z]$/, '');  // guy A → guy（subjects.py の base_name と同じ）
+
+// 段落の確定タグ（キーの並び）。固定の段落は自分の名前で、人物などの段落は subject を使う。else（人物でない物の段落）には無い
 function templateKeys(section) {
     if (state.templates[section]) return state.templates[section];
-    return state.fixedSections.includes(section) ? [] : (state.templates.subject || []);
+    const none = state.fixedSections.includes(section) || baseName(section) === state.othersSection;
+    return none ? [] : (state.templates.subject || []);
 }
 
 // 入力欄に出すキー（自動で作るキーは除く）
@@ -615,6 +619,7 @@ async function refreshTable() {
     state.templates = body.templates;
     state.fixedSections = body.fixed_sections;
     state.autoKeys = body.auto_keys;
+    state.othersSection = body.others_section;
     state.viewChoices = body.view_choices;
     if (state.markChoices.one.length === 0) fillMarkFilters(body.mark_choices);
     state.markChoices = body.mark_choices;
