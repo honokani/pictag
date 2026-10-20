@@ -106,9 +106,10 @@ td.meta { width: 56px; min-width: 56px; cursor: pointer; user-select: none; }
 td.meta .tokens { white-space: pre-line; text-align: right; color: #666; font-variant-numeric: tabular-nums; }
 td.meta .tokens.over { color: #c62828; font-weight: 700; }
 
-/* 🤖🎲 の欄（qwen 版だけ）: token の欄と同じ幅に、ボタン2つ。見本が足りない行・書いている行のボタンは押せない */
-th.qwen-head, td.qwen { width: 56px; min-width: 56px; padding: 4px 0; text-align: center; white-space: nowrap; }
-.qwen-btn { width: 26px; padding: 0; border: none; background: none; font-size: 15px; line-height: 1.6; }
+/* 🤖🎲 の欄（qwen 版だけ）: token の欄の半分の幅。ボタン2つは横に並べず縦に積む（🤖 が上）。見本が足りない行・書いている行のボタンは押せない */
+th.qwen-head, td.qwen { width: 28px; min-width: 28px; padding: 4px 0; text-align: center; }
+.qwen-btn { display: block; width: 26px; margin: 0 auto; padding: 0; border: none; background: none; font-size: 15px; line-height: 1.6; }
+.qwen-btn + .qwen-btn { margin-top: 2px; }
 .qwen-btn:disabled { opacity: .3; }
 
 /* --lend: サムネイルを広げたときに、picture より右の畳んでいない列と右端の列から借りる幅（JS が入れる。picture と畳んだ列は自分の幅が優先） */

@@ -5,8 +5,8 @@ import pytest
 
 import app as pictag
 from helpers import FakeComfy, make_images
-from qwen import (INSTRUCTIONS, fill_text, match_section, parse_caption, pick_random_samples, pick_samples, skeleton,
-                  system_prompt, user_prompt)
+from qwen import (INSTRUCTIONS, clear_drafts, fill_section, fill_text, match_section, parse_caption, pick_random_samples,
+                  pick_samples, skeleton, system_prompt, user_prompt)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
@@ -84,6 +84,21 @@ def test_fill_text_treats_none_and_nan_as_no_tag():
     assert fill_text("", ["none.", "girl waves."], []) == "girl waves."
 
 
+def test_fill_section_returns_what_it_put_in():
+    text, added = fill_section("looks: sitting", ["looks: standing", "clothes: red dress", "girl waves."], SUBJECT)
+    assert text == "looks: sitting\nclothes: red dress\ngirl waves."
+    assert added == {"keys": {"clothes": "red dress"}, "sentences": ["girl waves."]}  # 値のあった looks は入れていない
+
+
+def test_clear_drafts_removes_only_drafts_left_as_qwen_wrote_them():
+    # 前に Qwen が入れて、そのあと直していないキーと文だけを消す（直したもの・自分で書いたものは残す）
+    drafted = {"keys": {"looks": "standing", "clothes": "red dress"}, "sentences": ["girl waves."]}
+    text = "looks: standing\nclothes: red dress, hat\nbody: long hair\ngirl waves."
+    assert clear_drafts(text, drafted) == "clothes: red dress, hat\nbody: long hair"
+    assert clear_drafts("girl waves.\nguy smiles.", drafted) == "girl waves.\nguy smiles."  # 文を足していたら残す
+    assert clear_drafts("looks: standing", {}) == "looks: standing"
+
+
 def test_fill_text_adds_keys_outside_the_template_at_the_end():
     assert fill_text("dog: brown fur", ["dog: white fur", "cat: black"], []) == "dog: brown fur\ncat: black"
     assert fill_text("looks: sitting", ["clothes: red dress", "pose: arms up"], SUBJECT) == (
@@ -132,6 +147,26 @@ def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api
     assert inputs["max_length"] > 507  # キャプションの上限より長く書ける
     assert b'filename="proj_r10.jpg"' in comfy.uploads[0] and b"\xff\xd8\xff" in comfy.uploads[0]  # JPEG で送る
     assert (tool.data_work_target / "qwen" / "r10.txt").read_text(encoding="utf-8") == ANSWER
+
+
+ANSWER2 = ("picture:\n  - place: beach\n\naction:\n  - girl runs.\n\n"
+           "girl:\n  - looks: sitting\n  - clothes: blue coat")
+
+
+def test_pressing_again_replaces_only_the_previous_draft(qwen_api, comfy):
+    # 押し直したら、前に Qwen が入れてそのあと直していない欄だけを、新しい答えで置き換える（開き直しても覚えている）
+    row = qwen_api.row_index("r10.png")
+    qwen_api.qwen_fill(row)  # picture: place・view、action、girl: looks・clothes
+    qwen_api.save()
+    qwen_api.open_project("proj")
+    qwen_api.write(row, "looks: standing\nclothes: red dress, hat")  # clothes だけ直す
+    comfy.answer = ANSWER2
+    res = qwen_api.qwen_fill(row)
+    assert res["success"], res
+    texts = res["row"]["texts"]
+    assert texts["girl"] == "looks: sitting\nclothes: red dress, hat"  # 直していない looks は置き換え、直した clothes は残す
+    assert texts["action"] == "girl runs."
+    assert texts["picture"] == "place: beach"  # 新しい答えに無い view は、前の下書きごと消える
 
 
 def test_qwen_answer_stays_for_hint_by_qwen_after_reopening(qwen_api):

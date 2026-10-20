@@ -105,24 +105,51 @@ def is_tag(phrase):
     return phrase.strip(' .').lower() not in NO_TAGS
 
 
-def fill_text(text, lines, keys):
+def fill_section(text, lines, keys):
     """入力 text に、答えの行 lines を入れる。入れるのは値の無いキー（自動のキーは除く）と、文が1つも無いときの文だけ
 
-    答えの none・nan は捨て、語句が残らなかったキー・文は入れない
+    答えの none・nan は捨て、語句が残らなかったキー・文は入れない。
+    (入れたあとの入力, 入れたもの {'keys': {キー: 値}, 'sentences': [文]}) を返す（押し直したときに置き換える下書き）
     """
     present = [parse_line(line) for line in text.splitlines()]
     filled = {key for key, phrases in present if key and phrases}
     has_sentence = any(not key and phrases for key, phrases in present)
+    added = {'keys': {}, 'sentences': []}
     for line in lines:
         key, phrases = parse_line(line)
         phrases = [phrase for phrase in phrases if is_tag(phrase)]
         if not phrases or key in AUTO_KEYS or (key and key in filled) or (not key and has_sentence):
             continue
         value = ', '.join(phrases)
-        text = with_key(text, key, value, keys) if key else '\n'.join(filter(None, [text, value]))
         if key:
+            text = with_key(text, key, value, keys)
             filled.add(key)
-    return text
+            added['keys'][key] = value
+        else:
+            text = '\n'.join(filter(None, [text, value]))
+            added['sentences'].append(value)
+    return text, added
+
+
+def fill_text(text, lines, keys):
+    """fill_section で入れたあとの入力"""
+    return fill_section(text, lines, keys)[0]
+
+
+def clear_drafts(text, drafted):
+    """前に Qwen が入れて、そのあと直していないもの（drafted と同じ値のキーと、同じ並びの文）を消す（押し直す前に）
+
+    drafted は fill_section が返した「入れたもの」。直したキー・足した文は、自分で書いたものとして残す
+    """
+    keys, sentences = drafted.get('keys', {}), drafted.get('sentences', [])
+    parsed = [(line, *parse_line(line)) for line in text.splitlines()]
+    present = [', '.join(phrases) for _, key, phrases in parsed if not key and phrases]
+    drop_sentences = bool(sentences) and present == sentences
+
+    def is_draft(key, phrases):
+        return bool(phrases) and (keys.get(key) == ', '.join(phrases) if key else drop_sentences)
+
+    return '\n'.join(line for line, key, phrases in parsed if not is_draft(key, phrases))
 
 
 # ---- ComfyUI（pj_loratrain の loratrain/backends.py と同じ呼び方） ----
