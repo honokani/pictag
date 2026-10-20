@@ -23,6 +23,10 @@ body {
     border-bottom: 1px solid #ddd;
 }
 
+/* 上の帯: 保存はいつも右上の端。ほかの項目とメッセージは、その左で折り返す */
+header.bar { flex-wrap: nowrap; align-items: flex-start; }
+.head-main { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+
 .app-name { font-size: 16px; }
 .tabs { display: flex; gap: 2px; }
 .tab.on { background: #1f1f1f; border-color: #1f1f1f; color: #fff; cursor: default; }
