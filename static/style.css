@@ -143,6 +143,9 @@ td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width:
 .choice.male.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
+/* 確定タグのある段落の入力欄: キーの名前の下に、そのキーの値だけの欄（1行から、打った分だけ伸びる）。最後に、ほかの行の「その他」 */
+td.cell .editor.split textarea { min-height: 0; }
+td.cell .field-key { margin-top: 2px; font-size: 12px; line-height: 1.4; color: #666; cursor: default; }
 
 /* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture の幅より後ろに置いて優先する） */
 th .section-head { display: flex; align-items: center; }

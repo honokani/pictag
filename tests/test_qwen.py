@@ -98,9 +98,11 @@ def test_fill_text_adds_sentences_only_when_there_are_none():
 
 
 def test_fill_text_treats_none_and_nan_as_no_tag():
-    # Qwen がたまに返す「none」「nan」は、タグが無いものとして入れない（大文字・小文字と文末の . は問わない。ほかの語句は入れる）
+    # Qwen がたまに返す「none」「nan」は、タグが無いものとして入れない（大文字・小文字、前後の括弧、文末の . は問わない。ほかの語句は入れる）
     assert fill_text("", ["looks: nan", "clothes: None, red dress", "body: NaN"], SUBJECT) == "clothes: red dress"
+    assert fill_text("", ["looks: NONE", "clothes: NAN", "body: (none)"], SUBJECT) == ""
     assert fill_text("", ["none"], []) == ""
+    assert fill_text("", ["(none)", "(None)."], []) == ""
     assert fill_text("", ["none.", "girl waves."], []) == "girl waves."
 
 
