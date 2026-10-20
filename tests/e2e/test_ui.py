@@ -900,6 +900,25 @@ def test_hint_and_preview_buttons_switch_the_column(page, imgs):
     expect(side).to_have_value("1girl, solo, smile")
 
 
+def test_switching_hint_and_preview_keeps_the_first_whole_row_below_the_head(page, tmp_path):
+    # hint と preview は行ごとに高さが違う。切り替えても、見えていた最初の行（上が切れていない行）を見出しの 10px 下に見せる
+    tall = make_images(tmp_path / "imgs" / "tall", {f"r{i}.png": (100, 100) for i in range(8)})
+    for i in range(8):  # hint は長く（行が高い）、preview は入力が無いので空（行が低い）
+        (tall / f"r{i}.txt").write_text(", ".join(f"tag{j}" for j in range(200)), encoding="utf-8")
+    load_dir(page, tall)
+    head_bottom = "() => $('gridHead').querySelector('th').getBoundingClientRect().bottom"
+
+    def below_head(name):
+        return row(page, name).evaluate("tr => tr.getBoundingClientRect().top") - page.evaluate(head_bottom)
+
+    page.evaluate("y => { $('imagesView').scrollTop += y; }", below_head("r3.png") - 30)  # r3 を見出しの 30px 下に
+    assert abs(below_head("r3.png") - 30) <= 1
+    for view in ["preview", "hint"]:  # 行き来しても同じ
+        page.locator(f'#gridHead .side-view[data-view="{view}"]').click()
+        expect(page.locator(f'#gridHead .side-view[data-view="{view}"]')).to_have_class(re.compile(r"\bon\b"))
+        assert abs(below_head("r3.png") - 10) <= 2, view
+
+
 def option_values(page, selector):
     return page.locator(f"{selector} option").evaluate_all("els => els.map(e => e.value)")
 
