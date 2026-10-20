@@ -229,6 +229,25 @@ def test_enter_after_accepting_makes_a_new_line(page, imgs):
     assert editor.input_value() == "body: long hair, \nlooks: standing"
 
 
+def test_down_on_the_last_suggestion_closes_them_and_moves_down(page, imgs):
+    # 候補の一番下で ↓ を押すと、候補を閉じて、ふつうのテキストのように下の行へカーソルが動く
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair, bare hands")
+    wait_for_phrase(page, "bare hands")
+
+    editor = open_editor(page, "a.png")
+    editor.fill("body: \nlooks: standing")
+    editor.evaluate("el => el.setSelectionRange(6, 6)")  # body: の行末
+    editor.press_sequentially("a")
+    expect(page.locator("#suggestions:visible li")).to_have_count(2)
+    editor.press("ArrowDown")  # 一番下の候補へ
+    expect(page.locator("#suggestions li").last).to_have_class(re.compile(r"\bactive\b"))
+    editor.press("ArrowDown")  # 一番下で ↓
+    expect(page.locator("#suggestions")).to_be_hidden()
+    assert editor.evaluate("el => el.value.slice(0, el.selectionStart).split('\\n').length") == 2  # 下の行
+    assert editor.input_value() == "body: a\nlooks: standing"
+
+
 def test_phrase_suggestions_are_split_by_kind(page, imgs):
     # 語句の候補は同じ種類の段落で使ったものだけ。女性（girl・woman）・男性（guy・man・boy）はそれぞれまとめ、ほかは種類ごと
     load_dir(page, imgs)
