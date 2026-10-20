@@ -8,7 +8,7 @@
 import re
 from collections import Counter
 
-from caption_format import parse_line, phrases_of
+from caption_format import parse_line, phrases_of, with_line
 from groups import normalize_groups
 
 RESERVED_SECTIONS = {'サムネイル', 'is_dead', 'mark', 'marks'}  # 表の固定列と同じ名前は使えない
@@ -118,6 +118,16 @@ def rename_registered(shared, key, old, new):
     return {**shared, 'phrases': list({phrase_id(p): p for p in phrases}.values()), 'groups': normalize_groups(groups)}
 
 
+def move_registered(shared, belongs, src, dst, phrases):
+    """共用辞書の、belongs(段落) が真の段落の「src: 語句」（phrases）を「dst: 語句」にする（重なれば1つに）。グループはそのまま"""
+    moving = set(phrases)
+
+    def move(p):
+        return {**p, 'key': dst} if belongs(p['section']) and p['key'] == src and p['phrase'] in moving else p
+
+    return {**shared, 'phrases': list({phrase_id(p): p for p in map(move, shared['phrases'])}.values())}
+
+
 def check_phrase(key, phrase):
     """語句の前後の空白を除いて検証する（カンマ・改行は語句の区切り。キーなしの文の「:」はキーと読まれる）"""
     phrase = phrase.strip() if isinstance(phrase, str) else ''
@@ -196,6 +206,32 @@ def rename_phrase(text, key, old, new):
         return render_input_line(k, list(dict.fromkeys(new if p == old else p for p in phrases)))
 
     return '\n'.join(map(edit, text.splitlines()))
+
+
+def move_phrases(text, src, dst, phrases, keys):
+    """入力の src の行の語句 phrases を dst の行へ移す（dst にもうある語句は src から消すだけ。語句が無くなった src の行は消す）
+
+    dst の行は1行にまとめ、確定タグのキー（keys）なら並びの位置に、ほかのキーなら今の行の位置（無ければ末尾）に置く。
+    phrases が src の行に無ければ変えない
+    """
+    parsed = [(line, *parse_line(line)) for line in text.splitlines()]
+    moving = [p for p in dict.fromkeys(phrases) if any(k == src and p in ps for _, k, ps in parsed)]
+    if not moving:
+        return text
+
+    def without(line, key, ps):
+        if key != src or not any(p in moving for p in ps):
+            return [line]
+        kept = [p for p in ps if p not in moving]
+        return [render_input_line(src, kept)] if kept else []
+
+    rest = [kept for line, k, ps in parsed for kept in without(line, k, ps)]
+    value = ', '.join(dict.fromkeys([*(p for _, k, ps in parsed if k == dst for p in ps), *moving]))
+    if dst in keys:
+        return with_line('\n'.join(rest), dst, value, keys)
+    at = next((i for i, line in enumerate(rest) if parse_line(line)[0] == dst), len(rest))
+    others = [line for line in rest if parse_line(line)[0] != dst]
+    return '\n'.join([*others[:at], f'{dst}: {value}', *others[at:]])
 
 
 def check_section_name(name):

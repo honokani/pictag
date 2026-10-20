@@ -248,3 +248,24 @@ def test_mark_keys_do_nothing_on_the_dictionary(page, movies):
     page.keyboard.press("1")
     show_images(page)
     expect(page.locator('#gridBody .mark-btn.on')).to_have_count(0)
+
+
+def test_move_phrases_of_a_section_to_another_key(page, movies):
+    # 帯の「キーを移す」: 段落（A, B も）・キー・語句（候補はその段落のそのキーの語句）・移す先を選び、全行の入力を移す（保存はまだ）
+    open_movies(page)
+    page.wait_for_function("() => state.phrases.some(p => p.phrase === 'smile')")  # 辞書は表のあとに読む
+    page.select_option("#moveSection", "girl")
+    page.select_option("#moveFrom", "looks")
+    phrase = page.locator("#movePhrase")
+    phrase.press_sequentially("smi")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("smile")
+    phrase.press("Enter")
+    page.select_option("#moveTo", "body")
+    page.click("#moveForm button")
+    expect(page.locator("#status")).to_have_text("girl の looks の smile を body に移しました（開いているプロジェクトの 2 行。保存はまだです）")
+    expect(line_of(page, "roman_holiday.png", "looks")).to_have_text("looks: sitting")
+    expect(line_of(page, "roman_holiday.png", "body")).to_have_text("body: black/short hair, smile")
+    expect(line_of(page, "titanic.png", "looks")).to_have_text("looks: standing, eyes closed")
+    expect(line_of(page, "roman_holiday.png", "looks", "guy")).to_have_text("looks: sitting")  # ほかの段落は変えない
+    expect(page.locator("#saveButton")).to_have_text("保存 *")
+    expect(phrase).to_have_value("")

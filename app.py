@@ -16,14 +16,14 @@ from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
 from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, match_section, parse_caption,
                   pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
-from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, characters_of, insert_position,
-                      name_for_new, pov_choices, template_keys)
+from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of,
+                      insert_position, name_for_new, pov_choices, template_keys)
 from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
-                   empty_shared, freeze, group_phrases, phrase_entries, register_phrases, register_words, remove_phrase,
-                   rename_phrase, rename_registered, set_choice, ungroup_phrases, unregister_phrases, unregister_words,
-                   word_entries)
+                   empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
+                   register_words, remove_phrase, rename_phrase, rename_registered, set_choice, ungroup_phrases,
+                   unregister_phrases, unregister_words, word_entries)
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -392,6 +392,47 @@ class CaptionTool:
         if changed:
             self.df[sections] = after
         logger.info(f"Renamed phrase: {key}: {old} -> {new} (rows: {changed})")
+        return changed
+
+    def move_phrases(self, section, src, dst, phrases):
+        """段落 section（A, B を除いた名前が同じ段落すべて）のキー src の語句 phrases を、キー dst へ移す
+
+        開いているプロジェクトの全行（削除済みも）と、共用辞書のその段落の語句を移す。入力を変えた行の数を返す（失敗は None）
+        """
+        self.last_error = ''
+        try:
+            base = check_section_name(section)
+            src, dst = check_key(src), check_key(dst)
+            if not src or not dst:
+                raise ValueError('移す元と移す先のキーを選んでください')
+            if src == dst:
+                raise ValueError('移す先が同じキーです')
+            if not isinstance(phrases, list) or not phrases:
+                raise ValueError('移す語句を入力してください')
+            phrases = [check_phrase(src, p) for p in phrases]
+        except ValueError as e:
+            self.fail(str(e))
+            return None
+        belongs = lambda s: base_name(s) == base
+        registered = any(belongs(p['section']) and p['key'] == src and p['phrase'] in phrases for p in self.shared['phrases'])
+        sections = [s for s in section_names(self.df) if belongs(s)] if 'サムネイル' in self.df.columns else []
+        before = self.df[sections].map(to_text)
+
+        def moved(s):
+            keys = template_keys(s, self.shared['templates'], FIXED_SECTIONS)
+            return before[s].map(lambda text: move_phrases(text, src, dst, phrases, keys))
+
+        after = pd.DataFrame({s: moved(s) for s in sections}, index=before.index, columns=sections)
+        changed = int((before != after).any(axis=1).sum())
+        if not registered and not changed:
+            self.fail(f'{base} の {src} に「{phrases[0]}」はありません（開いているプロジェクトにも共用辞書にも）')
+            return None
+        if registered:
+            self.shared = move_registered(self.shared, belongs, src, dst, phrases)
+            self.save_shared()
+        if changed:
+            self.df[sections] = after
+        logger.info(f"Moved phrases: {base}: {src} -> {dst} {phrases} (rows: {changed})")
         return changed
 
     def group(self, key, phrases):
@@ -1047,6 +1088,16 @@ def rename_entry():
     """語句の改名（{key, old, new, in_project}）。changed: 開いているプロジェクトで入力を置き換えた行の数"""
     data = request.get_json() or {}
     changed = caption_tool.rename_entry(data.get('key'), data.get('old'), data.get('new'), data.get('in_project'))
+    if changed is None:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'changed': changed, 'dictionary': caption_tool.dictionary()})
+
+
+@app.route('/move_phrases', methods=['POST'])
+def move_phrases_route():
+    """キーを移す（{section, from_key, to_key, phrases}）。changed: 開いているプロジェクトで入力を変えた行の数"""
+    data = request.get_json() or {}
+    changed = caption_tool.move_phrases(data.get('section'), data.get('from_key'), data.get('to_key'), data.get('phrases'))
     if changed is None:
         return jsonify({'success': False, 'message': caption_tool.last_error})
     return jsonify({'success': True, 'changed': changed, 'dictionary': caption_tool.dictionary()})
