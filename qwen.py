@@ -1,11 +1,13 @@
 """Qwen（ComfyUI の TextGenerate。Krea2 のテキストエンコーダーと同じ Qwen3-VL-4B）で、空の欄を下書きする
 
-- 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、見本（上にある行のキャプション 10 個）
+- 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、
+  見本（キャプション 10 個。🤖 は上にある行から近い順、🎲 はほかの行からランダム）
 - 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）
 - ComfyUI の呼び方は pj_loratrain（loratrain/backends.py）と同じ。ComfyUI の起動・停止はしない（起動しておいたものに乗るだけ）
 """
 import io
 import json
+import random
 import time
 import urllib.request
 import uuid
@@ -57,6 +59,12 @@ def pick_samples(captions_above, count=SAMPLE_COUNT):
     """上にある行のキャプション（表の並び）から、空でないものを近い順に count 個（並びは表のまま）。足りなければ []"""
     nearest = [caption for caption in reversed(captions_above) if caption][:count]
     return nearest[::-1] if len(nearest) == count else []
+
+
+def pick_random_samples(captions, count=SAMPLE_COUNT):
+    """キャプションの中から、空でないものをランダムに count 個（押すたびに選び直す）。足りなければ []"""
+    present = [caption for caption in captions if caption]
+    return random.sample(present, count) if len(present) >= count else []
 
 
 # ---- 答えの分け方と、空の欄への入れ方 ----

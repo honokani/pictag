@@ -1,9 +1,12 @@
 """Qwen（ComfyUI の TextGenerate）で空の欄を下書きする: 送る文面・答えの分け方・空の欄への入れ方・API"""
+import re
+
 import pytest
 
 import app as pictag
 from helpers import FakeComfy, make_images
-from qwen import INSTRUCTIONS, fill_text, match_section, parse_caption, pick_samples, skeleton, system_prompt, user_prompt
+from qwen import (INSTRUCTIONS, fill_text, match_section, parse_caption, pick_random_samples, pick_samples, skeleton,
+                  system_prompt, user_prompt)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
@@ -34,6 +37,13 @@ def test_pick_samples_takes_the_nearest_ten_non_empty_captions_in_table_order():
     captions = [f"c{i}" if i % 3 else "" for i in range(20)]  # 空の行が混ざる
     assert pick_samples(captions) == ["c5", "c7", "c8", "c10", "c11", "c13", "c14", "c16", "c17", "c19"]
     assert pick_samples(["c"] * 9 + [""]) == []  # 10 個に満たなければ渡さない
+
+
+def test_pick_random_samples_takes_ten_different_non_empty_captions():
+    captions = [f"c{i}" if i % 3 else "" for i in range(30)]  # 空でないものは 20 個
+    picked = pick_random_samples(captions)
+    assert len(set(picked)) == 10 and set(picked) <= set(captions) - {""}
+    assert pick_random_samples([f"c{i}" for i in range(9)] + [""]) == []  # 10 個に満たなければ渡さない
 
 
 # ---- 答えの分け方と、空の欄への入れ方 ----
@@ -128,6 +138,22 @@ def test_qwen_answer_stays_for_hint_by_qwen_after_reopening(qwen_api):
 def test_qwen_fill_needs_ten_samples_above(qwen_api, comfy):
     res = qwen_api.qwen_fill(qwen_api.row_index("r05.png"))
     assert res["success"] is False and "10" in res["message"]
+    assert comfy.prompts == []
+
+
+def test_qwen_fill_random_takes_samples_from_the_whole_project(qwen_api, comfy):
+    # 🎲: その行と削除済みを除く、キャプションのある行からランダムに 10 個（下の行も）
+    row = qwen_api.row_index("r05.png")
+    assert qwen_api.qwen_fill(row, mode="random")["success"] is False  # ほかの行は r00〜r04・r06〜r09 の 9 行だけ
+    qwen_api.write(qwen_api.row_index("r11.png"), "looks: pose11")
+    res = qwen_api.qwen_fill(row, mode="random")
+    assert res["success"], res
+    used = sorted(int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]))
+    assert used == [0, 1, 2, 3, 4, 6, 7, 8, 9, 11]  # ほかに 10 行なので全部。その行（5）は入らない
+
+
+def test_qwen_fill_rejects_an_unknown_mode(qwen_api, comfy):
+    assert qwen_api.qwen_fill(qwen_api.row_index("r10.png"), mode="zzz")["success"] is False
     assert comfy.prompts == []
 
 
