@@ -35,7 +35,7 @@ const state = {
     selected: new Set(),  // 行の index
     anchor: null,         // Shift 範囲選択の起点（最後にクリックした行）
     dirty: false,
-    editor: null,         // {index, section, td, el}
+    editor: null,         // {index, section, td, keys, fields}（fields: 欄の textarea。data-key がキー、「その他」は空）
     suggest: null,        // {el, section, ctx, items, active, moved}
     pending: new Set(),   // 送信中の入力（保存の前に待つ）
 };
@@ -176,14 +176,29 @@ function mergeTemplate(text, keys) {
     return [...keyLines, ...lines.filter((line, i) => !used.has(i) && line.trim())];
 }
 
-// 編集を始めたときのカーソル位置: 最初の値の無いキーの行の末尾（無ければ最後）
-function firstEmptyKeyEnd(lines, keyCount) {
-    let offset = 0;
-    for (let i = 0; i < lines.length; i++) {
-        if (i < keyCount && parseLine(lines[i]).phrases.length === 0) return offset + lines[i].length;
-        offset += lines[i].length + 1;
-    }
-    return Math.max(0, offset - 1);
+// 入力欄に分ける: 確定タグのキーごとの欄にそのキーの値（同じキーの行はまとめる）。ほかの行（キーの無い文・確定タグに無いキー）は「その他」の欄
+function splitText(text, keys) {
+    const lines = (text || '').split('\n').filter(line => line.trim());
+    const values = Object.fromEntries(keys.map(key => [key, [...new Set(phrasesOfKey(text, key))].join(', ')]));
+    return {values, rest: lines.filter(line => !keys.includes(parseLine(line).key))};
+}
+
+// 入力欄から入力に戻す（fields: [{key, value}]。「その他」の欄はキーが空）。確定タグのキーは並びどおりに1行ずつで、キーの欄の改行も語句の区切り。
+// 「その他」の欄に書いた同じキーの行もまとめる（同じ語句は1つ）。ほかの行はその後ろ
+function composeEditor(fields, keys) {
+    const rest = fields.filter(f => !f.key).flatMap(f => f.value.split('\n'));
+    const keyLines = keys.map(key => `${key}: ${splitPhrases([
+        ...fields.filter(f => f.key === key).map(f => f.value.replace(/\n/g, ',')),
+        ...rest.filter(line => parseLine(line).key === key).map(line => line.slice(line.indexOf(':') + 1)),
+    ].join(',')).join(', ')}`);
+    return [...keyLines, ...rest.filter(line => !keys.includes(parseLine(line).key))].join('\n');
+}
+
+// キーの欄の後ろに語句を足す（もう入っていれば足さない）
+function appendPhrase(value, phrase) {
+    if (splitPhrases(value.replace(/\n/g, ',')).includes(phrase)) return value;
+    const kept = value.replace(/[\s,]+$/, '');
+    return kept ? `${kept}, ${phrase}` : phrase;
 }
 
 // 入力の キー → 語句（キーのある行だけ）
@@ -270,6 +285,24 @@ function contextOf(el) {
             spaces: spacesAfterWord(rest)};
     }
     return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
+}
+
+// 開いた入力欄の文脈: キーの欄はいつもそのキーの語句（カンマと改行で区切る）。「その他」の欄と1つだけの欄は contextOf と同じ
+// その欄にもう入っている語句（cellPhrases）は全部の欄から見る。打っている欄の選んだ範囲は、無いものとして見る
+function editorContext(el) {
+    const caret = el.selectionStart;
+    const end = el.selectionEnd;
+    const value = el.value.slice(0, caret) + el.value.slice(end);
+    const fields = state.editor.fields.map(f => ({key: f.dataset.key, value: f === el ? value : f.value}));
+    const cellPhrases = phrasesByKey(composeEditor(fields, state.editor.keys));
+    if (!el.dataset.key) return {...contextOf(el), cellPhrases};
+    const before = value.slice(0, caret);
+    const lineEndAt = value.indexOf('\n', caret);
+    const segment = Math.max(before.lastIndexOf(','), before.lastIndexOf('\n')) + 1;
+    const raw = before.slice(segment);
+    const query = raw.trimStart();
+    return {end, after: value.slice(caret, lineEndAt < 0 ? value.length : lineEndAt), current: splitPhrases(value.replace(/\n/g, ',')),
+        cellPhrases, mode: 'phrase', key: el.dataset.key, query, queryStart: segment + (raw.length - query.length)};
 }
 
 function keepBest(items) {
@@ -373,8 +406,34 @@ function moveActive(step) {
     $('suggestions').children[s.active].scrollIntoView({block: 'nearest'});
 }
 
+// 「その他」の欄で選んだ確定タグのキー: 打ちかけの文字を消し、キー付きの語句はそのキーの欄の後ろに足す。キーだけなら、その欄へ移る
+function acceptIntoField(el, ctx, field, item) {
+    const without = el.value.slice(0, ctx.queryStart) + el.value.slice(ctx.end);
+    el.value = without.split('\n').filter(line => line.trim()).join('\n');
+    el.setSelectionRange(el.value.length, el.value.length);
+    if (item.kind === 'keyed') {
+        field.value = appendPhrase(field.value, item.phrase);
+        autosize(field);
+        paintWhitespace(field);
+        el.dispatchEvent(new Event('input'));
+        return;
+    }
+    autosize(el);
+    paintWhitespace(el);
+    const kept = field.value.replace(/[\s,]+$/, '');
+    field.value = kept ? `${kept}, ` : '';
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+    field.dispatchEvent(new Event('input'));  // そのキーの語句の候補を出す
+}
+
 function accept(item) {
     const {el, ctx} = state.suggest;
+    const field = item.key && el.dataset.key === '' ? state.editor.fields.find(f => f.dataset.key === item.key) : null;
+    if (field && (item.kind === 'keyed' || item.kind === 'key')) {
+        acceptIntoField(el, ctx, field, item);
+        return;
+    }
     if (item.kind === 'keyed' && el.tagName === 'TEXTAREA') {
         // 打ちかけの文字を消し、同じキーの行へ足す（無ければ行を足す）
         const without = el.value.slice(0, ctx.queryStart) + el.value.slice(ctx.end);
@@ -968,29 +1027,62 @@ function startEdit(td) {
         state.anchor = index;
         paintSelection();
     }
+    // 確定タグのある段落は、キーごとの欄に分ける（キーの名前の下に、そのキーの値だけ。最後に、ほかの行の「その他」）。無い段落（action・else）は1つの欄
     const keys = editKeys(section);
-    const lines = mergeTemplate(state.byIndex.get(index).texts[section] || '', keys);
-    const el = document.createElement('textarea');
-    el.value = lines.join('\n');
-    td.replaceChildren(withWhitespaceMarks(el));
-    state.editor = {index, section, td, el};
-    el.addEventListener('input', () => { autosize(el); showSuggestions(el, section); });
-    el.addEventListener('keydown', event => {
-        if (handleSuggestKey(event)) return;
-        if (event.key === 'Escape' || (event.key === 'Enter' && event.ctrlKey)) {
-            event.preventDefault();
-            commitEdit();
-        }
+    const {values, rest} = splitText(state.byIndex.get(index).texts[section] || '', keys);
+    const fieldOf = (key, value) => {
+        const el = document.createElement('textarea');
+        el.dataset.key = key;
+        el.value = value;
+        if (keys.length) el.rows = 1;  // 分けた欄は1行から（打った分だけ伸びる）
+        return el;
+    };
+    const fields = [...keys.map(key => fieldOf(key, values[key])), fieldOf('', rest.join('\n'))];
+    const editor = document.createElement('div');
+    editor.className = keys.length ? 'editor split' : 'editor';
+    editor.append(...fields.flatMap(el => {
+        if (!keys.length) return [withWhitespaceMarks(el)];
+        const label = document.createElement('div');
+        label.className = 'field-key';
+        label.textContent = el.dataset.key ? `${el.dataset.key}:` : 'その他:';
+        return [label, withWhitespaceMarks(el)];
+    }));
+    td.replaceChildren(editor);
+    state.editor = {index, section, td, keys, fields};
+    fields.forEach(el => {
+        el.addEventListener('input', () => { autosize(el); showSuggestions(el, section, editorContext); });
+        el.addEventListener('keydown', event => {
+            if (handleSuggestKey(event)) return;
+            if (event.key === 'Escape' || (event.key === 'Enter' && event.ctrlKey)) {
+                event.preventDefault();
+                commitEdit();
+            }
+        });
+        el.addEventListener('keyup', event => {
+            if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) showSuggestions(el, section, editorContext);
+        });
+        el.addEventListener('click', () => showSuggestions(el, section, editorContext));
+        autosize(el);
     });
-    el.addEventListener('keyup', event => {
-        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) showSuggestions(el, section);
+    // 欄を移っても確定しない（前の欄の候補はしまう）。欄の外へフォーカスが出たら確定する
+    editor.addEventListener('focusout', event => {
+        hideSuggestions();
+        if (!editor.contains(event.relatedTarget)) commitEdit();
     });
-    el.addEventListener('click', () => showSuggestions(el, section));
-    el.addEventListener('blur', () => commitEdit());
-    autosize(el);
+    // キーの名前などを押してもフォーカスを外さない（外すと確定する）。キーの名前を押せば、その欄へ
+    editor.addEventListener('mousedown', event => {
+        if (event.target.tagName === 'TEXTAREA') return;
+        event.preventDefault();
+        const label = event.target.closest('.field-key');
+        if (label) focusEnd(label.nextElementSibling.querySelector('textarea'));
+    });
+    // 最初の値の無いキーの欄（無ければ最後の欄）の末尾から
+    focusEnd(fields.find(el => el.dataset.key && !el.value.trim()) || fields[fields.length - 1]);
+}
+
+function focusEnd(el) {
     el.focus();
-    const caret = firstEmptyKeyEnd(lines, keys.length);
-    el.setSelectionRange(caret, caret);
+    el.setSelectionRange(el.value.length, el.value.length);
 }
 
 function commitEdit() {
@@ -999,7 +1091,8 @@ function commitEdit() {
     state.editor = null;
     hideSuggestions();
     const row = state.byIndex.get(editor.index);
-    const text = tidyInput(editor.el.value, editor.section);
+    const fields = editor.fields.map(el => ({key: el.dataset.key, value: el.value}));
+    const text = tidyInput(composeEditor(fields, editor.keys), editor.section);
     const changed = text !== (row.texts[editor.section] || '');
     row.texts[editor.section] = text;
     editor.td.innerHTML = cellHtml(editor.section, row);

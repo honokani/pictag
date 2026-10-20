@@ -53,13 +53,22 @@ def filled(page, name, section="girl"):
 
 
 def open_editor(page, name, section="girl"):
+    """入力欄を開き、「その他」の欄（確定タグの無い段落は、ただ1つの欄）を返す"""
     cell(page, name, section).click()
-    return cell(page, name, section).locator("textarea")
+    return field(page, name, "", section)
+
+
+def field(page, name, key, section="girl"):
+    """開いた入力欄の、キーの欄（key が空なら「その他」の欄）"""
+    return cell(page, name, section).locator(f'textarea[data-key="{key}"]')
 
 
 def write(page, name, text, section="girl"):
-    """入力欄に書いて確定する（フォーカスを外すと送信する）"""
+    """入力欄に書いて確定する（キーの欄は空にし、全部を「その他」の欄に書く。フォーカスを外すと送信する）"""
     editor = open_editor(page, name, section)
+    editor.wait_for()
+    for key_field in cell(page, name, section).locator('textarea:not([data-key=""])').all():
+        key_field.fill("")
     editor.fill(text)
     editor.evaluate("el => el.blur()")
     expect(filled(page, name, section)).to_have_text(text.split("\n"))
@@ -120,19 +129,53 @@ def test_fixed_sections_have_no_remove_button(page, imgs):
     expect(page.locator('#gridHead th[data-section="girl"] .remove-section')).to_have_count(1)
 
 
-def test_editor_starts_with_template_keys_and_caret_on_first_empty_key(page, imgs, tool):
+def test_editor_puts_each_template_key_in_its_own_field_under_its_name(page, imgs, tool):
     load_dir(page, imgs)
-    editor = open_editor(page, "a.png")
-    assert editor.input_value() == "looks: \nclothes: \nbody: "
-    assert editor.evaluate("el => el.selectionStart") == len("looks: ")
+    write(page, "a.png", "body: long hair\ngirl is smiling")
+    open_editor(page, "a.png")
+    expect(cell(page, "a.png").locator(".field-key")).to_have_text(["looks:", "clothes:", "body:", "その他:"])
+    expect(field(page, "a.png", "body")).to_have_value("long hair")  # キーの後ろの値だけ
+    expect(field(page, "a.png", "")).to_have_value("girl is smiling")  # キーの無い文などは「その他」
+    expect(field(page, "a.png", "looks")).to_be_focused()  # 最初の値の無いキー
 
-    editor.press_sequentially("standing")
-    editor.evaluate("el => el.blur()")
-    expect(filled(page, "a.png")).to_have_text(["looks: standing"])
-    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["clothes:", "body:"])
-    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption_of('looks: standing'))} / 507")
+    field(page, "a.png", "looks").press_sequentially("standing")
+    field(page, "a.png", "looks").evaluate("el => el.blur()")
+    text = "looks: standing\nbody: long hair\ngirl is smiling"
+    expect(filled(page, "a.png")).to_have_text(text.split("\n"))
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["clothes:"])
+    expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption_of(text))} / 507")
     # 値の無いキーは保存しない
-    assert tool.df.set_index("サムネイル").loc["a.png", "girl"] == "looks: standing"
+    assert tool.df.set_index("サムネイル").loc["a.png", "girl"] == text
+
+
+def test_moving_between_fields_keeps_the_editor_open(page, imgs):
+    load_dir(page, imgs)
+    open_editor(page, "a.png")
+    field(page, "a.png", "looks").fill("standing")
+    body = field(page, "a.png", "body")
+    body.click()  # 欄を移っても閉じない
+    body.press_sequentially("long hair")
+    body.press("Enter")  # キーの欄の改行は、語句の区切り
+    body.press_sequentially("black hair")
+    cell(page, "a.png").locator(".field-key", has_text="clothes").click()  # キーの名前を押すと、その欄へ（閉じない）
+    expect(field(page, "a.png", "clothes")).to_be_focused()
+    field(page, "a.png", "clothes").press("Escape")
+    expect(filled(page, "a.png")).to_have_text(["looks: standing", "body: long hair, black hair"])
+
+
+def test_key_lines_written_in_the_other_field_join_their_key(page, imgs):
+    # 「その他」に書いた確定タグのキーの行は、そのキーにまとめる（確定タグに無いキーの行と文は、そのまま後ろに）
+    load_dir(page, imgs)
+    open_editor(page, "a.png")
+    field(page, "a.png", "looks").fill("standing")
+    other = field(page, "a.png", "")
+    other.fill("girl is smiling\nlooks: smiling\neyes: blue eyes")
+    other.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "girl is smiling", "eyes: blue eyes"])
+
+    open_editor(page, "a.png")
+    expect(field(page, "a.png", "looks")).to_have_value("standing, smiling")
+    expect(field(page, "a.png", "")).to_have_value("girl is smiling\neyes: blue eyes")
 
 
 def test_edit_updates_tokens_and_preview_then_saves(page, imgs, tool):
@@ -238,31 +281,55 @@ def test_line_start_does_not_suggest_phrases_already_in_the_cell(page, imgs):
 
 
 def test_suggestion_at_line_start_adds_key_and_phrase(page, imgs):
+    # 「その他」の欄の行頭で「キー: 語句」を選ぶと、確定タグのキーならその欄に足す（ほかのキーは今までどおりその行に）
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair\neyes: blue eyes")
+    wait_for_phrase(page, "blue eyes")
+
+    editor = open_editor(page, "a.png")
+    editor.press_sequentially("lh")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("body: long hair")
+    editor.press("Tab")
+    expect(field(page, "a.png", "body")).to_have_value("long hair")
+    assert editor.input_value() == ""  # 打ちかけは消す
+    expect(editor).to_be_focused()
+
+    editor.press_sequentially("blue")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("eyes: blue eyes")
+    editor.press("Tab")
+    assert editor.input_value() == "eyes: blue eyes"
+
+
+def test_key_chosen_in_the_other_field_moves_to_its_field(page, imgs):
     load_dir(page, imgs)
     write(page, "b.png", "body: long hair")
     wait_for_phrase(page, "long hair")
 
     editor = open_editor(page, "a.png")
-    editor.fill("")
-    editor.press_sequentially("lh")
-    expect(page.locator("#suggestions li.active")).to_contain_text("body: long hair")
+    editor.press_sequentially("bod")
+    expect(page.locator("#suggestions:visible li.active")).to_have_text("body:")
     editor.press("Tab")
-    assert editor.input_value() == "body: long hair"
+    expect(field(page, "a.png", "body")).to_be_focused()  # そのキーの欄へ移り、その語句の候補を出す
+    assert editor.input_value() == ""  # 打ちかけは消す
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("long hair")
 
 
-def test_suggestion_fills_template_key_line(page, imgs):
+def test_key_field_suggests_phrases_of_its_key(page, imgs):
     load_dir(page, imgs)
     write(page, "b.png", "body: long hair")
     wait_for_phrase(page, "long hair")
 
-    editor = open_editor(page, "a.png")  # looks: / clothes: / body: が並んだ状態
-    editor.press_sequentially("lh")  # looks の行に打つ → 候補は looks の語句だけ（無い）
+    open_editor(page, "a.png")
+    looks = field(page, "a.png", "looks")
+    looks.press_sequentially("lh")  # looks の欄 → 候補は looks の語句だけ（無い）
     expect(page.locator("#suggestions")).to_be_hidden()
-    editor.fill("looks: \nclothes: \nbody: ")
-    editor.evaluate("el => el.setSelectionRange(el.value.length, el.value.length)")
-    editor.press_sequentially("lh")
-    editor.press("Enter")
-    assert editor.input_value() == "looks: \nclothes: \nbody: long hair, "
+    body = field(page, "a.png", "body")
+    body.press_sequentially("lh")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("long hair")
+    body.press("Enter")
+    assert body.input_value() == "long hair, "
+    body.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["looks: lh", "body: long hair"])
 
 
 def test_enter_after_accepting_makes_a_new_line(page, imgs):
@@ -466,14 +533,15 @@ def test_leaving_action_ends_sentences_with_periods(page, imgs):
 
 def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):
     load_dir(page, imgs)
-    editor = open_editor(page, "a.png")  # looks: / clothes: / body: が並んだ状態
+    write(page, "a.png", "body: long hair")
+    editor = open_editor(page, "a.png")
     marks = cell(page, "a.png").locator(".ws-marks")
-    expect(marks.locator(".sp")).to_have_count(3)  # 開いたときから出す
-    expect(marks.locator(".nl")).to_have_count(2)
-    editor.fill("looks: standing\nbody:  long hair")
-    expect(marks.locator(".sp")).to_have_count(4)
+    expect(marks).to_have_count(4)  # 欄ごとに重ねる
+    expect(marks.locator(".sp")).to_have_count(1)  # 開いたときから出す
+    editor.fill("girl  is\nsmiling")
+    expect(marks.locator(".sp")).to_have_count(3)
     expect(marks.locator(".nl")).to_have_count(1)
-    assert editor.input_value() == "looks: standing\nbody:  long hair"  # 印は文字に入らない
+    assert editor.input_value() == "girl  is\nsmiling"  # 印は文字に入らない
     editor.evaluate("el => el.blur()")
     expect(marks).to_have_count(0)  # 表示中の欄には出さない
 
@@ -591,7 +659,7 @@ def test_clicking_a_folded_cell_opens_the_column_and_starts_editing(page, imgs):
     fold_button(page, "guy").click()
     expect(fold_button(page, "guy")).to_have_text("▶")
     cell(page, "b.png", "guy").click()
-    expect(cell(page, "b.png", "guy").locator("textarea")).to_be_focused()
+    expect(field(page, "b.png", "looks", "guy")).to_be_focused()
     expect(fold_button(page, "guy")).to_have_text("◀")
 
 
@@ -846,7 +914,7 @@ def test_clicking_beside_view_buttons_does_not_open_editor(page, imgs):
     expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(0)
 
     cell(page, "a.png", "picture").locator(".text").click()
-    expect(cell(page, "a.png", "picture").locator("textarea")).to_have_count(1)
+    expect(field(page, "a.png", "", "picture")).to_have_count(1)
 
 
 def test_hint_column_shows_same_name_txt_read_only(page, imgs, tool):

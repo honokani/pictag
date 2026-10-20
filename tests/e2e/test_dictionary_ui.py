@@ -48,6 +48,11 @@ def cell(page, name, section="girl"):
     return page.locator(f'#gridBody tr[data-name="{name}"] td.cell[data-section="{section}"]')
 
 
+def looks_field(page, name, section="girl"):
+    """開いた入力欄の looks の欄"""
+    return cell(page, name, section).locator('textarea[data-key="looks"]')
+
+
 def line_of(page, name, key, section="girl"):
     return cell(page, name, section).locator(".ln", has_text=f"{key}:")
 
@@ -182,15 +187,16 @@ def test_selected_phrase_can_be_replaced_by_a_mate_of_its_group(page, movies):
     open_movies(page)
     group_postures(page)
     cell(page, "roman_holiday.png").click()
-    editor = cell(page, "roman_holiday.png").locator("textarea")
+    editor = looks_field(page, "roman_holiday.png")
     start = editor.input_value().index("sitting")
+    editor.focus()
     editor.evaluate(f"el => el.setSelectionRange({start}, {start})")
     for _ in "sitting":
         editor.press("Shift+ArrowRight")  # sitting を選ぶ
     standing = page.locator("#suggestions:visible li", has_text="standing")
     expect(standing).to_be_visible()
     standing.click()
-    assert editor.input_value().startswith("looks: standing, smile\n")
+    assert editor.input_value() == "standing, smile"
 
 
 def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
@@ -199,8 +205,9 @@ def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
 
     # roman_holiday の girl は sitting。同じグループの standing は looks の候補に出ない
     cell(page, "roman_holiday.png").click()
-    editor = cell(page, "roman_holiday.png").locator("textarea")
-    editor.evaluate("el => { const end = el.value.indexOf('\\n'); el.setSelectionRange(end, end); }")
+    editor = looks_field(page, "roman_holiday.png")
+    editor.focus()
+    editor.evaluate("el => el.setSelectionRange(el.value.length, el.value.length)")
     page.keyboard.type(", ")
     expect(page.locator("#suggestions li").first).to_be_visible()
     texts = page.locator("#suggestions li").all_inner_texts()
@@ -211,8 +218,8 @@ def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
 
     # 同じグループの語句が2つある行には ⚠（グループの語句を title に出す）
     cell(page, "lalaland.png").click()
-    lalaland = cell(page, "lalaland.png").locator("textarea")
-    lalaland.fill("looks: standing, sitting, dancing")
+    lalaland = looks_field(page, "lalaland.png")
+    lalaland.fill("standing, sitting, dancing")
     lalaland.evaluate("el => el.blur()")
     conflict = cell(page, "lalaland.png").locator(".ln.conflict")
     expect(conflict).to_have_text("looks: standing, sitting, dancing")
