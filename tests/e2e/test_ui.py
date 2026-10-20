@@ -229,6 +229,41 @@ def test_enter_after_accepting_makes_a_new_line(page, imgs):
     assert editor.input_value() == "body: long hair, \nlooks: standing"
 
 
+def test_phrase_suggestions_are_split_by_kind(page, imgs):
+    # 語句の候補は同じ種類の段落で使ったものだけ。女性（girl・woman）・男性（guy・man・boy）はそれぞれまとめ、ほかは種類ごと
+    load_dir(page, imgs)
+    for name in ["woman", "dog"]:
+        page.fill("#sectionName", name)
+        page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(6)
+    write(page, "a.png", "looks: standing")
+    write(page, "a.png", "looks: muscular", section="guy")
+    wait_for_phrase(page, "muscular")
+    suggestions = page.locator("#suggestions:visible")
+
+    for section, shown, other in [("girl", "standing", "muscular"), ("woman", "standing", "muscular"),
+                                  ("guy", "muscular", "standing")]:
+        open_editor(page, "b.png", section).fill("looks: ")
+        expect(suggestions).to_contain_text(shown)
+        expect(suggestions).not_to_contain_text(other)
+    open_editor(page, "b.png", "dog").fill("looks: ")  # dog ではまだ使っていない
+    expect(page.locator("#suggestions")).to_be_hidden()
+
+    editor = open_editor(page, "b.png")  # 行頭の「キー: 語句」も同じ
+    editor.fill("")
+    editor.press_sequentially("mus")
+    expect(page.locator("#suggestions")).to_be_hidden()
+    editor.fill("")
+    editor.evaluate("el => el.blur()")
+
+    row(page, "a.png").locator("td.meta").click()  # 一括入力も同じ
+    page.select_option("#bulkSection", "guy")
+    page.select_option("#bulkKey", "looks")
+    page.locator("#bulkText").press_sequentially("s")
+    expect(suggestions).to_contain_text("muscular")
+    expect(suggestions).not_to_contain_text("standing")
+
+
 def test_action_suggests_words_inside_a_sentence(page, imgs):
     load_dir(page, imgs)
     write(page, "a.png", "girl spread arms\nguy grab girl's waist", section="action")
