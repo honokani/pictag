@@ -133,6 +133,12 @@ td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width:
 th .section-name.fixed { cursor: default; }
 td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 
+/* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture の幅より後ろに置いて優先する） */
+th .section-head { display: flex; align-items: center; }
+th .fold-section { margin-left: auto; border: none; background: none; padding: 0 4px; color: #888; }
+th.folded, td.cell.folded { width: 28px; min-width: 28px; max-width: 28px; padding: 4px 0; text-align: center; }
+td.cell.folded { color: #888; cursor: pointer; }
+
 /* 打っている欄の空白（␣）と改行（↵）の印。欄の上に重ねた層に描き、文字には入らない（文字組み・幅は JS で欄から写す） */
 .ws { position: relative; }
 span.ws { display: inline-flex; }

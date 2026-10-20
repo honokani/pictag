@@ -18,6 +18,7 @@ const state = {
     candidateGroups: [],  // 語句の候補をまとめる名前の組（女性・男性。ほかの段落は種類ごと）
     hasHints: false,      // 画像フォルダに hint（画像と同じ名前の .txt）があるか
     foldedHints: new Set(),  // hint を畳んだ画像の名前（プロジェクトごとにブラウザに覚える）
+    foldedSections: new Set(),  // 畳んだ段落の列（プロジェクトごとにブラウザに覚える）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
@@ -429,15 +430,27 @@ function applyDictionary(body) {
 
 // ---- 表 ----
 
+// 段落の見出し: 名前（固定でない段落はダブルクリックで改名、× で外す）と、右端の ◀（列を細く畳む）。畳んだ列は ▶ だけ
+function sectionHeadHtml(s) {
+    const name = escapeHtml(s);
+    if (state.foldedSections.has(s)) {
+        return `<th class="folded" data-section="${name}">` +
+            `<button type="button" class="fold-section" title="${name} を開く" aria-label="${name} を開く">▶</button></th>`;
+    }
+    const label = state.fixedSections.includes(s)
+        ? `<span class="section-name fixed">${name}</span>`
+        : `<span class="section-name" title="ダブルクリックで改名">${name}</span>` +
+          `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${name} を外す">×</button>`;
+    return `<th data-section="${name}"><div class="section-head">${label}` +
+        `<button type="button" class="fold-section" title="この列を畳む" aria-label="${name} を畳む">◀</button></div></th>`;
+}
+
 function headHtml() {
     return [
         '<th>サムネイル</th>',
         '<th title="キャプションのトークン数 / 上限">token</th>',
         '<th>マーク</th>',
-        ...state.sections.map(s => (state.fixedSections.includes(s)
-            ? `<th data-section="${escapeHtml(s)}"><span class="section-name fixed">${escapeHtml(s)}</span></th>`
-            : `<th data-section="${escapeHtml(s)}"><span class="section-name" title="ダブルクリックで改名">${escapeHtml(s)}</span>` +
-              `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${escapeHtml(s)} を外す">×</button></th>`)),
+        ...state.sections.map(sectionHeadHtml),
         ...(state.hasHints ? ['<th class="hint-head" title="画像と同じ名前の .txt（読むだけ。保存には影響しない）">hint</th>'] : []),
     ].join('');
 }
@@ -479,19 +492,20 @@ function fitHints(root) {
     });
 }
 
-const foldedHintsKey = () => `pictag:folded-hints:${state.projectName}`;
+// 畳んだもの（kind: hints は hint の画像の名前、sections は段落の列）を、プロジェクトごとにブラウザに覚える
+const foldedKey = kind => `pictag:folded-${kind}:${state.projectName}`;
 
-function loadFoldedHints() {
+function loadFolded(kind) {
     try {
-        state.foldedHints = new Set(JSON.parse(localStorage.getItem(foldedHintsKey()) || '[]'));
+        return new Set(JSON.parse(localStorage.getItem(foldedKey(kind)) || '[]'));
     } catch {
-        state.foldedHints = new Set();
+        return new Set();
     }
 }
 
-function saveFoldedHints() {
+function saveFolded(kind, names) {
     try {
-        localStorage.setItem(foldedHintsKey(), JSON.stringify([...state.foldedHints]));
+        localStorage.setItem(foldedKey(kind), JSON.stringify([...names]));
     } catch {
         // 覚えられなくても、畳む・開くはできる
     }
@@ -502,9 +516,24 @@ function toggleHint(button) {
     const name = tr.dataset.name;
     if (state.foldedHints.has(name)) state.foldedHints.delete(name);
     else state.foldedHints.add(name);
-    saveFoldedHints();
+    saveFolded('hints', state.foldedHints);
     tr.querySelector('td.hint').outerHTML = hintHtml(state.byIndex.get(Number(tr.dataset.index)));
     fitHints(tr);
+}
+
+// 段落の列を畳む・開く（見出しの ◀ / ▶）。編集中の欄は先に確定し、表を描き直す
+function toggleSection(section) {
+    commitEdit();
+    if (state.foldedSections.has(section)) state.foldedSections.delete(section);
+    else state.foldedSections.add(section);
+    saveFolded('sections', state.foldedSections);
+    renderTable();
+}
+
+// 畳んだ列の欄をクリック: 列を開いて、その欄の編集を始める
+function openSection(section, index) {
+    toggleSection(section);
+    startEdit(rowElement(index).querySelector(`td.cell[data-section="${CSS.escape(section)}"]`));
 }
 
 // token の欄: トークン数と上限を2行で（ファイル名はサムネイルの title）。クリックで行を選ぶ
@@ -552,7 +581,9 @@ function fitPictureColumn() {
 }
 
 // サムネイルは正方形で、picture の欄の中身の高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る
+// picture を畳んでいるときは測らない（畳む前の大きさのまま）
 function fitThumbnails() {
+    if (state.foldedSections.has('picture')) return;
     const heights = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"]')]
         .filter(td => td.getBoundingClientRect().height > 0)
         .map(td => [...td.children].reduce((sum, el) => sum + el.getBoundingClientRect().height + parseFloat(getComputedStyle(el).marginTop), 0));
@@ -580,11 +611,19 @@ function cellHtml(section, row) {
     return `<div class="text">${lines.join('')}</div>${keys.includes('view') ? choicesHtml(row) : ''}`;
 }
 
+// 段落の欄。畳んだ列は、入力があれば ● だけ（クリックで列を開いて編集を始める）
+function cellTd(section, row) {
+    const s = escapeHtml(section);
+    if (!state.foldedSections.has(section)) return `<td class="cell" data-section="${s}">${cellHtml(section, row)}</td>`;
+    const mark = (row.texts[section] || '').trim() ? '●' : '';
+    return `<td class="cell folded" data-section="${s}" title="${s} を開いて書く">${mark}</td>`;
+}
+
 function rowHtml(row) {
     const name = row['サムネイル'];
     const classes = [row.is_dead ? 'dead' : '', state.selected.has(row.index) ? 'selected' : '',
         matchesFilter(row) ? '' : 'filtered'].filter(Boolean).join(' ');
-    const cells = state.sections.map(s => `<td class="cell" data-section="${escapeHtml(s)}">${cellHtml(s, row)}</td>`).join('');
+    const cells = state.sections.map(s => cellTd(s, row)).join('');
     return `<tr data-index="${row.index}" data-name="${escapeHtml(name)}" class="${classes}">` +
         `<td class="thumb"><img loading="lazy" src="/thumbnail/${encodeURIComponent(name)}" alt="" title="${escapeHtml(name)}"></td>` +
         `<td class="meta">${metaHtml(row)}</td>${marksHtml(row)}${cells}${state.hasHints ? hintHtml(row) : ''}</tr>`;
@@ -758,7 +797,7 @@ async function sendText(row, section, text) {
         tr.querySelector('td.meta').innerHTML = metaHtml(row);
         // 人物の段落を書き換えると characters が変わるので picture の欄を描き直す（編集中なら触らない）
         const picture = tr.querySelector('td.cell[data-section="picture"]');
-        if (picture && !picture.querySelector('textarea')) picture.innerHTML = cellHtml('picture', row);
+        if (picture && !picture.querySelector('textarea') && !picture.classList.contains('folded')) picture.innerHTML = cellHtml('picture', row);
     }
     setDirty(true);
     refreshWords();
@@ -914,7 +953,8 @@ const confirmDiscard = () => !state.dirty || window.confirm('保存していな�
 
 async function opened(name) {
     state.projectName = name;
-    loadFoldedHints();
+    state.foldedHints = loadFolded('hints');
+    state.foldedSections = loadFolded('sections');
     state.selected = new Set();
     state.anchor = null;
     state.dirty = false;
@@ -1212,6 +1252,8 @@ function wire() {
             if (event.target.tagName === 'IMG') openImage(td.closest('tr').dataset.name);
         } else if (td.classList.contains('meta')) {
             selectRow(index, event);
+        } else if (td.classList.contains('folded')) {
+            openSection(td.dataset.section, index);
         } else if (td.classList.contains('cell') && !td.querySelector('textarea')) {
             // ボタンのある欄（picture）は文字の部分だけで編集を始める（ボタンの間や余白の誤クリックで開かない）
             if (td.querySelector('.choices') && !event.target.closest('.text')) return;
@@ -1223,6 +1265,8 @@ function wire() {
         if (event.target.matches('td.hint textarea')) event.target.select();
     });
     $('gridHead').addEventListener('click', event => {
+        const fold = event.target.closest('.fold-section');
+        if (fold) toggleSection(fold.closest('th').dataset.section);
         const button = event.target.closest('.remove-section');
         if (button) guarded(removeSection)(button.closest('th').dataset.section);
     });
