@@ -21,8 +21,8 @@ const state = {
     foldedSections: new Set(),  // 畳んだ段落の列（プロジェクトごとにブラウザに覚える）
     sideView: 'hint',     // hint の列に出すもの（hint / preview / hint_by_qwen。出せないものなら先頭。プロジェクトごとにブラウザに覚える）
     thumbZoomed: false,   // サムネイルを 1.5 倍に広げているか（プロジェクトごとにブラウザに覚える）
-    qwen: false,          // qwen 版で起動したか（🤖 の列と hint_by_qwen を出す）
-    qwenBusy: new Set(),  // Qwen が書いている行の index
+    qwen: false,          // qwen 版で起動したか（🤖🎲 の列と hint_by_qwen を出す）
+    qwenBusy: new Map(),  // Qwen が書いている行の index → 見本の選び方（near / random）
     thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
     markChoices: {one: [], many: []},  // マーク（排他 A〜D、複数 ★●▲■）
     filter: {one: '', many: ''},       // マークの絞り込み（'' はすべて、'none' はマークなし）
@@ -471,7 +471,8 @@ function headHtml() {
     return [
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
-        ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする">🤖</th>'] : []),
+        ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。' +
+            '🤖: 上の 10 行を見本に / 🎲: ほかの行からランダムに 10 行を見本に">🤖🎲</th>'] : []),
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
         sideHeadHtml(),
@@ -678,27 +679,37 @@ function metaHtml(row) {
     return `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'}\n/ ${state.tokenLimit}</div>`;
 }
 
-const QWEN_SAMPLES = 10;  // 🤖 に要る見本の数（上にある行の、空でないキャプション。qwen.py の SAMPLE_COUNT と同じ）
+const QWEN_SAMPLES = 10;  // 🤖🎲 に要る見本の数（空でないキャプション。qwen.py の SAMPLE_COUNT と同じ）
 
-// 行より上にある見本の数（削除済みの行は数えない。QWEN_SAMPLES まで数えれば足りる）
+// 見本になる行か（削除済みでなく、キャプションがある）
+const isSample = row => !row.is_dead && Boolean(row.caption);
+
+// 行より上にある見本の数（QWEN_SAMPLES まで数えれば足りる）
 function samplesAbove(index) {
     let count = 0;
     for (const row of state.rows) {
         if (row.index === index || count >= QWEN_SAMPLES) break;
-        if (!row.is_dead && row.caption) count += 1;
+        if (isSample(row)) count += 1;
     }
     return count;
 }
 
-// 🤖 の欄（qwen 版だけ）: Qwen でその行の空の欄を下書きする。上に見本が 10 行無ければ押せない。書いている間は ⏳
+// 🤖🎲 の欄（qwen 版だけ）: Qwen でその行の空の欄を下書きする。🤖 は上の 10 行、🎲 はほかの行からランダムに 10 行を見本に
+// 見本が足りなければ押せない（理由は title）。書いている間は、押した方が ⏳ で、どちらも押せない
 function qwenHtml(row) {
-    const busy = state.qwenBusy.has(row.index);
-    const samples = samplesAbove(row.index);
-    const ready = !row.is_dead && samples >= QWEN_SAMPLES;
-    const title = busy ? 'Qwen が書いています' : ready ? 'Qwen で、この行の空の欄を下書きする'
-        : row.is_dead ? '元の画像がありません' : `上に見本（キャプションのある行）が ${QWEN_SAMPLES} 行必要です（今 ${samples} 行）`;
-    return `<td class="qwen"><button type="button" class="qwen-btn" title="${title}"${ready && !busy ? '' : ' disabled'}>` +
-        `${busy ? '⏳' : '🤖'}</button></td>`;
+    const busy = state.qwenBusy.get(row.index);
+    const elsewhere = state.rows.filter(isSample).length - (isSample(row) ? 1 : 0);
+    const button = (mode, mark, count, source, missing) => {
+        const ready = !row.is_dead && count >= QWEN_SAMPLES && !busy;
+        const title = busy === mode ? 'Qwen が書いています' : row.is_dead ? '元の画像がありません'
+            : count >= QWEN_SAMPLES ? `Qwen で、この行の空の欄を下書きする（見本は${source}）` : `${missing}（今 ${count} 行）`;
+        return `<button type="button" class="qwen-btn" data-mode="${mode}" title="${title}"${ready ? '' : ' disabled'}>` +
+            `${busy === mode ? '⏳' : mark}</button>`;
+    };
+    return '<td class="qwen">' +
+        button('near', '🤖', samplesAbove(row.index), '上の 10 行', `上に見本（キャプションのある行）が ${QWEN_SAMPLES} 行必要です`) +
+        button('random', '🎲', elsewhere, 'ほかの行からランダムに 10 行', `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
+        '</td>';
 }
 
 // 🤖 の欄だけを描き直す（キャプションが変わると、下の行の見本の数も変わる）
@@ -711,15 +722,15 @@ function paintQwenButtons() {
     }
 }
 
-// 🤖: Qwen（ComfyUI）に下書きさせ、その行の空の欄に入れる（数秒。ComfyUI が初めて Qwen を読むときは数十秒）
-async function qwenFill(index) {
+// 🤖 / 🎲: Qwen（ComfyUI）に下書きさせ、その行の空の欄に入れる（数秒。ComfyUI が初めて Qwen を読むときは数十秒）
+async function qwenFill(index, mode) {
     commitEdit();
     const name = state.byIndex.get(index)['サムネイル'];
-    state.qwenBusy.add(index);
+    state.qwenBusy.set(index, mode);
     paintQwenButtons();
     setStatus(`${name} を Qwen が書いています…`);
     try {
-        const res = await postJson('/qwen_fill', {row_index: index});
+        const res = await postJson('/qwen_fill', {row_index: index, mode});
         if (!res.success) {
             setStatus(res.message, 'error');
             return;
@@ -1466,7 +1477,7 @@ function wire() {
         }
         const qwenButton = event.target.closest('.qwen-btn');
         if (qwenButton) {
-            guarded(qwenFill)(Number(qwenButton.closest('tr').dataset.index));
+            guarded(qwenFill)(Number(qwenButton.closest('tr').dataset.index), qwenButton.dataset.mode);
             return;
         }
         const td = event.target.closest('td');

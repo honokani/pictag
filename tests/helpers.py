@@ -145,8 +145,9 @@ class Api:
     def save(self):
         return self.post("/save_data")
 
-    def qwen_fill(self, row_index):
-        return self.post("/qwen_fill", {"row_index": row_index})
+    def qwen_fill(self, row_index, mode=None):
+        """mode: near（上の 10 行。既定）/ random（ほかの行からランダムに 10 行）"""
+        return self.post("/qwen_fill", {"row_index": row_index, **({"mode": mode} if mode else {})})
 
     def table(self):
         r = self.c.get("/get_table_data")
