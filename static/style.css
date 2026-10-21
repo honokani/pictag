@@ -160,6 +160,7 @@ td.cell .field-key { cursor: default; }
 /* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture の幅より後ろに置いて優先する） */
 th .section-head { display: flex; align-items: center; }
 th .fold-section, th .thumb-zoom { margin-left: auto; border: none; background: none; padding: 0 4px; color: #888; }  /* サムネイルの ▶ / ◀ も同じ見た目 */
+th .verb-forms { border: none; background: none; padding: 0 4px; color: #888; }  /* action の ⇄（名前のすぐ右） */
 th.folded, td.cell.folded { width: 28px; min-width: 28px; max-width: 28px; padding: 4px 0; text-align: center; }
 td.cell.folded { color: #888; cursor: pointer; }
 
@@ -304,3 +305,12 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 dialog .close { float: right; border: none; font-size: 20px; line-height: 1; }
 dialog img { display: block; max-width: 88vw; max-height: 80vh; margin: 0 auto; }
 #imageTitle { margin: 0 0 6px; font-weight: 600; }
+/* 動詞の形をそろえる窓: 案の一覧（長ければ中でスクロール）と、入れるボタン */
+#verbDialog { width: 640px; }
+#verbSummary { margin: 0 0 6px; font-weight: 600; }
+#verbLists { max-height: 64vh; overflow-y: auto; }
+#verbLists h4 { margin: 8px 0 2px; font-size: 13px; }
+.verb-list { list-style: none; margin: 0; padding: 0; }
+.verb-list li { padding: 2px 0; }
+.verb-name { color: #888; font-size: 12px; }
+.verb-actions { margin: 8px 0 0; text-align: right; }

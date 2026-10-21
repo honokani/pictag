@@ -284,6 +284,18 @@ wheels = [
 ]
 
 [[package]]
+name = "lemminflect"
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2d/41/662a99c976acb78907e6423cb666f0001450c35f74362b402716378f45b1/lemminflect-0.2.3.tar.gz", hash = "sha256:5e125ab381b4156245a8c0b5bcdccb899950ead96546eb9735ea8641636a1af6", size = 765166, upload-time = "2022-10-02T20:54:08.478Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/98/9fac8cc177474ddd8d1725d5cae052098662d5e4a6756633335f4393673b/lemminflect-0.2.3-py3-none-any.whl", hash = "sha256:1cf470efa783733ca5654cc1a6ee1de774e59031e61bf6210467625e84a8cf1c", size = 769698, upload-time = "2022-10-02T20:54:05.584Z" },
+]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -546,6 +558,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "flask" },
+    { name = "lemminflect" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pillow" },
@@ -561,6 +574,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "flask", specifier = ">=3.1.3,<4" },
+    { name = "lemminflect", specifier = ">=0.2.3,<0.3" },
     { name = "numpy", specifier = ">=2.5.4,<3" },
     { name = "pandas", specifier = ">=3.0.6,<4" },
     { name = "pillow", specifier = ">=13.0.0,<14" },

@@ -41,6 +41,7 @@ const state = {
     editor: null,         // {index, section, td, keys, fields}（fields: 欄の textarea。data-key がキー、「その他」は空）
     suggest: null,        // {el, section, ctx, items, active, moved}
     pending: new Set(),   // 送信中の入力（保存の前に待つ）
+    verbChanges: [],      // ⇄ の窓に出した、動詞の形をそろえる案（/verb_forms の changes）
 };
 
 // ---- 通信 ----
@@ -521,7 +522,8 @@ function applyDictionary(body) {
 
 // ---- 表 ----
 
-// 段落の見出し: 名前（固定でない段落はダブルクリックで改名、× で外す）と、右端の ◀（列を細く畳む）。畳んだ列は ▶ だけ
+// 段落の見出し: 名前（固定でない段落はダブルクリックで改名、× で外す）と、右端の ◀（列を細く畳む）。畳んだ列は ▶ だけ。
+// action には ⇄（文の動詞の形をそろえる）
 function sectionHeadHtml(s) {
     const name = escapeHtml(s);
     if (state.foldedSections.has(s)) {
@@ -532,7 +534,11 @@ function sectionHeadHtml(s) {
         ? `<span class="section-name fixed">${name}</span>`
         : `<span class="section-name" title="ダブルクリックで改名">${name}</span>` +
           `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${name} を外す">×</button>`;
-    return `<th data-section="${name}"><div class="section-head">${label}` +
+    const verbs = s === 'action'
+        ? '<button type="button" class="verb-forms" title="文の動詞の形（is doing / does）を、多い方にそろえる（一覧で確かめてから入れる）" ' +
+          'aria-label="動詞の形をそろえる">⇄</button>'
+        : '';
+    return `<th data-section="${name}"><div class="section-head">${label}${verbs}` +
         `<button type="button" class="fold-section" title="この列を畳む" aria-label="${name} を畳む">◀</button></div></th>`;
 }
 
@@ -547,7 +553,8 @@ function headHtml() {
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
         ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。上から ' +
-            `🤖: 上の ${state.qwenSamples} 行を見本に / 🔖: 同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに ` +
+            `🤖: 上の ${state.qwenSamples} 行を見本に / 🔖: 同じマークの行（単語①と複数★の両方 → 単語①だけ・複数★だけを同じ数ずつ → ` +
+            `単語① → 複数★ → 排他A）を先に、足りなければランダムに ` +
             `${state.qwenSamples} 行を見本に / 🔄: 🔖 と同じ見本で、入力のある欄も上書き（外れる単語のマークの語句は残す） / ` +
             `🎲: ほかの行からランダムに ${state.qwenSamples} 行を見本に">🤖</th>`] : []),
         '<th>マーク</th>',
@@ -1839,6 +1846,54 @@ async function movePhrases() {
     setStatus(`${section} の ${from} の ${phrases.join('・')} を ${to} に移しました（${where}）`, 'ok');
 }
 
+// ---- 動詞の形をそろえる（action の見出しの ⇄） ----
+
+const VERB_FORM_NAMES = {progressive: 'is doing の形（girl is sitting.）', present: 'does の形（girl sits.）'};
+
+function verbSummary({counts, target, changes}) {
+    const counted = `is doing の形 ${counts.progressive} 文・does の形 ${counts.present} 文`;
+    if (!counts.progressive && !counts.present) return 'action に、形の分かる文がありません';
+    if (!target) return `${counted}。同じ数なので、そろえません`;
+    if (!changes.length) return `${counted}。${VERB_FORM_NAMES[target]}にそろっています`;
+    return `${counted} → ${VERB_FORM_NAMES[target]}にそろえます`;
+}
+
+// 案の一覧: 直す文（初めからチェック）と、迷う文（入れるならチェック）
+function verbListHtml(changes, sure) {
+    const items = changes.map((change, i) => [change, i]).filter(([change]) => change.sure === sure);
+    if (!items.length) return '';
+    const title = sure ? `直す文（${items.length}）` : `迷う文（${items.length}。入れるならチェック）`;
+    return `<h4>${title}</h4><ul class="verb-list ${sure ? 'verb-sure' : 'verb-unsure'}">` + items.map(([change, i]) =>
+        `<li><label><input type="checkbox" data-i="${i}"${sure ? ' checked' : ''}> ` +
+        `<span class="verb-name">${escapeHtml(change.name)}</span> ${escapeHtml(change.before)} → ` +
+        `<b>${escapeHtml(change.after)}</b></label></li>`).join('') + '</ul>';
+}
+
+async function openVerbForms() {
+    commitEdit();
+    await settled();
+    const res = await postJson('/verb_forms', {});
+    if (!res.success) return setStatus(res.message, 'error');
+    state.verbChanges = res.changes;
+    $('verbSummary').textContent = verbSummary(res);
+    $('verbLists').innerHTML = verbListHtml(res.changes, true) + verbListHtml(res.changes, false);
+    $('verbApply').disabled = !res.changes.length;
+    $('verbDialog').showModal();
+}
+
+async function applyVerbForms() {
+    const picked = [...$('verbLists').querySelectorAll('input:checked')].map(box => state.verbChanges[Number(box.dataset.i)]);
+    $('verbDialog').close();
+    if (!picked.length) return;
+    const res = await postJson('/apply_verb_forms', {changes: picked.map(({index, before, after}) => ({index, before, after}))});
+    if (!res.success) return setStatus(res.message, 'error');
+    if (res.changed) {
+        setDirty(true);
+        await refreshTable();
+    }
+    setStatus(`${res.changed} 行の文の動詞をそろえました（保存はまだです）`, 'ok');
+}
+
 function openImage(name) {
     $('imageTitle').textContent = name;
     $('imageFull').src = `/image/${encodeURIComponent(name)}`;
@@ -1857,6 +1912,7 @@ function wire() {
     $('saveButton').addEventListener('click', guarded(save));
     $('removeDeadButton').addEventListener('click', guarded(removeDead));
     $('resumeButton').addEventListener('click', resume);
+    $('verbApply').addEventListener('click', guarded(applyVerbForms));
     $('freezeButton').addEventListener('click', guarded(freezeDictionary));
     $('showDead').addEventListener('change', toggleDead);
     $('sectionForm').addEventListener('submit', event => {
@@ -2000,6 +2056,7 @@ function wire() {
         const view = event.target.closest('.side-view');
         if (view) switchSideView(view.dataset.view);
         if (event.target.closest('.thumb-zoom')) toggleThumbZoom();
+        if (event.target.closest('.verb-forms')) guarded(openVerbForms)();
         const button = event.target.closest('.remove-section');
         if (button) guarded(removeSection)(button.closest('th').dataset.section);
     });

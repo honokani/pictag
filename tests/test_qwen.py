@@ -5,7 +5,7 @@ import pytest
 
 import app as pictag
 from helpers import FakeComfy, make_images
-from qwen import (INSTRUCTIONS, clear_drafts, fill_section, keep_word_marks, match_section, parse_caption,
+from qwen import (INSTRUCTIONS, SAMPLE_COUNT, clear_drafts, fill_section, keep_word_marks, match_section, parse_caption,
                   pick_random_samples, pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt,
                   written_skeleton)
 
@@ -26,6 +26,12 @@ def test_skeleton_lists_keys_without_values_and_shows_keyless_sections_an_exampl
                                   "action:\n  - (e.g. boy is sitting.)\n\n"
                                   "girl:\n  - looks:\n  - clothes:\n  - body:\n\n"
                                   "else:\n  - (e.g. dog: brown fur, sitting)")
+
+
+def test_skeleton_takes_the_sentence_example():
+    # 文の例は、プロジェクトで多い方の動詞の形に合わせて渡せる（else の例は変わらない）
+    assert skeleton([("action", []), ("else", [])], "(e.g. boy sits.)") == (
+        "action:\n  - (e.g. boy sits.)\n\nelse:\n  - (e.g. dog: brown fur, sitting)")
 
 
 def test_system_prompt_is_instructions_and_skeleton():
@@ -78,28 +84,41 @@ def test_written_skeleton_is_empty_when_nothing_is_written():
 
 def test_pick_samples_takes_the_nearest_ten_non_empty_captions_in_table_order():
     captions = [f"c{i}" if i % 3 else "" for i in range(20)]  # 空の行が混ざる
-    assert pick_samples(captions) == ["c5", "c7", "c8", "c10", "c11", "c13", "c14", "c16", "c17", "c19"]
-    assert pick_samples(["c"] * 9 + [""]) == []  # 10 個に満たなければ渡さない
+    assert pick_samples(captions, count=10) == ["c5", "c7", "c8", "c10", "c11", "c13", "c14", "c16", "c17", "c19"]
+    assert pick_samples(["c"] * 9 + [""], count=10) == []  # 10 個に満たなければ渡さない
 
 
 def test_pick_random_samples_takes_ten_different_non_empty_captions():
     captions = [f"c{i}" if i % 3 else "" for i in range(30)]  # 空でないものは 20 個
-    picked = pick_random_samples(captions)
+    picked = pick_random_samples(captions, count=10)
     assert len(set(picked)) == 10 and set(picked) <= set(captions) - {""}
-    assert pick_random_samples([f"c{i}" for i in range(9)] + [""]) == []  # 10 個に満たなければ渡さない
+    assert pick_random_samples([f"c{i}" for i in range(9)] + [""], count=10) == []  # 10 個に満たなければ渡さない
 
 
 def test_pick_tiered_samples_fills_from_the_first_tier_then_the_next():
     # 先の段からランダムに選び、足りない分は次の段から（同じ行は1回）。並びは後の段が先、最初の段が最後（頼む文の直前）
-    same = [(i, f"a{i}") for i in range(3)]  # A〜D が同じ（3 行）
-    shared = [(0, "a0")] + [(i, f"s{i}") for i in range(3, 8)]  # ★●▲■ を共有（5 行。a0 は前の段で選び済み）
+    same = [(i, f"a{i}") for i in range(3)]  # 最初の段（3 行）
+    shared = [(0, "a0")] + [(i, f"s{i}") for i in range(3, 8)]  # 次の段（5 行。a0 は前の段で選び済み）
     rest = same + shared[1:] + [(i, f"r{i}") for i in range(8, 30)]
-    picked = pick_tiered_samples([same, shared, rest])
+    picked = pick_tiered_samples([[same], [shared], [rest]], count=10)
     assert len(set(picked)) == 10
     assert sorted(picked[-3:]) == ["a0", "a1", "a2"]
     assert sorted(picked[2:7]) == ["s3", "s4", "s5", "s6", "s7"]
     assert all(p.startswith("r") for p in picked[:2])
-    assert pick_tiered_samples([[(0, "a")], [(1, "b"), (2, "")]]) == []  # 全部で 10 個に満たなければ渡さない
+    assert pick_tiered_samples([[[(0, "a")]], [[(1, "b"), (2, "")]]], count=10) == []  # 全部で 10 個に満たなければ渡さない
+
+
+def test_pick_tiered_samples_takes_the_same_number_from_each_group_of_a_tier():
+    # 1つの段に組がいくつかあれば、どの組からも同じ数ずつ（どれかが尽きるか、残りの枠を組の数で割れなくなるまで）。余りは次の段へ
+    words = [(f"w{i}", f"w{i}") for i in range(10)]
+    many = [(f"m{i}", f"m{i}") for i in range(3)]
+    picked = pick_tiered_samples([[words, many], [words], [many]], count=9)
+    assert len(set(picked)) == 9
+    assert sum(p.startswith("m") for p in picked[-6:]) == 3  # 組の段: 複数が尽きるまで 3 ずつ（頼む文の近く）
+    assert all(p.startswith("w") for p in picked[:3])  # 残りの 3 は次の段（単語）から
+    many = [(f"m{i}", f"m{i}") for i in range(10)]
+    picked = pick_tiered_samples([[words, many], [words], [many]], count=7)
+    assert sum(p.startswith("m") for p in picked) == 3  # 7 は 2 で割れないので 3 ずつ、余りの 1 は単語の段から
 
 
 # ---- 答えの分け方と、空の欄への入れ方 ----
@@ -217,12 +236,16 @@ def comfy():
     fake.close()
 
 
+ASK = f"r{SAMPLE_COUNT:02}.png"  # 頼む行（上に見本の数だけ、キャプションのある行がある）
+SPARE = f"r{SAMPLE_COUNT + 1:02}.png"  # 空の行（見本を足すときに書く）
+
+
 @pytest.fixture
 def qwen_api(api, comfy, tmp_path, monkeypatch):
-    """qwen 版で開いたプロジェクト proj: r00〜r11 の 12 枚。r00〜r09 の girl が見本（looks: pose0〜9）"""
+    """qwen 版で開いたプロジェクト proj: r00〜r17 の 18 枚（見本の数 + 2）。r00〜r15 の girl が見本（looks: pose0〜15）"""
     monkeypatch.setitem(pictag.app.config, "QWEN_URL", comfy.url)
-    api.load(make_images(tmp_path / "imgs" / "proj", {f"r{i:02}.png": (100, 100) for i in range(12)}))
-    for i in range(10):
+    api.load(make_images(tmp_path / "imgs" / "proj", {f"r{i:02}.png": (100, 100) for i in range(SAMPLE_COUNT + 2)}))
+    for i in range(SAMPLE_COUNT):
         api.write(api.row_index(f"r{i:02}.png"), f"looks: pose{i}")
     return api
 
@@ -235,7 +258,7 @@ def sample_numbers(comfy):
 
 def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api, comfy, tool):
     assert qwen_api.table()["qwen"] is True
-    row = qwen_api.row_index("r10.png")
+    row = qwen_api.row_index(ASK)
     qwen_api.write(row, "looks: sitting")
     res = qwen_api.qwen_fill(row)
     assert res["success"], res
@@ -249,10 +272,11 @@ def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api
 
     inputs = comfy.prompts[0]["prompt"]["tg"]["inputs"]
     assert "girl:\n  - looks:\n  - clothes:\n  - body:" in inputs["system_prompt"]
-    assert all(f"looks: pose{i}" in inputs["prompt"] for i in range(10))  # 上の 10 行のキャプションが見本
+    assert sample_numbers(comfy) == list(range(16))  # 上の 16 行のキャプションが見本（表の並びのまま）
     assert inputs["max_length"] > 507  # キャプションの上限より長く書ける
-    assert b'filename="proj_r10.jpg"' in comfy.uploads[0] and b"\xff\xd8\xff" in comfy.uploads[0]  # JPEG で送る
-    assert (tool.data_work_target / "qwen" / "r10.txt").read_text(encoding="utf-8") == ANSWER
+    stem = ASK.removesuffix(".png")
+    assert f'filename="proj_{stem}.jpg"'.encode() in comfy.uploads[0] and b"\xff\xd8\xff" in comfy.uploads[0]  # JPEG で送る
+    assert (tool.data_work_target / "qwen" / f"{stem}.txt").read_text(encoding="utf-8") == ANSWER
 
 
 ANSWER2 = ("picture:\n  - place: beach\n\naction:\n  - girl runs.\n\n"
@@ -261,7 +285,7 @@ ANSWER2 = ("picture:\n  - place: beach\n\naction:\n  - girl runs.\n\n"
 
 def test_pressing_again_replaces_only_the_previous_draft(qwen_api, comfy):
     # 押し直したら、前に Qwen が入れてそのあと直していない欄だけを、新しい答えで置き換える（開き直しても覚えている）
-    row = qwen_api.row_index("r10.png")
+    row = qwen_api.row_index(ASK)
     qwen_api.qwen_fill(row)  # picture: place・view、action、girl: looks・clothes
     qwen_api.save()
     qwen_api.open_project("proj")
@@ -277,7 +301,7 @@ def test_pressing_again_replaces_only_the_previous_draft(qwen_api, comfy):
 
 def test_qwen_fill_sends_what_is_written_but_not_the_previous_draft(qwen_api, comfy):
     # 何も書いていなければ今までの文面。書いてあれば、それを入れたひな形も送る（前に Qwen が入れて直していないものは送らない）
-    row = qwen_api.row_index("r10.png")
+    row = qwen_api.row_index(ASK)
     qwen_api.qwen_fill(row)
     assert "already written" not in comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
     qwen_api.write(row, "looks: standing\nclothes: red dress, hat")  # Qwen の looks はそのまま、clothes だけ直す
@@ -294,16 +318,27 @@ def test_qwen_fill_sends_what_is_written_but_not_the_previous_draft(qwen_api, co
 @pytest.mark.parametrize("mode", pictag.QWEN_MODES)
 def test_every_qwen_button_sends_what_is_written(qwen_api, comfy, mode):
     # 🤖・🔖・🔄・🎲 のどれでも送る（🔄 は、書いた値も答えで置き換わる）
-    row = qwen_api.row_index("r10.png")
+    row = qwen_api.row_index(ASK)
     qwen_api.write(row, "view: from side, guy POV", section="picture")
     assert qwen_api.qwen_fill(row, mode=mode)["success"]
     assert "  - view: from side, guy POV\n" in comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
 
 
+def test_qwen_sentence_example_follows_the_majority_verb_form(qwen_api, comfy):
+    # ひな形の文の例は、action の文で多い方の動詞の形（文が無い・同じ数なら boy is sitting.）
+    def system(call):
+        return comfy.prompts[call]["prompt"]["tg"]["inputs"]["system_prompt"]
+
+    qwen_api.qwen_fill(qwen_api.row_index(ASK))  # 文はまだ無い。答えで action に「girl waves.」（does の形）が入る
+    assert "action:\n  - (e.g. boy is sitting.)" in system(0)
+    qwen_api.qwen_fill(qwen_api.row_index(SPARE))
+    assert "action:\n  - (e.g. boy sits.)" in system(1)
+
+
 def test_overwrite_replaces_filled_fields_and_keeps_word_mark_words(qwen_api):
     # 🔄: 答えにあるキーと文は、入力があっても置き換える（答えに無い body は残す。ボタンで選んだ view も答えで置き換わる）。
     # 上書きで外れる単語のマーク（①）の語句は足し直す
-    row = qwen_api.row_index("r10.png")
+    row = qwen_api.row_index(ASK)
     qwen_api.write(row, "view: from behind", section="picture")
     qwen_api.write(row, "girl spread arms", section="action")
     qwen_api.write(row, "looks: sitting\nbody: long hair")
@@ -318,76 +353,83 @@ def test_overwrite_replaces_filled_fields_and_keeps_word_mark_words(qwen_api):
 
 
 def test_qwen_answer_stays_for_hint_by_qwen_after_reopening(qwen_api):
-    qwen_api.qwen_fill(qwen_api.row_index("r10.png"))
+    qwen_api.qwen_fill(qwen_api.row_index(ASK))
     qwen_api.save()
     qwen_api.open_project("proj")
-    r10 = next(r for r in qwen_api.rows() if r["サムネイル"] == "r10.png")
-    assert r10["qwen_hint"] == ANSWER
+    asked = next(r for r in qwen_api.rows() if r["サムネイル"] == ASK)
+    assert asked["qwen_hint"] == ANSWER
 
 
-def test_qwen_fill_needs_ten_samples_above(qwen_api, comfy):
+def test_qwen_fill_needs_sixteen_samples_above(qwen_api, comfy):
     res = qwen_api.qwen_fill(qwen_api.row_index("r05.png"))
-    assert res["success"] is False and "10" in res["message"]
+    assert res["success"] is False and "16" in res["message"]
     assert comfy.prompts == []
 
 
 def test_qwen_fill_random_takes_samples_from_the_whole_project(qwen_api, comfy):
-    # 🎲: その行と削除済みを除く、キャプションのある行からランダムに 10 個（下の行も）
+    # 🎲: その行と削除済みを除く、キャプションのある行からランダムに 16 個（下の行も）
     row = qwen_api.row_index("r05.png")
-    assert qwen_api.qwen_fill(row, mode="random")["success"] is False  # ほかの行は r00〜r04・r06〜r09 の 9 行だけ
-    qwen_api.write(qwen_api.row_index("r11.png"), "looks: pose11")
+    assert qwen_api.qwen_fill(row, mode="random")["success"] is False  # ほかの行は r00〜r04・r06〜r15 の 15 行だけ
+    qwen_api.write(qwen_api.row_index(SPARE), "looks: pose17")
     res = qwen_api.qwen_fill(row, mode="random")
     assert res["success"], res
     used = sorted(sample_numbers(comfy))
-    assert used == [0, 1, 2, 3, 4, 6, 7, 8, 9, 11]  # ほかに 10 行なので全部。その行（5）は入らない
+    assert used == [*range(5), *range(6, 16), 17]  # ほかに 16 行なので全部。その行（5）は入らない
 
 
 def test_qwen_fill_mark_takes_rows_with_the_same_marks_first(qwen_api, comfy):
-    # 🔖: 排他のマーク（A〜H）が同じ行 → 複数のマーク（★●▲■…）を共有する行 → ほかの行からランダム、の順に 10 個
-    # （排他のマークが同じ行が頼む文の直前）。マークは番号（0 = A・★、1 = B）
-    qwen_api.write(qwen_api.row_index("r11.png"), "looks: pose11")  # その行のほかに 11 行
-    index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(12)}
-    qwen_api.post("/set_mark", {"rows": [index[1], index[2], index[10]], "mark": 0})
+    # 🔖: 複数のマーク（★●▲■…）を共有する行 → 排他のマーク（A〜H）が同じ行 → ほかの行からランダム、の順に 16 個
+    # （複数のマークを共有する行が頼む文の直前）。マークは番号（0 = A・★、1 = B）
+    qwen_api.write(qwen_api.row_index(SPARE), "looks: pose17")  # その行のほかに 17 行
+    index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(SAMPLE_COUNT)}
+    ask = qwen_api.row_index(ASK)
+    qwen_api.post("/set_mark", {"rows": [index[1], index[2], ask], "mark": 0})
     qwen_api.post("/set_mark", {"rows": [index[4]], "mark": 1})
-    qwen_api.post("/set_marks", {"rows": [index[3], index[10]], "mark": 0, "on": True})
-    res = qwen_api.qwen_fill(index[10], mode="mark")
+    qwen_api.post("/set_marks", {"rows": [index[3], ask], "mark": 0, "on": True})
+    res = qwen_api.qwen_fill(ask, mode="mark")
     assert res["success"], res
     used = sample_numbers(comfy)
-    assert len(set(used)) == 10 and 10 not in used
-    assert sorted(used[-2:]) == [1, 2] and used[-3] == 3  # A の行が最後、その前に ★ の行
+    assert len(set(used)) == 16 and 16 not in used
+    assert used[-1] == 3 and sorted(used[-3:-1]) == [1, 2]  # ★ の行が最後、その前に A の行
 
 
 @pytest.mark.parametrize("mode", ["mark", "overwrite"])  # 🔄 も 🔖 と同じ見本
-def test_qwen_fill_mark_takes_rows_sharing_word_marks_before_the_others(qwen_api, comfy, mode):
-    # 🔖: 単語のマーク（①〜⑧。設定した語句が入力にある）を共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行
-    # → ほかの行（単語のマークを共有する行が頼む文の直前）
-    index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(12)}
-    qwen_api.write(index[11], "looks: pose11")
-    qwen_api.write(index[10], "looks: pose3")  # 頼む行は r03 と同じ語句
-    qwen_api.post("/set_auto_mark", {"index": 0, "mark": {"section": "girl", "key": "looks", "phrase": "pose3"}})
-    qwen_api.post("/set_mark", {"rows": [index[1], index[2], index[10]], "mark": 0})
-    qwen_api.post("/set_marks", {"rows": [index[4], index[10]], "mark": 0, "on": True})
-    res = qwen_api.qwen_fill(index[10], mode=mode)
+def test_qwen_fill_mark_orders_word_and_many_marks_before_the_one_mark(qwen_api, comfy, mode):
+    # 🔖: 単語のマーク（①〜⑯。設定した語句が入力にある）と複数のマーク（★●▲■…）の両方を共有する行 → 単語だけ・複数だけを
+    # 共有する行を同じ数ずつ → 単語の残り → 複数の残り → 排他のマーク（A〜H）が同じ行 → ほかの行（先の段ほど頼む文の近く）
+    index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(SAMPLE_COUNT)}
+    ask = qwen_api.row_index(ASK)
+    qwen_api.write(ask, "looks: pose1x")
+    # ① は pose1・pose10〜15 の行と頼む行に付く
+    qwen_api.post("/set_auto_mark", {"index": 0, "mark": {"section": "girl", "key": "looks", "phrase": "pose1*"}})
+    qwen_api.post("/set_marks", {"rows": [*(index[i] for i in (2, 3, 4, 10, 11)), ask], "mark": 0, "on": True})  # ★
+    qwen_api.post("/set_mark", {"rows": [index[5], index[6], ask], "mark": 0})  # A
+    res = qwen_api.qwen_fill(ask, mode=mode)
     assert res["success"], res
     used = sample_numbers(comfy)
-    assert len(set(used)) == 10 and 10 not in used
-    assert used[-1] == 3 and sorted(used[-3:-1]) == [1, 2] and used[-4] == 4  # 単語 → 排他 → 複数 の順に頼む文の近く
+    words_only = {1, 12, 13, 14, 15}
+    assert sorted(used) == list(range(16))  # ほかの行は 16 行なので全部。並びで段が分かる
+    assert set(used[-2:]) == {10, 11}  # 単語と複数の両方
+    assert {2, 3, 4} <= set(used[-8:-2]) and len(set(used[-8:-2]) & words_only) == 3  # 複数だけ 3 行と、単語だけ 3 行
+    assert set(used[-10:-8]) <= words_only  # 単語の残り（複数の残りは無い）
+    assert set(used[-12:-10]) == {5, 6}  # 排他
+    assert set(used[:4]) == {0, 7, 8, 9}  # ほかの行
 
 
 def test_qwen_fill_rejects_an_unknown_mode(qwen_api, comfy):
-    assert qwen_api.qwen_fill(qwen_api.row_index("r10.png"), mode="zzz")["success"] is False
+    assert qwen_api.qwen_fill(qwen_api.row_index(ASK), mode="zzz")["success"] is False
     assert comfy.prompts == []
 
 
 def test_qwen_fill_reports_when_comfyui_is_not_reachable(qwen_api, monkeypatch):
     monkeypatch.setitem(pictag.app.config, "QWEN_URL", "http://127.0.0.1:9")  # 誰も待っていないポート
-    res = qwen_api.qwen_fill(qwen_api.row_index("r10.png"))
+    res = qwen_api.qwen_fill(qwen_api.row_index(ASK))
     assert res["success"] is False and "ComfyUI" in res["message"]
 
 
 def test_qwen_fill_reports_a_failed_run(qwen_api, comfy):
     comfy.status = "error"
-    res = qwen_api.qwen_fill(qwen_api.row_index("r10.png"))
+    res = qwen_api.qwen_fill(qwen_api.row_index(ASK))
     assert res["success"] is False and "out of memory" in res["message"]
 
 
