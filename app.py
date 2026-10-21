@@ -17,9 +17,9 @@ from PIL import Image
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
 from public_samples import SCENES
-from qwen import (DEFAULT_URL, SAMPLE_COUNT, SENTENCE_EXAMPLE, SENTENCE_EXAMPLES, clear_drafts, fill_section, generate,
-                  jpeg_of, keep_word_marks, match_section, parse_caption, pick_random_samples, pick_samples,
-                  pick_tiered_samples, system_prompt, user_prompt, written_skeleton)
+from qwen import (DEFAULT_URL, SAMPLE_COUNT, SENTENCE_EXAMPLE, SENTENCE_EXAMPLES, characters_note, clear_drafts, fill_section,
+                  generate, jpeg_of, keep_word_marks, match_section, parse_caption, pick_random_samples, pick_samples,
+                  pick_tiered_samples, reference_words, system_prompt, user_prompt, written_skeleton)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of, display_names,
                       insert_position, name_for_new, pov_choices, pov_names, template_keys)
 from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
@@ -980,10 +980,10 @@ class CaptionTool:
         samples = [*public, *samples]
         keys = {s: template_keys(s, self.shared['templates'], FIXED_SECTIONS) for s in sections}
         # 送るのは押したときに書いてあるもの。入れるときは答えが来てから読み直す（待つ間に書いたものも残す）
-        written = written_skeleton([(s, keys[s], text) for s, text in self.own_texts(row_index, sections, name).items()])
+        written, note = self.written_and_note(self.own_texts(row_index, sections, name), sections, keys)
         example = SENTENCE_EXAMPLES.get(target, SENTENCE_EXAMPLE)  # 文の例は、多い方の動詞の形
         answer = generate(url, jpeg_of(self.image_dir / name), f"{self.dir_name}_{Path(name).stem}.jpg",
-                          user_prompt(samples, written), system_prompt([(s, keys[s]) for s in sections], example))
+                          user_prompt(samples, written, note), system_prompt([(s, keys[s]) for s in sections], example))
         self.save_qwen_hint(name, answer)
         # 押し直したときは、前に Qwen が入れて、そのあと直していないもの（前の下書き）を消してから入れる
         before = {s: to_text(self.df.at[row_index, s]) for s in sections}
@@ -1013,6 +1013,24 @@ class CaptionTool:
         """その行の入力から、前に Qwen が入れて、そのあと直していないもの（前の下書き）を消したもの {段落: 入力}"""
         drafts = self.read_qwen_drafts(image_name)
         return {s: clear_drafts(to_text(self.df.at[row_index, s]), drafts.get(s, {})) for s in sections}
+
+    def written_and_note(self, own, sections, keys):
+        """送る「書いてあるもの」と、誰がいるかを伝える1文（own: 前の下書きを消した入力 {段落: 入力}）
+
+        自分で書いた人物などの段落があれば、characters（1 girl など）を入れ、空の人物などの段落は送らない（誰がいるかは
+        分かっているので、空の段落を埋めさせない）。無ければ今までどおり全部の段落を送り、1文は付けない
+        """
+        people = [s for s in sections if s not in FIXED_SECTIONS and phrases_of(own[s])]
+        names = {**{s: s for s in sections}, **display_names(people)}
+        characters = characters_of([(names[s], own[s]) for s in people])
+        if not characters:
+            return written_skeleton([(s, keys[s], own[s]) for s in sections]), ''
+        picture_keys = keys.get('picture', [])
+        texts = ({**own, 'picture': with_line(own['picture'], 'characters', characters, picture_keys)}
+                 if 'characters' in picture_keys else own)
+        shown = [s for s in sections if s in FIXED_SECTIONS or s in people]
+        return (written_skeleton([(s, keys[s], texts[s]) for s in shown]),
+                characters_note(characters, reference_words([(names[s], own[s]) for s in people])))
 
     def public_captions(self, count, target):
         """公開の例（public_samples.SCENES）からランダムに count 個のキャプション（足りなければある分だけ。0 以下なら []）

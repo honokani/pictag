@@ -18,9 +18,9 @@ import uuid
 
 from PIL import Image
 
-from caption_format import parse_line, parse_lines, render_line, with_line
+from caption_format import parse_line, parse_lines, phrases_of, render_line, with_line
 from marks import auto_marks_of, matches_pattern
-from subjects import OTHERS, base_name
+from subjects import FEMALE, MALE, OTHERS, base_name
 from verbs import PRESENT, PROGRESSIVE
 from words import AUTO_KEYS
 
@@ -41,6 +41,8 @@ INSTRUCTIONS = ("You write training captions for an image generation model. Desc
 # その行に書いてあるもの（written_skeleton）を送るときの頼み方
 WRITTEN_INTRO = ("Part of the caption for this image is already written. Keep what is written as it is, and fill in the empty "
                  "parts by looking at the image:")
+# 人物が分かるとき（その行に書いてあるとき）に頼む文の直前で伝える、誰がいるかと、その人物を指す語（縛らずに、事実と使う語を伝える）
+CHARACTERS_NOTE = 'The characters in this image: {characters}. Use these words for them: {words}.'
 # キーの無い段落に添える書き方の例（else は物ごとにキーで書く。ほかは短い文）
 KEYLESS_EXAMPLES = {OTHERS: '(e.g. dog: brown fur, sitting)'}
 # 文の例は、プロジェクトの action の文で多い方の動詞の形に合わせる（形が分からない・同じ数なら進行形）
@@ -86,11 +88,29 @@ def system_prompt(sections, sentence_example=SENTENCE_EXAMPLE):
     return f'{INSTRUCTIONS}\n\nFormat:\n{skeleton(sections, sentence_example)}'
 
 
-def user_prompt(samples, written=''):
-    """見本と頼む文。書いてあるもの（written_skeleton）があれば、頼む文の前に置く"""
+def reference_words(present):
+    """入力のある人物などの段落 [(段落, 入力)] から、その人物を指す語（A, B を除いた名前と、女性は she・her、男性は he・his・him。
+    else は行のキー）"""
+    def words(section, text):
+        base = base_name(section)
+        if base == OTHERS:
+            return [key for key, _ in phrases_of(text) if key]
+        return [base, *(('she', 'her') if base in FEMALE else ('he', 'his', 'him') if base in MALE else ())]
+
+    return list(dict.fromkeys(word for section, text in present for word in words(section, text)))
+
+
+def characters_note(characters, words):
+    """誰がいるか（characters の値）と、その人物を指す語を伝える1文（人物が分からなければ ''）"""
+    return CHARACTERS_NOTE.format(characters=characters, words=', '.join(words)) if characters else ''
+
+
+def user_prompt(samples, written='', note=''):
+    """見本と頼む文。書いてあるもの（written_skeleton）と、誰がいるか（characters_note）があれば、頼む文の前に置く"""
     written_part = f'{WRITTEN_INTRO}\n\n{written}\n\n' if written else ''
+    note_part = f'{note}\n\n' if note else ''
     return ('Example captions of other images in the same set:\n\n' + '\n\n---\n\n'.join(samples)
-            + f'\n\n---\n\n{written_part}Write the caption for this image.')
+            + f'\n\n---\n\n{written_part}{note_part}Write the caption for this image.')
 
 
 def pick_samples(captions_above, count=SAMPLE_COUNT):
