@@ -231,6 +231,22 @@ def test_qwen_fill_mark_takes_rows_with_the_same_marks_first(qwen_api, comfy):
     assert sorted(used[-2:]) == [1, 2] and used[-3] == 3  # A の行が最後、その前に ★ の行
 
 
+def test_qwen_fill_mark_takes_rows_sharing_word_marks_before_the_others(qwen_api, comfy):
+    # 🔖: 単語のマーク（①〜⑧。設定した語句が入力にある）を共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行
+    # → ほかの行（単語のマークを共有する行が頼む文の直前）
+    index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(12)}
+    qwen_api.write(index[11], "looks: pose11")
+    qwen_api.write(index[10], "looks: pose3")  # 頼む行は r03 と同じ語句
+    qwen_api.post("/set_auto_mark", {"index": 0, "mark": {"section": "girl", "key": "looks", "phrase": "pose3"}})
+    qwen_api.post("/set_mark", {"rows": [index[1], index[2], index[10]], "mark": 0})
+    qwen_api.post("/set_marks", {"rows": [index[4], index[10]], "mark": 0, "on": True})
+    res = qwen_api.qwen_fill(index[10], mode="mark")
+    assert res["success"], res
+    used = [int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"])]
+    assert len(set(used)) == 10 and 10 not in used
+    assert used[-1] == 3 and sorted(used[-3:-1]) == [1, 2] and used[-4] == 4  # 単語 → 排他 → 複数 の順に頼む文の近く
+
+
 def test_qwen_fill_rejects_an_unknown_mode(qwen_api, comfy):
     assert qwen_api.qwen_fill(qwen_api.row_index("r10.png"), mode="zzz")["success"] is False
     assert comfy.prompts == []

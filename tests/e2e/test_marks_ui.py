@@ -47,13 +47,21 @@ def auto(page, name, number):
     return row(page, name).locator(f'.mark-auto[data-mark="{number}"]')
 
 
+def filter_button(page, symbol, kind=None):
+    """3段目の帯の絞り込みのボタン（記号で指す。段の左端の ☓ は symbol="none" と kind で）"""
+    if symbol == "none":
+        return page.locator(f'#markFilters .filter-btn[data-kind="{kind}"][data-mark="none"]')
+    kind, number = next((k, s.index(symbol)) for k, s in [("one", ONE), ("many", MANY), ("auto", AUTO)] if symbol in s)
+    return page.locator(f'#markFilters .filter-btn[data-kind="{kind}"][data-mark="{number}"]')
+
+
 def write(page, name, text, section="girl"):
     """入力欄の「その他」に書いて確定する（確定タグのキーの行は、そのキーにまとまる）"""
     cell = row(page, name).locator(f'td.cell[data-section="{section}"]')
     cell.click()
     cell.locator('textarea[data-key=""]').fill(text)
     page.evaluate("document.activeElement.blur()")
-    expect(cell.locator(".val").first).to_be_visible()
+    expect(cell.locator(".ln:not(.empty)").first).to_be_visible()
 
 
 def test_eight_exclusive_and_eight_multi_marks(page, imgs):
@@ -108,7 +116,7 @@ def test_filter_then_select_visible_and_bulk_add(page, imgs):
     mark(page, "a.png", "A").click()
     mark(page, "c.png", "A").click()
 
-    page.select_option("#filterOne", label="A")
+    filter_button(page, "A").click()
     expect(row(page, "b.png")).to_be_hidden()
     page.click("#selectVisibleButton")
     expect(page.locator("#selectionInfo")).to_have_text("選択 2 行")
@@ -117,7 +125,7 @@ def test_filter_then_select_visible_and_bulk_add(page, imgs):
     page.select_option("#bulkKey", "view")
     page.fill("#bulkText", "from above")
     page.click('#bulkForm button[value="add"]')
-    page.select_option("#filterOne", "")
+    filter_button(page, "A").click()  # もう一度押すと外す
     for name, expected in [("a.png", 1), ("b.png", 0), ("c.png", 1)]:
         expect(row(page, name).locator('td.cell[data-section="picture"] .ln', has_text="view: from above")).to_have_count(expected)
 
@@ -125,7 +133,7 @@ def test_filter_then_select_visible_and_bulk_add(page, imgs):
 def test_filter_none_and_ctrl_a(page, imgs):
     load_dir(page, imgs)
     mark(page, "a.png", "■").click()
-    page.select_option("#filterMany", "none")
+    filter_button(page, "none", "many").click()  # ☓: 複数の印の無い行
     expect(row(page, "a.png")).to_be_hidden()
     page.locator("#grid").click(position={"x": 5, "y": 5})  # 入力欄の外にフォーカス
     page.keyboard.press("Control+a")
@@ -196,13 +204,69 @@ def test_auto_marks_follow_the_phrase_chosen_by_right_click(page, imgs):
     auto(page, "b.png", 0).click()  # 押しても変わらない
     expect(auto(page, "b.png", 0)).to_have_class(ON)
 
-    page.select_option("#filterAuto", label="① smile")  # 絞り込み
+    setting.click()  # 左クリックは絞り込み
     expect(row(page, "c.png")).to_be_hidden()
     expect(row(page, "a.png")).to_be_visible()
-    page.select_option("#filterAuto", "")
+    setting.click()
 
     setting.click(button="right")
     page.locator("#autoMarkClear").click()  # 外す
     expect(form).to_be_hidden()
     expect(auto(page, "a.png", 0)).not_to_have_class(ON)
     expect(setting).to_have_class(re.compile(r"\bunset\b"))
+
+
+def test_word_marks_match_sentences_of_action_without_keys(page, imgs):
+    # 帯の名前は「単語」。action のように確定タグの無い段落は「（キーなし）」で文に合わせる（文末の . は外し、* は何文字でも）
+    load_dir(page, imgs)
+    expect(page.locator("#autoMarks")).to_contain_text("単語")
+    write(page, "a.png", "girl spread arms wildly", section="action")
+    write(page, "b.png", "girl spread legs.", section="action")  # 文末に . のある文
+    page.wait_for_function("() => state.phrases.some(p => p.phrase === 'girl spread legs.')")
+    setting = page.locator('#autoMarks .auto-mark[data-mark="0"]')
+    setting.click(button="right")
+    page.select_option("#autoMarkSection", "action")
+    expect(page.locator("#autoMarkKey option")).to_have_text(["（キーなし）"])
+    phrase = page.locator("#autoMarkPhrase")
+    phrase.press_sequentially("legs")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("girl spread legs")  # 候補はその段落の文（. は外す）
+    expect(page.locator("#suggestions:visible li.active")).not_to_contain_text("legs.")
+    phrase.fill("*spread arms*")
+    page.locator('#autoMarkForm button[type="submit"]').click()
+    expect(page.locator("#autoMarkForm")).to_be_hidden()
+    expect(setting).to_have_attribute("title", "① action / （キーなし） / *spread arms*（右クリックで変える）")
+    expect(auto(page, "a.png", 0)).to_have_class(ON)
+    expect(auto(page, "b.png", 0)).not_to_have_class(ON)
+
+
+def test_filter_buttons_show_rows_with_any_of_the_pressed_marks(page, imgs):
+    # 3段目の帯: 排他・複数・単語の段ごとに、左端の ☓（その段の印の無い行）と記号のボタン。押すとその印の行だけ、もう一度押すと外す
+    # いくつ押しても、押した印のどれかがある行を出す
+    load_dir(page, imgs)
+    for kind, symbols in [("one", ONE), ("many", MANY), ("auto", AUTO)]:
+        expect(page.locator(f'#markFilters .filter-group[data-kind="{kind}"] .filter-btn')).to_have_text(["☓", *symbols])
+    mark(page, "a.png", "A").click()
+    mark(page, "b.png", "★").click()
+    filter_button(page, "A").click()
+    expect(filter_button(page, "A")).to_have_class(ON)
+    expect(row(page, "a.png")).to_be_visible()
+    expect(row(page, "b.png")).to_be_hidden()
+    filter_button(page, "★").click()  # どれか1つでも
+    expect(row(page, "b.png")).to_be_visible()
+    expect(row(page, "c.png")).to_be_hidden()
+    filter_button(page, "A").click()  # もう一度押すと外す
+    filter_button(page, "★").click()
+    expect(filter_button(page, "A")).not_to_have_class(ON)
+    expect(page.locator("#gridBody tr:visible")).to_have_count(3)
+    filter_button(page, "none", "one").click()  # ☓: 排他の印の無い行
+    expect(row(page, "a.png")).to_be_hidden()
+    expect(row(page, "b.png")).to_be_visible()
+    expect(row(page, "c.png")).to_be_visible()
+
+
+def test_unset_word_mark_button_shows_a_hint_instead_of_filtering(page, imgs):
+    load_dir(page, imgs)
+    filter_button(page, "①").click()
+    expect(page.locator("#status")).to_have_text("右クリックで、段落・キー・語句を選びます（その語句のある行に付きます）")
+    expect(filter_button(page, "①")).not_to_have_class(ON)
+    expect(page.locator("#gridBody tr:visible")).to_have_count(3)

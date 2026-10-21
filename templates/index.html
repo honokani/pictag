@@ -55,21 +55,21 @@
     </section>
 
     <section id="markTools" class="bar tools" hidden>
-        <span class="group">絞り込み
-            <select id="filterOne" aria-label="排他のマークで絞り込み"></select>
-            <select id="filterMany" aria-label="複数のマークで絞り込み"></select>
-            <select id="filterAuto" aria-label="自動のマークで絞り込み"></select>
+        <!-- 絞り込み: 押すとその印の行だけ（押した印のどれかがある行）、もう一度押すと外す。段の左端の ☓ はその段の印の無い行
+             単語の ①〜⑧ は右クリックで語句を選ぶ。ボタンは表を読んだときに入れる -->
+        <span id="markFilters" class="group mark-filters">
+            <span class="filter-group" data-kind="one" data-label="排他"></span>
+            <span class="filter-group" data-kind="many" data-label="複数"></span>
+            <span id="autoMarks" class="filter-group" data-kind="auto" data-label="単語"></span>
         </span>
         <button id="selectVisibleButton" type="button" title="Ctrl+A">表示中をすべて選択</button>
-        <!-- 自動のマーク ①〜⑧ の設定（右クリックで段落・キー・語句を選ぶ。ボタンは表を読んだときに入れる） -->
-        <span id="autoMarks" class="group auto-marks">自動</span>
         <!-- 行を選んでいる間だけ出す -->
         <form id="bulkForm" class="group bulk" hidden>
             <span id="selectionInfo">選択 0 行</span>
             <select id="bulkSection" aria-label="一括入力の段落"></select>
             <select id="bulkKey" aria-label="一括入力のキー"></select>
             <input id="bulkText" type="text" placeholder="語句（例: standing）" autocomplete="off" aria-label="一括入力の語句">
-            <!-- 名前は短く（2段目の帯を、自動のマークと並べても 1440px で1段に収める） -->
+            <!-- 名前は短く（2段目の帯を、単語のマークと並べても 1440px で1段に収める） -->
             <button type="submit" value="add" title="選択行に追加">追加</button>
             <button type="submit" value="remove" title="選択行から削除">削除</button>
             <button type="button" id="deselectButton" class="hold" title="1秒長押しで、選択を解除">選択解除</button>
@@ -132,12 +132,12 @@
 
     <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
 
-    <!-- 自動のマークの設定（帯の ①〜⑧ を右クリックで、その下に開く） -->
+    <!-- 単語のマークの設定（帯の ①〜⑧ を右クリックで、その下に開く） -->
     <form id="autoMarkForm" class="group auto-mark-form" hidden>
         <span id="autoMarkLabel"></span>
-        <select id="autoMarkSection" aria-label="自動のマークの段落"></select>
-        <select id="autoMarkKey" aria-label="自動のマークのキー"></select>
-        <input id="autoMarkPhrase" type="text" placeholder="語句" autocomplete="off" aria-label="自動のマークの語句">
+        <select id="autoMarkSection" aria-label="単語のマークの段落"></select>
+        <select id="autoMarkKey" aria-label="単語のマークのキー"></select>
+        <input id="autoMarkPhrase" type="text" placeholder="語句" autocomplete="off" aria-label="単語のマークの語句">
         <button type="submit">決める</button>
         <button type="button" id="autoMarkClear">外す</button>
     </form>
