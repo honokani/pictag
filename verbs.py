@@ -186,10 +186,13 @@ def majority(counts):
     return PROGRESSIVE if progressive > present else PRESENT if present > progressive else None
 
 
-def survey(lines, subjects):
-    """[(行の印, 文)] の形を数え、多い方にそろえる案を作る: ({形: 数}, 多い方, [(行の印, 前, 後, 確か)])"""
+def survey(lines, subjects, target=None):
+    """[(行の印, 文)] の形を数え、target（無ければ多い方）にそろえる案を作る: ({形: 数}, そろえる形, [(行の印, 前, 後, 確か)])
+
+    同じ数で target が無ければ、そろえる形は None で案は無い（画面がどちらにするか聞いて、target を渡し直す）
+    """
     counts = count_forms([line for _, line in lines], subjects)
-    target = majority(counts)
+    target = target or majority(counts)
     changes = [] if target is None else [(key, line, *converted) for key, line in lines
                                          if (converted := convert(line, subjects, target))]
     return {PROGRESSIVE: counts[PROGRESSIVE], PRESENT: counts[PRESENT]}, target, changes

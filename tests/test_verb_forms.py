@@ -28,6 +28,21 @@ def test_verb_forms_suggests_changes_to_the_majority_form(api, proj):
         {"index": rows[2], "name": "r2.png", "before": "guy hand on hip.", "after": "guy hands on hip.", "sure": False}]
 
 
+def test_verb_forms_on_a_tie_suggests_nothing_until_a_form_is_chosen(api, proj):
+    # 同じ数なら案は出さない（画面がどちらにするか聞く）。形を渡せば、その形への案
+    api.write(api.row_index("r0.png"), "she sit.", section="action")
+    api.write(api.row_index("r2.png"), "", section="action")
+    res = api.post("/verb_forms")
+    assert res["counts"] == {"progressive": 1, "present": 1} and res["target"] is None and res["changes"] == []
+    res = api.post("/verb_forms", {"target": "present"})
+    assert res["success"] and res["target"] == "present"
+    assert [(c["before"], c["after"]) for c in res["changes"]] == [("she sit.", "she sits."), ("girl is smiling.", "girl smiles.")]
+
+
+def test_verb_forms_rejects_an_unknown_form(api, proj):
+    assert api.post("/verb_forms", {"target": "past"})["success"] is False
+
+
 def test_apply_verb_forms_writes_only_the_picked_sentences_that_are_still_there(api, proj):
     rows = [api.row_index(f"r{i}.png") for i in range(2)]
     edited = {r["index"]: r["edited_at"] for r in api.rows()}
