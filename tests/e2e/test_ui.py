@@ -449,12 +449,46 @@ def test_action_suggests_words_inside_a_sentence(page, imgs):
     wait_for_word(page, "spread")
 
     editor = open_editor(page, "b.png", section="action")
-    editor.press_sequentially("girl sp")
+    editor.press_sequentially("she sp")  # 行頭から打った文字に合う文が無いので、単語が上（合う文があれば文が上）
     expect(page.locator("#suggestions li.active")).to_contain_text("spread")
     editor.press("Enter")
-    assert editor.input_value() == "girl spread, "  # 行末なら ", "（欄を離れると行末のカンマは消える）
+    assert editor.input_value() == "she spread, "  # 行末なら ", "（欄を離れると行末のカンマは消える）
     editor.press_sequentially("wa")
     expect(page.locator("#suggestions li.active")).to_contain_text("waist")
+
+
+def test_action_suggests_sentences_by_the_whole_line(page, imgs):
+    # 文の途中でも、行頭から打った文字（空白とカンマは除く）で文をあいまい検索する（girl it → girlit）。選ぶと行の頭から置き換える
+    load_dir(page, imgs)
+    write(page, "a.png", "girl is talking", section="action")
+    wait_for_phrase(page, "girl is talking")
+
+    editor = open_editor(page, "b.png", section="action")
+    shown = page.locator("#suggestions:visible li.active")
+    for typed in ["girl it", "girl, i"]:  # 候補で girl を選ぶと後ろに ", " が付く
+        editor.fill("")
+        editor.press_sequentially(typed)
+        expect(shown).to_contain_text("girl is talking")
+    editor.press("Enter")
+    assert editor.input_value() == "girl is talking"
+
+    editor.fill("girl arms")
+    editor.evaluate("el => el.setSelectionRange(5, 5)")  # girl |arms
+    editor.press_sequentially("it")
+    expect(page.locator("#suggestions")).to_be_hidden()  # 後ろに語が続く所では文を出さない（it に合う単語も無い）
+
+
+def test_bulk_keyless_text_suggests_sentences_by_the_whole_line(page, imgs):
+    load_dir(page, imgs)
+    write(page, "a.png", "girl is talking", section="action")
+    wait_for_phrase(page, "girl is talking")
+    row(page, "b.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "action")
+    bulk = page.locator("#bulkText")
+    bulk.press_sequentially("girl it")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("girl is talking")
+    bulk.press("Tab")
+    assert bulk.input_value() == "girl is talking"
 
 
 def write_spread(page):
