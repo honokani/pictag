@@ -5,9 +5,9 @@ import pytest
 
 import app as pictag
 from helpers import FakeComfy, make_images
-from qwen import (INSTRUCTIONS, SAMPLE_COUNT, clear_drafts, fill_section, keep_word_marks, match_section, parse_caption,
-                  pick_random_samples, pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt,
-                  written_skeleton)
+from qwen import (INSTRUCTIONS, SAMPLE_COUNT, characters_note, clear_drafts, fill_section, keep_word_marks, match_section,
+                  parse_caption, pick_random_samples, pick_samples, pick_tiered_samples, reference_words, skeleton,
+                  system_prompt, user_prompt, written_skeleton)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
@@ -61,6 +61,30 @@ def test_user_prompt_sends_what_is_written_and_asks_to_fill_in_the_rest():
         "and fill in the empty parts by looking at the image:\n\n"
         "girl:\n  - looks: smile\n  - clothes:\n\n"
         "Write the caption for this image.")
+
+
+def test_user_prompt_tells_who_is_in_the_image_right_before_the_request():
+    # 人物が分かれば（その行に書いてあれば）、誰がいるかと、その人物を指す語を、頼む文の直前に伝える
+    note = "The characters in this image: 1 girl. Use these words for them: girl, she, her."
+    assert user_prompt(["girl:\n  - looks: sitting"], "girl:\n  - looks: smile", note) == (
+        "Example captions of other images in the same set:\n\n"
+        "girl:\n  - looks: sitting\n\n---\n\n"
+        "Part of the caption for this image is already written. Keep what is written as it is, "
+        "and fill in the empty parts by looking at the image:\n\n"
+        "girl:\n  - looks: smile\n\n"
+        f"{note}\n\n"
+        "Write the caption for this image.")
+
+
+def test_characters_note_names_the_characters_and_the_words_for_them():
+    # 指す語は、名前（A, B を除く）と、女性（girl・woman）は she・her、男性（guy・man・boy）は he・his・him。else は行のキー
+    words = reference_words([("girl A", "looks: smile"), ("girl B", "looks: smile"), ("guy", "looks: standing"),
+                             ("alien", "body: green skin"), ("else", "dog: brown fur\ncat: black")])
+    assert words == ["girl", "she", "her", "guy", "he", "his", "him", "alien", "dog", "cat"]
+    assert characters_note("2 girls (girl A, girl B) + 1 guy", words[:7]) == (
+        "The characters in this image: 2 girls (girl A, girl B) + 1 guy. "
+        "Use these words for them: girl, she, her, guy, he, his, him.")
+    assert characters_note("", []) == ""  # 人物が分からなければ伝えない
 
 
 def test_written_skeleton_puts_what_is_written_into_the_skeleton():
@@ -327,15 +351,17 @@ def test_qwen_fill_sends_what_is_written_but_not_the_previous_draft(qwen_api, co
     # 何も書いていなければ今までの文面。書いてあれば、それを入れたひな形も送る（前に Qwen が入れて直していないものは送らない）
     row = qwen_api.row_index(ASK)
     qwen_api.qwen_fill(row)
-    assert "already written" not in comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
+    first = comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
+    assert "already written" not in first and "The characters in this image" not in first
     qwen_api.write(row, "looks: standing\nclothes: red dress, hat")  # Qwen の looks はそのまま、clothes だけ直す
     qwen_api.write(row, "view: guy POV", section="picture")  # Qwen の place・view を消して書く
     qwen_api.qwen_fill(row)
+    # 自分で書いた人物（girl）が分かるので、characters を入れ、空の人物の段落（guy）は送らず、誰がいるかを頼む文の直前に伝える
     assert ("already written. Keep what is written as it is, and fill in the empty parts by looking at the image:\n\n"
-            "picture:\n  - place:\n  - characters:\n  - vibes:\n  - view: guy POV\n  - extra:\n\n"
+            "picture:\n  - place:\n  - characters: 1 girl\n  - vibes:\n  - view: guy POV\n  - extra:\n\n"
             "action:\n\n"  # 直していない Qwen の文も送らない
             "girl:\n  - looks:\n  - clothes: red dress, hat\n  - body:\n\n"
-            "guy:\n  - looks:\n  - clothes:\n  - body:\n\n"
+            "The characters in this image: 1 girl. Use these words for them: girl, she, her.\n\n"
             "Write the caption for this image.") in comfy.prompts[1]["prompt"]["tg"]["inputs"]["prompt"]
 
 
