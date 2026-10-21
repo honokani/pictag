@@ -287,6 +287,9 @@ const spacesAfterWord = before => (before.match(/\S( *)$/) || ['', ''])[1].lengt
 // キーなしの文で、語の後にスペースを2つ続けた（打たなくても単語の候補を出す合図。3つ目でしまう）
 const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
 
+// キーなしの文の途中で、文の候補を探す文字: 行頭（at）から打った所までの text（空白とカンマは区切りの空白1つに。girl, i → girl i）
+const sentenceQuery = (text, at) => ({sentence: text.replace(/[\s,]+/g, ' '), sentenceStart: at});
+
 // キーのある行で打っている語句: raw はカンマ（キーのコロン・欄の改行）の後ろからカーソルまで、at は raw の頭の位置
 // 語の後に2つ以上続けたスペースはカンマと同じで、その後ろが打っている語句（何も打っていなければ、カンマの後ろと同じ候補を出す。
 // 3つ目でもしまわない）。選んだ語句は、そのスペースから置き換える
@@ -305,7 +308,8 @@ const phraseBefore = (value, at) => (/[,:]/.test(value[at - 1] || '') ? ' ' : /\
 const phraseAfter = after => (!after.trim() ? ', ' : /^\s*,/.test(after) ? '' : /^\s/.test(after) ? ',' : ', ');
 
 // 入力欄のカーソル位置の文脈
-// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
+// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数。sentence は文の候補を探す文字）/
+// start = 行頭（キー・語句・文・単語）
 // 範囲を選んでいるときは、選んだ文字を候補で置き換えるので、無いものとして見る（end は置き換える範囲の終わり）
 function contextOf(el) {
     const caret = el.selectionStart;
@@ -329,7 +333,7 @@ function contextOf(el) {
     const lastBreak = Math.max(rest.lastIndexOf(' '), rest.lastIndexOf(','), rest.lastIndexOf('\t'));
     if (lastBreak >= 0) {
         return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1,
-            spaces: spacesAfterWord(rest)};
+            spaces: spacesAfterWord(rest), ...sentenceQuery(rest, lineStart + prefix)};
     }
     return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
 }
@@ -383,6 +387,19 @@ function wordCandidates(section, ctx) {
     return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
 }
 
+// キーなしの文の途中の文: 行頭から打った所まで（sentence）であいまい検索する（単語を1文字以上打ったとき。後ろに語が続く所では出さない）。
+// 選ぶと、行の頭から打った所までを置き換える
+function sentenceCandidates(section, ctx) {
+    if (!ctx.query || ctx.after.trim()) return [];
+    return keepBest(state.phrases.filter(p => !p.key).map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase,
+        count: p.count, bonus: wordBonus(p, section), query: ctx.sentence, from: ctx.sentenceStart})));
+}
+
+// キーなしの文の途中: 単語と、行頭から打った所までに合う文（合う度合いの順に混ぜる）
+function inSentenceCandidates(section, ctx) {
+    return [...wordCandidates(section, ctx), ...sentenceCandidates(section, ctx)];
+}
+
 // 行頭: キー、キー付きの語句（同じ種類の段落のもの。その欄の同じキーにもう入っているものは出さない）、キーなしの文、単語（1文字以上打ったときだけ）
 function lineStartCandidates(section, ctx) {
     if (!ctx.query) return [];
@@ -420,12 +437,13 @@ function movingCandidates(section, ctx) {
         }));
 }
 
-const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates,
+const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: inSentenceCandidates, start: lineStartCandidates, keyless: keylessCandidates,
     moving: movingCandidates};
 
+// 打った文字で探す（文の途中の文の候補は、行頭から打った所までで）
 function candidates(section, ctx) {
     return CANDIDATE_SOURCES[ctx.mode](section, ctx)
-        .map(item => ({...item, score: fuzzyScore(ctx.query, item.match)}))
+        .map(item => ({...item, score: fuzzyScore(item.query ?? ctx.query, item.match)}))
         .filter(item => item.score !== null)
         .sort((a, b) => (b.score + b.bonus) - (a.score + a.bonus))
         .slice(0, 20);
@@ -505,8 +523,8 @@ function accept(item) {
             word: () => item.word + wordSeparator(ctx.after),
             line: () => item.phrase,
         }[item.kind]();
-        // 候補を出すために2つ続けたスペースは、1つにまとめる。範囲を選んでいれば、選んだ文字も置き換える
-        el.setRangeText(text, calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart, ctx.end, 'end');
+        // 候補を出すために2つ続けたスペースは、1つにまとめる。範囲を選んでいれば、選んだ文字も置き換える（文の途中で選んだ文は、行の頭から）
+        el.setRangeText(text, item.from ?? (calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart), ctx.end, 'end');
     }
     el.dispatchEvent(new Event('input'));
 }
@@ -1810,7 +1828,9 @@ function bulkContext(el) {
     }
     const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
     if (lastBreak >= 0) {
-        return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1, spaces: spacesAfterWord(before)};
+        const lead = before.length - before.trimStart().length;
+        return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1, spaces: spacesAfterWord(before),
+            ...sentenceQuery(before.slice(lead), lead)};
     }
     const query = before.trimStart();
     return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
