@@ -75,8 +75,9 @@ marks.py           # マーキング
 tokens.py          # トークン数（Qwen3-VL のトークナイザー）
 qwen.py            # qwen 版の 🤖: Qwen（ComfyUI の TextGenerate）に送る文面、答えの分け方、空の欄への入れ方
 verbs.py           # action の文の動詞の形（is doing / does）を数え、多い方にそろえる（綴りは lemminflect）
+public_samples.py  # 公開の見本（映画の有名なシーン 10 場面）。Qwen の見本が足りないときに補う。テストの入力例にも使う
 templates/         # index.html
 static/            # control.js（画面制御）、dictionary.js（共用辞書の画面）、style.css
 docs/usage.md      # 画面の操作と細かい動き
-tests/             # pytest（e2e/ は Playwright。scenes.py は映画の有名なシーンの入力例）
+tests/             # pytest（e2e/ は Playwright。scenes.py は public_samples.py の場面をテストのプロジェクトに入れる）
 ```

@@ -1,7 +1,8 @@
 """Qwen（ComfyUI の TextGenerate。Krea2 のテキストエンコーダーと同じ Qwen3-VL-4B）で、空の欄を下書きする
 
 - 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、
-  見本（キャプション 16 個。🤖 は上にある行から近い順、🔖・🔄 は同じマークの行を先にランダム、🎲 はほかの行からランダム）、
+  見本（キャプション 16 個。🤖 は上にある行から近い順、🔖・🔄 は同じマークの行を先にランダム、🎲 はほかの行からランダム。
+  足りなければ、足りない分を公開の例（public_samples.SCENES）で補う）、
   その行に書いてあるもの（前に Qwen が入れて、そのあと直していない下書きは除く）を入れたひな形（何か書いてあるときだけ）
 - 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）。
   🔄 は答えにあるキーと文を、書いてあっても置き換える（外れる単語のマークの語句は残す）
@@ -87,15 +88,14 @@ def user_prompt(samples, written=''):
 
 
 def pick_samples(captions_above, count=SAMPLE_COUNT):
-    """上にある行のキャプション（表の並び）から、空でないものを近い順に count 個（並びは表のまま）。足りなければ []"""
-    nearest = [caption for caption in reversed(captions_above) if caption][:count]
-    return nearest[::-1] if len(nearest) == count else []
+    """上にある行のキャプション（表の並び）から、空でないものを近い順に count 個（並びは表のまま。足りなければある分だけ）"""
+    return [caption for caption in reversed(captions_above) if caption][:count][::-1]
 
 
 def pick_random_samples(captions, count=SAMPLE_COUNT):
-    """キャプションの中から、空でないものをランダムに count 個（押すたびに選び直す）。足りなければ []"""
+    """キャプションの中から、空でないものをランダムに count 個（押すたびに選び直す。足りなければある分だけ）"""
     present = [caption for caption in captions if caption]
-    return random.sample(present, count) if len(present) >= count else []
+    return random.sample(present, min(count, len(present)))
 
 
 def pick_tiered_samples(tiers, count=SAMPLE_COUNT):
@@ -103,7 +103,7 @@ def pick_tiered_samples(tiers, count=SAMPLE_COUNT):
 
     tiers: [[[(行, キャプション)]]]（段ごとの、行の組）。組が2つ以上ある段は、どの組からも同じ数ずつ選ぶ（どれかの組が尽きるか、
     残りの枠を組の数で割れなくなるまで。余りは次の段へ）。同じ行が後の段や後の組にあっても選ぶのは1回。
-    並びは後の段が先で、最初の段が最後（いちばん似た見本を、頼む文の直前に置く。段の中は混ぜる）。全部で count 個に満たなければ []
+    並びは後の段が先で、最初の段が最後（いちばん似た見本を、頼む文の直前に置く。段の中は混ぜる）。足りなければある分だけ
     """
     chosen, picked = set(), []
     for groups in tiers:
@@ -116,7 +116,7 @@ def pick_tiered_samples(tiers, count=SAMPLE_COUNT):
         taken = [pair for pool in pools for pair in random.sample(pool, each)]
         chosen.update(row for row, _ in taken)
         picked.append(random.sample([caption for _, caption in taken], len(taken)))
-    return [caption for captions in reversed(picked) for caption in captions] if len(chosen) == count else []
+    return [caption for captions in reversed(picked) for caption in captions]
 
 
 # ---- 答えの分け方と、空の欄への入れ方 ----

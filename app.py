@@ -2,6 +2,7 @@ import argparse
 import os
 import json
 import logging
+import random
 import subprocess
 import sys
 import threading
@@ -15,6 +16,7 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
+from public_samples import SCENES
 from qwen import (DEFAULT_URL, SAMPLE_COUNT, SENTENCE_EXAMPLE, SENTENCE_EXAMPLES, clear_drafts, fill_section, generate,
                   jpeg_of, keep_word_marks, match_section, parse_caption, pick_random_samples, pick_samples,
                   pick_tiered_samples, system_prompt, user_prompt, written_skeleton)
@@ -23,7 +25,7 @@ from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TAR
 from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
                    many_numbers, many_text, marks_to_file, matches_pattern, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
-from verbs import PRESENT, PROGRESSIVE, count_forms, majority, survey
+from verbs import PRESENT, PROGRESSIVE, convert, count_forms, majority, survey
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
                    register_words, remove_phrase, rename_phrase, rename_registered, set_choice, ungroup_phrases,
@@ -93,6 +95,15 @@ def section_names(df):
 def with_fixed_sections(sections):
     """固定の段落を先頭に揃える（無ければ足す）"""
     return [*FIXED_SECTIONS, *(s for s in sections if s not in FIXED_SECTIONS)]
+
+def scene_in_form(scene, target):
+    """公開の例の場面 {段落: 入力} の action の文を、動詞の形 target にしたもの（target が無ければそのまま）"""
+    if target is None or 'action' not in scene:
+        return scene
+    names = [s for s in scene if s not in FIXED_SECTIONS]
+    subjects = tuple(sorted({*names, *map(base_name, names)}))
+    lines = [(convert(line, subjects, target) or (line,))[0] for line in scene['action'].split('\n')]
+    return {**scene, 'action': '\n'.join(lines)}
 
 def section_texts(df):
     """表の全入力を (段落, 入力) で並べる"""
@@ -927,8 +938,9 @@ class CaptionTool:
         複数の残り → 排他のマークが同じ行 → ほかの行の順にランダムに、
         random（🎲）ならその行のほかの全部の行からランダムに。overwrite（🔄）は mark と同じ見本で、答えにあるキーと文を
         入力があっても置き換える（外れる単語のマークの語句は足し直す）。どの mode でも、その行に書いてあるもの（前の下書きは
-        除く）を入れたひな形も送る。(画面に渡す1行, 入れた段落) を返す。
-        行・見本・画像の問題は ValueError、ComfyUI の問題は OSError（繋がらない・時間切れ）か RuntimeError（実行の失敗）
+        除く）を入れたひな形も送る。見本が足りなければ（0 でも）、足りない分を公開の例（public_samples.SCENES）から
+        ランダムに補う。(画面に渡す1行, 入れた段落, 補った公開の例の数) を返す。
+        行・画像の問題は ValueError、ComfyUI の問題は OSError（繋がらない・時間切れ）か RuntimeError（実行の失敗）
         """
         if mode not in QWEN_MODES:
             raise ValueError(f'見本の選び方が正しくありません: {mode}')
@@ -942,7 +954,6 @@ class CaptionTool:
             raise ValueError(f'{name} は元の画像がありません')
         if mode == 'near':
             samples = pick_samples([self.caption_of(r, sections) for r in records[:position] if not to_flag(r['is_dead'])])
-            missing = f'上に見本（キャプションのある行）が {SAMPLE_COUNT} 行必要です'
         else:
             others = [(i, r) for i, r in enumerate(records) if i != position and not to_flag(r['is_dead'])]
             captions = [(i, self.caption_of(r, sections)) for i, r in others]
@@ -964,13 +975,13 @@ class CaptionTool:
                 # 単語と複数の両方 → 単語だけ・複数だけを同じ数ずつ → 単語の残り → 複数の残り → 排他 → ほかの行
                 samples = pick_tiered_samples([[rows_in(word & multi)], [rows_in(word - multi), rows_in(multi - word)],
                                                [rows_in(word)], [rows_in(multi)], [rows_in(same)], [captions]])
-            missing = f'見本（キャプションのある行）がほかに {SAMPLE_COUNT} 行必要です'
-        if not samples:
-            raise ValueError(missing)
+        target = self.verb_target()  # action の文で多い方の動詞の形（文の例と、公開の例の文に使う）
+        public = self.public_captions(SAMPLE_COUNT - len(samples), target)  # 足りない分（頼む文から遠い前の方に置く）
+        samples = [*public, *samples]
         keys = {s: template_keys(s, self.shared['templates'], FIXED_SECTIONS) for s in sections}
         # 送るのは押したときに書いてあるもの。入れるときは答えが来てから読み直す（待つ間に書いたものも残す）
         written = written_skeleton([(s, keys[s], text) for s, text in self.own_texts(row_index, sections, name).items()])
-        example = SENTENCE_EXAMPLES.get(self.verb_target(), SENTENCE_EXAMPLE)  # 文の例は、多い方の動詞の形
+        example = SENTENCE_EXAMPLES.get(target, SENTENCE_EXAMPLE)  # 文の例は、多い方の動詞の形
         answer = generate(url, jpeg_of(self.image_dir / name), f"{self.dir_name}_{Path(name).stem}.jpg",
                           user_prompt(samples, written), system_prompt([(s, keys[s]) for s in sections], example))
         self.save_qwen_hint(name, answer)
@@ -996,12 +1007,20 @@ class CaptionTool:
         added = {s: d for s, d in added.items() if d['keys'] or d['sentences']}
         self.save_qwen_drafts(name, added)
         logger.info(f"Qwen filled {name}: {sorted(added)}")
-        return self.row_views([row_index])[0], [s for s in sections if s in added]
+        return self.row_views([row_index])[0], [s for s in sections if s in added], len(public)
 
     def own_texts(self, row_index, sections, image_name):
         """その行の入力から、前に Qwen が入れて、そのあと直していないもの（前の下書き）を消したもの {段落: 入力}"""
         drafts = self.read_qwen_drafts(image_name)
         return {s: clear_drafts(to_text(self.df.at[row_index, s]), drafts.get(s, {})) for s in sections}
+
+    def public_captions(self, count, target):
+        """公開の例（public_samples.SCENES）からランダムに count 個のキャプション（足りなければある分だけ。0 以下なら []）
+
+        action の文は s を省いた現在形で書いてあるので、target（プロジェクトで多い方の動詞の形）があればその形に直す
+        """
+        scenes = random.sample(list(SCENES.values()), max(0, min(count, len(SCENES))))
+        return [self.caption_of(scene_in_form(scene, target), list(scene)) for scene in scenes]
 
     def qwen_drafts_file(self, image_name):
         """Qwen が欄に入れたもの（前の下書き）の置き場: data_work/<フォルダ名>/qwen/<画像名>.json"""
@@ -1156,7 +1175,8 @@ def get_table_data():
               'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'targeted': TARGETED,
                                'pov': pov_choices(pov_names(caption_tool.subjects()))},
               'mark_choices': {'one': ONE, 'many': MANY, 'auto': AUTO}, 'auto_marks': caption_tool.auto_marks,
-              'qwen': bool(app.config.get('QWEN_URL')), 'qwen_samples': SAMPLE_COUNT}
+              'qwen': bool(app.config.get('QWEN_URL')), 'qwen_samples': SAMPLE_COUNT,
+              'qwen_public': len(SCENES)}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})
 
@@ -1290,22 +1310,22 @@ def qwen_fill():
     """🤖 / 🔖 / 🔄 / 🎲: Qwen に下書きさせ、その行の空の欄に入れる（🔄 は入力のある欄も上書き）
     （{row_index, mode: near（既定）/ mark / overwrite / random}。qwen 版のときだけ）
 
-    入れた段落と、行を返す
+    入れた段落と、行と、補った公開の例の数（public）を返す
     """
     url = app.config.get('QWEN_URL')
     if not url:
         return jsonify({'success': False, 'message': 'qwen 版で起動していません（--qwen を付けて起動）'})
     data = request.get_json() or {}
     try:
-        row, filled = caption_tool.qwen_fill(data.get('row_index'), url, data.get('mode', 'near'))
-    except (ValueError, RuntimeError) as e:  # 行・見本・画像の問題と、ComfyUI での実行の失敗
+        row, filled, public = caption_tool.qwen_fill(data.get('row_index'), url, data.get('mode', 'near'))
+    except (ValueError, RuntimeError) as e:  # 行・画像の問題と、ComfyUI での実行の失敗
         return jsonify({'success': False, 'message': str(e)})
     except TimeoutError as e:
         return jsonify({'success': False, 'message': f'ComfyUI（{url}）の答えを待ちきれませんでした（{e}）'})
     except OSError as e:  # 繋がらない（URLError も含む）
         logger.error(f"Failed to reach ComfyUI at {url}: {e}")
         return jsonify({'success': False, 'message': f'ComfyUI（{url}）に繋がりません。WSL で ComfyUI を起動してください（{e}）'})
-    return jsonify({'success': True, 'row': row, 'filled': filled})
+    return jsonify({'success': True, 'row': row, 'filled': filled, 'public': public})
 
 @app.route('/update_text', methods=['POST'])
 def update_text():
