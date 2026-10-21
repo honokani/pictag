@@ -1087,6 +1087,44 @@ def test_switching_hint_and_preview_keeps_the_first_whole_row_where_it_was(page,
         assert abs(below_head("r3.png") - 30) <= 2, view  # 押す前と同じ、見出しの 30px 下
 
 
+def tall_rows(tmp_path, tags):
+    """hint の長い 8 枚（行の高さは hint の列の幅で変わる。ほかの列を畳む・開くと hint の列の幅が変わる）"""
+    tall = make_images(tmp_path / "imgs" / "tall", {f"r{i}.png": (100, 100) for i in range(8)})
+    for i in range(8):
+        (tall / f"r{i}.txt").write_text(", ".join(f"tag{j}" for j in range(tags)), encoding="utf-8")
+    return tall
+
+
+def below_head(page, name):
+    """行の上端の、列の見出しの下端からの距離"""
+    head = page.evaluate("() => $('gridHead').querySelector('th').getBoundingClientRect().bottom")
+    return row(page, name).evaluate("tr => tr.getBoundingClientRect().top") - head
+
+
+def test_folding_a_column_keeps_the_first_whole_row_where_it_was(page, tmp_path):
+    # 列を畳む・開くと hint の列の幅が変わり、行の高さが変わる。見えていた最初の行（上が切れていない行）を、押す前と同じ位置に見せる
+    page.set_viewport_size({"width": 1800, "height": 900})
+    load_dir(page, tall_rows(tmp_path, 200))
+    page.evaluate("y => { $('imagesView').scrollTop += y; }", below_head(page, "r3.png") - 30)  # r3 を見出しの 30px 下に
+    assert abs(below_head(page, "r3.png") - 30) <= 1
+    for expected in ["▶", "◀"]:  # 畳んで、開く
+        fold_button(page, "action").click()
+        expect(fold_button(page, "action")).to_have_text(expected)
+        assert abs(below_head(page, "r3.png") - 30) <= 2, expected
+
+
+def test_opening_a_folded_cell_keeps_that_row_where_it_was(page, tmp_path):
+    # 畳んだ列の欄をクリックすると、列が開いて編集が始まる。クリックした行を、押す前と同じ位置に見せる
+    page.set_viewport_size({"width": 1800, "height": 900})
+    load_dir(page, tall_rows(tmp_path, 120))
+    fold_button(page, "guy").click()
+    page.evaluate("y => { $('imagesView').scrollTop += y; }", below_head(page, "r2.png") - 30)
+    before = below_head(page, "r3.png")
+    cell(page, "r3.png", "guy").click()
+    expect(field(page, "r3.png", "looks", "guy")).to_be_focused()
+    assert abs(below_head(page, "r3.png") - before) <= 2
+
+
 def option_values(page, selector):
     return page.locator(f"{selector} option").evaluate_all("els => els.map(e => e.value)")
 
