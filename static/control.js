@@ -24,8 +24,8 @@ const state = {
     qwen: false,          // qwen 版で起動したか（🤖🎲 の列と hint_by_qwen を出す）
     qwenBusy: new Map(),  // Qwen が書いている行の index → 見本の選び方（near / random）
     thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
-    markChoices: {one: [], many: [], auto: []},  // マークの記号（番号の順。排他 A〜H、複数 ★●▲■◆♥♣♠、自動 ①〜⑧）。行のマークは番号で持つ
-    autoMarks: [],                     // 自動のマークの設定（番号ごとに {section, key, phrase} か null。プロジェクトごと）
+    markChoices: {one: [], many: [], auto: []},  // マークの記号（番号の順。排他 A〜H、複数 ★●▲■◆♥♣♠、単語 ①〜⑧）。行のマークは番号で持つ
+    autoMarks: [],                     // 単語のマークの設定（番号ごとに {section, key, phrase} か null。プロジェクトごと）
     filter: {one: '', many: '', auto: ''},  // マークの絞り込み（'' はすべて、'none' はマークなし、ほかは番号）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count, shared}]
@@ -366,10 +366,14 @@ function keylessCandidates(section, ctx) {
 }
 
 // キーを移す語句の欄: その段落（A, B も。section は A, B を除いた名前）のそのキーで使っている語句
+// キーなし（単語のマークの文）は、文末の「.」を外して出す
 function movingCandidates(section, ctx) {
     return keepBest(state.phrases
         .filter(p => p.key === ctx.key && baseName(p.section) === section && !ctx.current.includes(p.phrase))
-        .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: Math.log1p(p.count)})));
+        .map(p => {
+            const phrase = ctx.key ? p.phrase : withoutPeriod(p.phrase);
+            return {kind: 'phrase', label: phrase, match: phrase, phrase, count: p.count, bonus: Math.log1p(p.count)};
+        }));
 }
 
 const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates,
@@ -567,18 +571,31 @@ function sideHeadHtml() {
     return `<th class="hint-head">${views.map(button).join('')}</th>`;
 }
 
-// 行に付く自動のマーク（番号）: 設定した語句が、その段落（A, B も）のそのキーにある
-const autoMarksOf = row => state.autoMarks.flatMap((m, i) => (m && state.sections.some(s => baseName(s) === m.section
-    && phrasesOfKey(row.texts[s], m.key).includes(m.phrase)) ? [i] : []));
+// 文末の「.」を外す（action の文は確定すると「.」で終わる。単語のマークの語句とは「.」を外して比べる）
+const withoutPeriod = text => text.trim().replace(/\.$/, '').trim();
 
-// 自動のマークの説明（帯のボタンと行のマークの title）
+// 単語のマークの語句 pattern が入力の語句 phrase に合うか（* は何文字でも、ほかは文字のまま）。marks.py の matches_pattern と同じ
+function matchesPattern(pattern, phrase) {
+    const [p, t] = [withoutPeriod(pattern), withoutPeriod(phrase)];
+    if (!p.includes('*')) return p === t;
+    return new RegExp(`^${p.split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(t);
+}
+
+// 行に付く単語のマーク（番号）: 設定した語句が、その段落（A, B も）のそのキーの行（キーなしは文の行）の語句に合う
+// marks.py の auto_marks_of と同じ
+const autoMarksOf = row => state.autoMarks.flatMap((m, i) => (m && state.sections.some(s => baseName(s) === m.section
+    && phrasesOfKey(row.texts[s], m.key).some(p => matchesPattern(m.phrase, p))) ? [i] : []));
+
+const keyLabel = key => key || '（キーなし）';
+
+// 単語のマークの説明（帯のボタンと行のマークの title）
 function autoMarkTitle(i) {
     const label = state.markChoices.auto[i];
     const m = state.autoMarks[i];
-    return m ? `${label} ${m.section} / ${m.key} / ${m.phrase}（右クリックで変える）` : `${label}（右クリックで、段落・キー・語句を選ぶ）`;
+    return m ? `${label} ${m.section} / ${keyLabel(m.key)} / ${m.phrase}（右クリックで変える）` : `${label}（右クリックで、段落・キー・語句を選ぶ）`;
 }
 
-// マークの欄: 縦長の 3 列 × 8 行。左の列が排他（A〜H のどれか1つ）、真ん中が複数（★●▲■◆♥♣♠）、右が自動（①〜⑧。押せない）
+// マークの欄: 縦長の 3 列 × 8 行。左の列が排他（A〜H のどれか1つ）、真ん中が複数（★●▲■◆♥♣♠）、右が単語（①〜⑧。押せない）
 // ボタンは番号を持ち、記号を見せる
 function marksHtml(row) {
     const button = (kind, mark, label, on) =>
@@ -1015,7 +1032,7 @@ async function refreshTable() {
 
 // ---- 英字だけ（キャプションや辞書に入る欄。全角は半角に、日本語などは消す） ----
 
-// キャプションや辞書に入る欄（表の入力欄・一括入力・キーを移す・自動のマークの語句・段落を追加・共用辞書の足す語句と改名）
+// キャプションや辞書に入る欄（表の入力欄・一括入力・キーを移す・単語のマークの語句・段落を追加・共用辞書の足す語句と改名）
 const ENGLISH_FIELDS = 'td.cell textarea, #bulkText, #movePhrase, #autoMarkPhrase, #sectionName, #dictAddText, .rename-input';
 // 英字の記号にそろえる文字（全角の英数字・記号・空白は NFKD で半角になる）
 const ENGLISH_MARKS = {'、': ',', '。': '.', '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '\t': ' '};
@@ -1177,7 +1194,7 @@ function commitEdit() {
     track(sendText(row, editor.section, text)).catch(e => setStatus(String(e.message || e), 'error'));
 }
 
-// 入力が変わった行の自動のマークを付け直す（自動のマークの絞り込みにも合わせる）
+// 入力が変わった行の単語のマークを付け直す（単語のマークの絞り込みにも合わせる）
 function refreshAutoMarks(row) {
     const tr = rowElement(row.index);
     if (!tr) return;
@@ -1467,13 +1484,13 @@ function fillMarkFilters(choices) {
     });
 }
 
-// 自動のマークの設定を描く: 帯の ①〜⑧（設定の無いものは薄く。語句は title）と、絞り込みの選択肢（① smile のように語句も）
+// 単語のマークの設定を描く: 帯の ①〜⑧（設定の無いものは薄く。語句は title）と、絞り込みの選択肢（① smile のように語句も）
 function paintAutoMarks() {
-    $('autoMarks').innerHTML = '自動' + state.markChoices.auto.map((label, i) =>
+    $('autoMarks').innerHTML = '単語' + state.markChoices.auto.map((label, i) =>
         `<button type="button" class="auto-mark${state.autoMarks[i] ? '' : ' unset'}" data-mark="${i}" ` +
         `title="${escapeHtml(autoMarkTitle(i))}">${escapeHtml(label)}</button>`).join('');
     const keep = $('filterAuto').value;
-    $('filterAuto').innerHTML = ['<option value="">自動: すべて</option>',
+    $('filterAuto').innerHTML = ['<option value="">単語: すべて</option>',
         ...state.markChoices.auto.map((label, i) => {
             const m = state.autoMarks[i];
             return `<option value="${i}">${escapeHtml(m ? `${label} ${m.phrase}` : label)}</option>`;
@@ -1481,7 +1498,7 @@ function paintAutoMarks() {
     $('filterAuto').value = keep;
 }
 
-// ---- 自動のマークの設定（帯の ①〜⑧ を右クリック: 段落 → キー → 語句を選ぶと、その語句のある行に付く） ----
+// ---- 単語のマークの設定（帯の ①〜⑧ を右クリック: 段落 → キー → 語句を選ぶと、その語句のある行に付く） ----
 
 // 設定の欄を、押したボタンの下に開く（今の設定を入れておく）
 function openAutoMarkForm(button) {
@@ -1491,7 +1508,7 @@ function openAutoMarkForm(button) {
     form.dataset.mark = i;
     $('autoMarkLabel').textContent = state.markChoices.auto[i];
     fillOptions($('autoMarkSection'), baseSections(), m ? m.section : null);
-    fillOptions($('autoMarkKey'), sectionKeys($('autoMarkSection').value), m ? m.key : null);
+    fillOptions($('autoMarkKey'), wordMarkKeys($('autoMarkSection').value), m ? m.key : null, keyLabel);
     $('autoMarkPhrase').value = m ? m.phrase : '';
     paintWhitespace($('autoMarkPhrase'));
     form.hidden = false;
@@ -1506,7 +1523,7 @@ function closeAutoMarkForm() {
     hideSuggestions();
 }
 
-// 設定を送る（mark が null なら外す）。行の自動のマークと絞り込みを描き直す（保存はまだ）
+// 設定を送る（mark が null なら外す）。行の単語のマークと絞り込みを描き直す（保存はまだ）
 async function sendAutoMark(mark) {
     const res = await postJson('/set_auto_mark', {index: Number($('autoMarkForm').dataset.mark), mark});
     if (!res.success) return setStatus(res.message, 'error');
@@ -1652,13 +1669,19 @@ function bulkContext(el) {
     return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
 }
 
-// ---- 段落（A, B を除いた名前）・キー・語句を選ぶ欄（キーを移す・自動のマークの設定） ----
+// ---- 段落（A, B を除いた名前）・キー・語句を選ぶ欄（キーを移す・単語のマークの設定） ----
 
 // 選択肢を入れ直す（prefer か、前に選んでいたものが新しい選択肢にもあれば残す）
-function fillOptions(select, list, prefer = null) {
+function fillOptions(select, list, prefer = null, label = v => v) {
     const keep = prefer ?? select.value;
-    select.innerHTML = list.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+    select.innerHTML = list.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(label(v))}</option>`).join('');
     if (list.includes(keep)) select.value = keep;
+}
+
+// 単語のマークのキーの選択肢: 段落のキーと「（キーなし）」（文に合わせる）。確定タグの無い段落（action など）はキーなしが先
+function wordMarkKeys(section) {
+    const keys = sectionKeys(section);
+    return editKeys(section).length ? [...keys, ''] : ['', ...keys];
 }
 
 // 段落の選択肢: A, B を除いた名前（表の並び）
@@ -1784,7 +1807,7 @@ function wire() {
     $('filterOne').addEventListener('change', applyFilter);
     $('filterMany').addEventListener('change', applyFilter);
     $('filterAuto').addEventListener('change', applyFilter);
-    // 自動のマーク: 帯の ①〜⑧ を右クリックで設定の欄を開く（左クリックは案内だけ）。欄の外を押すか Esc で閉じる
+    // 単語のマーク: 帯の ①〜⑧ を右クリックで設定の欄を開く（左クリックは案内だけ）。欄の外を押すか Esc で閉じる
     $('autoMarks').addEventListener('contextmenu', event => {
         const button = event.target.closest('.auto-mark');
         if (!button) return;
@@ -1792,7 +1815,7 @@ function wire() {
         openAutoMarkForm(button);
     });
     $('autoMarks').addEventListener('click', event => {
-        if (event.target.closest('.auto-mark')) setStatus('右クリックで、段落・キー・語句を選びます（その語句のある行に自動で付きます）');
+        if (event.target.closest('.auto-mark')) setStatus('右クリックで、段落・キー・語句を選びます（その語句のある行に付きます）');
     });
     $('autoMarkForm').addEventListener('submit', event => {
         event.preventDefault();
@@ -1807,7 +1830,7 @@ function wire() {
         if (!form.hidden && !form.contains(event.target) && !$('suggestions').contains(event.target)) closeAutoMarkForm();
     });
     $('autoMarkSection').addEventListener('change', () => {
-        fillOptions($('autoMarkKey'), sectionKeys($('autoMarkSection').value));
+        fillOptions($('autoMarkKey'), wordMarkKeys($('autoMarkSection').value), null, keyLabel);
         hideSuggestions();
     });
     $('autoMarkKey').addEventListener('change', hideSuggestions);
