@@ -1,4 +1,4 @@
-"""マーキングの画面操作（Playwright）。排他の A〜H、複数可の ★●▲■◆♥♣♠、自動の ①〜⑧（ボタンの data-mark は番号）"""
+"""マーキングの画面操作（Playwright）。排他の A〜H、複数可の ★●▲■◆♥♣♠、単語の ①〜⑯（ボタンの data-mark は番号）"""
 import re
 
 import pytest
@@ -12,7 +12,7 @@ pytestmark = pytest.mark.e2e
 
 ONE = "ABCDEFGH"
 MANY = "★●▲■◆♥♣♠"
-AUTO = "①②③④⑤⑥⑦⑧"
+AUTO = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯"
 ON = re.compile(r"\bon\b")
 
 
@@ -47,12 +47,22 @@ def auto(page, name, number):
     return row(page, name).locator(f'.mark-auto[data-mark="{number}"]')
 
 
+def kind_and_number(symbol):
+    return next((k, s.index(symbol)) for k, s in [("one", ONE), ("many", MANY), ("auto", AUTO)] if symbol in s)
+
+
 def filter_button(page, symbol, kind=None):
     """3段目の帯の絞り込みのボタン（記号で指す。段の左端の ☓ は symbol="none" と kind で）"""
     if symbol == "none":
         return page.locator(f'#markFilters .filter-btn[data-kind="{kind}"][data-mark="none"]')
-    kind, number = next((k, s.index(symbol)) for k, s in [("one", ONE), ("many", MANY), ("auto", AUTO)] if symbol in s)
-    return page.locator(f'#markFilters .filter-btn[data-kind="{kind}"][data-mark="{number}"]')
+    kind, number = kind_and_number(symbol)
+    return page.locator(f'#markFilters .filter-btn:not(.without)[data-kind="{kind}"][data-mark="{number}"]')
+
+
+def without_button(page, symbol):
+    """3段目の帯の下の段の ☓（記号の真下。その印の無い行）"""
+    kind, number = kind_and_number(symbol)
+    return page.locator(f'#markFilters .filter-btn.without[data-kind="{kind}"][data-mark="{number}"]')
 
 
 def write(page, name, text, section="girl"):
@@ -171,7 +181,7 @@ def test_marks_survive_save(page, imgs):
 
 
 def test_auto_marks_follow_the_phrase_chosen_by_right_click(page, imgs):
-    # 右の列（①〜⑧）は自動: 帯の ①〜⑧ を右クリックして段落・キー・語句を選ぶと、その語句のある行に付く（行のマークは押しても変わらない）
+    # 右の2列（①〜⑯）は自動: 帯の ①〜⑯ を右クリックして段落・キー・語句を選ぶと、その語句のある行に付く（行のマークは押しても変わらない）
     load_dir(page, imgs)
     write(page, "a.png", "looks: smile")
     write(page, "c.png", "looks: standing")
@@ -244,7 +254,7 @@ def test_filter_buttons_show_rows_with_any_of_the_pressed_marks(page, imgs):
     # いくつ押しても、押した印のどれかがある行を出す
     load_dir(page, imgs)
     for kind, symbols in [("one", ONE), ("many", MANY), ("auto", AUTO)]:
-        expect(page.locator(f'#markFilters .filter-group[data-kind="{kind}"] .filter-btn')).to_have_text(["☓", *symbols])
+        expect(page.locator(f'#markFilters .filter-group[data-kind="{kind}"] .filter-btn:not(.without)')).to_have_text(["☓", *symbols])
     mark(page, "a.png", "A").click()
     mark(page, "b.png", "★").click()
     filter_button(page, "A").click()
@@ -264,9 +274,47 @@ def test_filter_buttons_show_rows_with_any_of_the_pressed_marks(page, imgs):
     expect(row(page, "c.png")).to_be_visible()
 
 
+def test_cross_under_each_mark_shows_rows_without_it(page, imgs):
+    # 3段目の帯の下の段: 記号ごとに、真下に ☓（その印の無い行）。☓ は全部に掛ける（左端の ☓ も）。印のボタンは、押した印のどれか
+    load_dir(page, imgs)
+    for kind, symbols in [("one", ONE), ("many", MANY), ("auto", AUTO)]:
+        expect(page.locator(f'#markFilters .filter-group[data-kind="{kind}"] .filter-btn.without')).to_have_text(["☓"] * len(symbols))
+    for symbol in ["A", "♠", "⑯"]:
+        top, below = filter_button(page, symbol).bounding_box(), without_button(page, symbol).bounding_box()
+        assert abs(top["x"] - below["x"]) < 0.5 and below["y"] >= top["y"] + top["height"] - 0.5
+    mark(page, "a.png", "A").click()
+    mark(page, "b.png", "B").click()
+    mark(page, "b.png", "★").click()
+
+    without_button(page, "★").click()  # ★ の無い行
+    expect(without_button(page, "★")).to_have_class(ON)
+    expect(row(page, "b.png")).to_be_hidden()
+    expect(row(page, "a.png")).to_be_visible()
+    expect(row(page, "c.png")).to_be_visible()
+    filter_button(page, "B").click()  # B があって ★ の無い行（無い）
+    expect(page.locator("#gridBody tr:visible")).to_have_count(0)
+    filter_button(page, "B").click()
+    without_button(page, "★").click()  # もう一度押すと外す
+    expect(page.locator("#gridBody tr:visible")).to_have_count(3)
+
+    without_button(page, "A").click()
+    without_button(page, "B").click()  # A も B も無い行
+    expect(row(page, "c.png")).to_be_visible()
+    expect(page.locator("#gridBody tr:visible")).to_have_count(1)
+    without_button(page, "A").click()
+    without_button(page, "B").click()
+    filter_button(page, "A").click()
+    filter_button(page, "none", "one").click()  # 左端の ☓（排他の印の無い行）も全部に掛ける: A の行で、排他の印の無い行（無い）
+    expect(page.locator("#gridBody tr:visible")).to_have_count(0)
+
+
 def test_unset_word_mark_button_shows_a_hint_instead_of_filtering(page, imgs):
     load_dir(page, imgs)
     filter_button(page, "①").click()
     expect(page.locator("#status")).to_have_text("右クリックで、段落・キー・語句を選びます（その語句のある行に付きます）")
     expect(filter_button(page, "①")).not_to_have_class(ON)
     expect(page.locator("#gridBody tr:visible")).to_have_count(3)
+    page.locator("#status").evaluate("el => el.textContent = ''")
+    without_button(page, "⑯").click()  # 下の段の ☓ も同じ
+    expect(page.locator("#status")).to_have_text("右クリックで、段落・キー・語句を選びます（その語句のある行に付きます）")
+    expect(without_button(page, "⑯")).not_to_have_class(ON)
