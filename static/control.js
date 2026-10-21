@@ -274,10 +274,21 @@ const spacesAfterWord = before => (before.match(/\S( *)$/) || ['', ''])[1].lengt
 // キーなしの文で、語の後にスペースを2つ続けた（打たなくても単語の候補を出す合図。3つ目でしまう）
 const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
 
+// キーのある行で打っている語句: raw はカンマ（キーのコロン・欄の改行）の後ろからカーソルまで、at は raw の頭の位置
+// 語の後にスペースを2つ以上続けたら、打っていない次の語句として見る（候補はカンマの後ろと同じで、3つ目でもしまわない。
+// 選んだ語句は、続いたスペースと置き換える）
+function phraseQuery(raw, at) {
+    const spaces = spacesAfterWord(raw);
+    if (spaces >= 2) return {query: '', queryStart: at + raw.length - spaces};
+    const query = raw.trimStart();
+    return {query, queryStart: at + raw.length - query.length};
+}
+
 // 選んだ単語の後ろに付ける区切り: 行末なら ", "（欄を離れると行末のカンマは消える）。後ろに語が続けば空白、空白かカンマが続けば付けない
 const wordSeparator = after => (!after.trim() ? ', ' : /^[\s,]/.test(after) ? '' : ' ');
-// キーのある行の語句の前後: カンマ（キーのコロン）のすぐ後ろに入れるときは前に空白。後ろに語が続けばカンマで区切り、行末は ", "
-const phraseBefore = (value, at) => (/[,:]/.test(value[at - 1] || '') ? ' ' : '');
+// キーのある行の語句の前後: カンマ（キーのコロン）のすぐ後ろに入れるときは前に空白、語のすぐ後ろ（スペース2つで出した候補）なら ", "。
+// 後ろに語が続けばカンマで区切り、行末は ", "
+const phraseBefore = (value, at) => (/[,:]/.test(value[at - 1] || '') ? ' ' : /\S/.test(value[at - 1] || '') ? ', ' : '');
 const phraseAfter = after => (!after.trim() ? ', ' : /^\s*,/.test(after) ? '' : /^\s/.test(after) ? ',' : ', ');
 
 // 入力欄のカーソル位置の文脈
@@ -298,9 +309,7 @@ function contextOf(el) {
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
     if (colon >= 0 && keyPart !== '' && !keyPart.includes(',')) {
         const segment = Math.max(before.lastIndexOf(','), colon) + 1;
-        const raw = before.slice(segment);
-        const query = raw.trimStart();
-        return {...base, mode: 'phrase', key: keyPart, query, queryStart: lineStart + segment + (raw.length - query.length)};
+        return {...base, mode: 'phrase', key: keyPart, ...phraseQuery(before.slice(segment), lineStart + segment)};
     }
     const prefix = before.match(/^\s*-*\s*/)[0].length;
     const rest = before.slice(prefix);
@@ -324,10 +333,8 @@ function editorContext(el) {
     const before = value.slice(0, caret);
     const lineEndAt = value.indexOf('\n', caret);
     const segment = Math.max(before.lastIndexOf(','), before.lastIndexOf('\n')) + 1;
-    const raw = before.slice(segment);
-    const query = raw.trimStart();
     return {end, after: value.slice(caret, lineEndAt < 0 ? value.length : lineEndAt), current: splitPhrases(value.replace(/\n/g, ',')),
-        cellPhrases, mode: 'phrase', key: el.dataset.key, query, queryStart: segment + (raw.length - query.length)};
+        cellPhrases, mode: 'phrase', key: el.dataset.key, ...phraseQuery(before.slice(segment), segment)};
 }
 
 function keepBest(items) {
@@ -1786,9 +1793,7 @@ function bulkContext(el) {
     const base = {end, after, current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
-        const raw = before.slice(segment);
-        const query = raw.trimStart();
-        return {...base, mode: 'phrase', key, query, queryStart: segment + (raw.length - query.length)};
+        return {...base, mode: 'phrase', key, ...phraseQuery(before.slice(segment), segment)};
     }
     const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
     if (lastBreak >= 0) {

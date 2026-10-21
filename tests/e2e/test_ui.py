@@ -520,6 +520,55 @@ def test_spaces_do_not_hide_phrase_suggestions_of_a_key(page, imgs):
     expect(page.locator("#suggestions li.active")).to_contain_text("long hair")
 
 
+def test_two_spaces_after_a_phrase_of_a_key_field_show_its_phrases(page, imgs):
+    # キーの欄でも、語の後にスペース2つで、カンマを打ったときと同じ候補を出す（キーのある行なので、3つ目でもしまわない）。
+    # 選ぶと、続いたスペースは ", " になる
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: short hair")
+    wait_for_phrase(page, "short hair")
+
+    open_editor(page, "a.png")
+    looks = field(page, "a.png", "looks")
+    shown = page.locator("#suggestions:visible li.active")  # しまった一覧の項目は残るので、見えているものだけ
+    looks.press_sequentially("smile ")
+    expect(page.locator("#suggestions")).to_be_hidden()  # スペース1つでは、smile の打ちかけのまま（似た語句が無い）
+    looks.press_sequentially(" ")
+    expect(shown).to_contain_text("short hair")  # smile に似ていなくても出す
+    looks.press_sequentially(" ")
+    expect(shown).to_contain_text("short hair")  # 3つ目でもしまわない
+    looks.press("Tab")
+    assert looks.input_value() == "smile, short hair, "
+
+
+def test_two_spaces_inside_a_key_line_put_a_phrase_between(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    wait_for_phrase(page, "long hair")
+
+    editor = open_editor(page, "a.png")
+    editor.fill("body: tall, slim")
+    at = len("body: tall")
+    editor.evaluate(f"el => el.setSelectionRange({at}, {at})")  # body: tall|, slim
+    editor.press_sequentially("  ")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("long hair")
+    editor.press("Tab")
+    assert editor.input_value() == "body: tall, long hair, slim"  # 後ろのカンマとは重ねない
+
+
+def test_bulk_key_text_shows_phrases_after_two_spaces(page, imgs):
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: short hair")
+    wait_for_phrase(page, "short hair")
+    row(page, "a.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "girl")
+    page.select_option("#bulkKey", "looks")
+    bulk = page.locator("#bulkText")
+    bulk.press_sequentially("smile  ")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("short hair")
+    bulk.press("Tab")
+    assert bulk.input_value() == "smile, short hair, "
+
+
 def test_bulk_keyless_text_shows_words_after_two_spaces(page, imgs):
     load_dir(page, imgs)
     write_spread(page)
