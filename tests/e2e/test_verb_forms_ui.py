@@ -52,3 +52,24 @@ def test_verb_button_puts_only_the_checked_changes(page, project):
     expect(action_lines(page, "r1.png")).to_have_text(["girl is smiling."])
     expect(action_lines(page, "r2.png")).to_have_text(["guy hand on hip."])
     expect(page.locator("#status")).to_have_class("ok")
+
+
+def test_verb_button_asks_which_form_on_a_tie(page, project):
+    # 同じ数なら、どちらにそろえるかを聞く（選ぶまで入れられない）。選ぶと、その形への一覧
+    project.write(project.row_index("r0.png"), "she sit.", section="action")
+    project.write(project.row_index("r2.png"), "", section="action")
+    project.save()
+    page.goto(page.base_url)
+    page.select_option("#projectSelect", "proj")
+    expect(page.locator("#gridBody tr")).to_have_count(3)
+    page.locator('#gridHead th[data-section="action"] .verb-forms').click()
+    expect(page.locator("#verbSummary")).to_have_text("is doing の形 1 文・does の形 1 文。同じ数です。どちらにそろえますか？")
+    choices = page.locator("#verbLists .verb-choice button")
+    expect(choices).to_have_text(["is doing の形（girl is sitting.）", "does の形（girl sits.）"])
+    expect(page.locator("#verbApply")).to_be_disabled()
+    choices.nth(1).click()
+    expect(page.locator("#verbSummary")).to_have_text("is doing の形 1 文・does の形 1 文。同じ数なので、does の形（girl sits.）にそろえます")
+    expect(page.locator("#verbDialog .verb-sure input")).to_have_count(2)
+    page.locator("#verbApply").click()
+    expect(action_lines(page, "r0.png")).to_have_text(["she sits."])
+    expect(action_lines(page, "r1.png")).to_have_text(["girl smiles."])

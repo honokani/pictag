@@ -314,3 +314,4 @@ dialog img { display: block; max-width: 88vw; max-height: 80vh; margin: 0 auto; 
 .verb-list li { padding: 2px 0; }
 .verb-name { color: #888; font-size: 12px; }
 .verb-actions { margin: 8px 0 0; text-align: right; }
+.verb-choice { margin: 6px 0; }  /* 同じ数のとき: どちらにそろえるか */

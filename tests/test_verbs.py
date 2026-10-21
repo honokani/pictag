@@ -79,3 +79,11 @@ def test_survey_suggests_changes_to_the_majority():
     assert changes == [(0, "she sit.", "she sits.", True), (1, "girl is smiling.", "girl smiles.", True),
                        (3, "guy hand on hip.", "guy hands on hip.", False)]
     assert survey([(0, "girl sits."), (1, "girl is smiling.")], SUBJECTS)[1:] == (None, [])  # 同じ数なら案は無い
+
+
+def test_survey_takes_the_form_to_unify_to_when_given():
+    # 同じ数のときは、画面でどちらにするか聞いて、選んだ形を渡す
+    lines = [(0, "girl sits."), (1, "girl is smiling.")]
+    assert survey(lines, SUBJECTS, PRESENT) == ({PROGRESSIVE: 1, PRESENT: 1}, PRESENT,
+                                                [(1, "girl is smiling.", "girl smiles.", True)])
+    assert survey(lines, SUBJECTS, PROGRESSIVE)[2] == [(0, "girl sits.", "girl is sitting.", True)]
