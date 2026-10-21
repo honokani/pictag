@@ -215,7 +215,7 @@ def test_picture_editor_has_no_other_field_because_of_extra(page, imgs):
     page.select_option("#bulkSection", "picture")  # 入力欄を開いた行は選択状態
     page.select_option("#bulkKey", "")
     page.locator("#bulkText").fill("an old photo")
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(cell(page, "a.png", "picture").locator(".others")).to_have_text("その他:")
     cell(page, "a.png", "picture").locator(".text").click()
     expect(field(page, "a.png", "", "picture")).to_have_value("an old photo")
@@ -652,7 +652,7 @@ def test_bulk_text_shows_space_marks_and_clears_them(page, imgs):
     page.locator("#bulkText").press_sequentially("long hair")
     marks = page.locator("#bulkForm .ws-marks .sp")
     expect(marks).to_have_count(1)
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(filled(page, "a.png")).to_have_text(["body: long hair"])
     expect(marks).to_have_count(0)  # 欄を空にしたら印も消す
 
@@ -675,7 +675,7 @@ def test_bulk_add_and_remove_on_selected_rows(page, imgs):
     page.select_option("#bulkSection", "girl")
     page.select_option("#bulkKey", "looks")
     page.fill("#bulkText", "standing")
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(page.locator("#status")).to_have_text("3 行に追加しました")
     for name in ["a.png", "b.png", "c.png"]:
         expect(filled(page, name)).to_have_text(["looks: standing"])
@@ -683,7 +683,7 @@ def test_bulk_add_and_remove_on_selected_rows(page, imgs):
     row(page, "b.png").locator("td.meta").click(modifiers=["Control"])
     expect(page.locator("#selectionInfo")).to_have_text("選択 2 行")
     page.fill("#bulkText", "standing")
-    page.click("text=選択行から削除")
+    page.click('#bulkForm button[value="remove"]')
     expect(filled(page, "a.png")).to_have_count(0)
     expect(filled(page, "b.png")).to_have_text(["looks: standing"])
     expect(filled(page, "c.png")).to_have_count(0)
@@ -1128,7 +1128,7 @@ def test_bulk_phrase_suggestions_follow_the_key(page, imgs):
     expect(page.locator("#suggestions li.active")).to_contain_text("long hair")
     page.locator("#bulkText").press("Enter")
     assert page.locator("#bulkText").input_value() == "long hair, "
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(filled(page, "a.png")).to_have_text(["body: long hair"])
 
 
@@ -1150,6 +1150,8 @@ def test_deselect_needs_a_long_press(page, imgs):
 
 
 def test_selecting_rows_does_not_shift_the_table(page, imgs):
+    # 行を選ぶと2段目の帯に一括入力が並ぶが、帯は1段のまま（窓の幅 1440px 以上。自動のマーク ①〜⑧ と絞り込みの「自動」を足してから）
+    page.set_viewport_size({"width": 1440, "height": 800})
     load_dir(page, imgs)
     before = page.locator("#grid").bounding_box()["y"]
     row(page, "a.png").locator("td.meta").click()

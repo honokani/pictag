@@ -10,6 +10,8 @@ from helpers import caption_of, make_images
 
 ONE = list("ABCDEFGH")
 MANY = ["★", "●", "▲", "■", "◆", "♥", "♣", "♠"]
+AUTO = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
+SMILE = {"section": "girl", "key": "looks", "phrase": "smile"}
 
 
 @pytest.fixture
@@ -120,7 +122,7 @@ def test_table_data_has_marks_as_numbers_and_their_symbols(api, imgs):
     set_mark(api, [0], 0)
     set_marks(api, [0], 4)
     body = api.table()
-    assert body["mark_choices"] == {"one": ONE, "many": MANY}  # 番号の順の記号
+    assert body["mark_choices"] == {"one": ONE, "many": MANY, "auto": AUTO}  # 番号の順の記号
     assert [(r["mark"], r["marks"]) for r in body["data"]] == [(0, [4]), (None, []), (None, [])]
     assert body["sections"] == ["picture", "action", "girl", "guy"]
 
@@ -129,3 +131,50 @@ def test_table_data_has_marks_as_numbers_and_their_symbols(api, imgs):
 def test_mark_column_names_are_reserved(api, tool, imgs, name):
     api.load(imgs)
     assert api.add_section(name)["success"] is False
+
+
+# ---- 自動のマーク（①〜⑧。語句を設定すると、その語句のある行に付く。行には持たない） ----
+
+def set_auto(api, index, mark):
+    return api.post("/set_auto_mark", {"index": index, "mark": mark})
+
+
+def test_auto_marks_are_set_per_project_and_saved_in_the_table(api, imgs, base_dir):
+    # 設定は「A, B を除いた段落の名前・キー・語句」。プロジェクトごとに table.json へ保存する
+    api.load(imgs)
+    assert api.table()["auto_marks"] == [None] * 8
+    res = set_auto(api, 2, {"section": " girl ", "key": "looks", "phrase": " smile "})
+    assert res["success"] and res["auto_marks"] == [None, None, SMILE] + [None] * 5
+    api.save()
+    path = base_dir / "data_out" / "proj" / "table.json"
+    assert json.loads(path.read_text(encoding="utf-8"))["auto_marks"][2] == SMILE
+
+    api.open_project("proj")
+    assert api.table()["auto_marks"][2] == SMILE
+    assert set_auto(api, 2, None)["auto_marks"] == [None] * 8  # 外す
+
+
+def test_tables_without_auto_marks_have_none_set(api, imgs, base_dir):
+    api.load(imgs)
+    api.save()
+    path = base_dir / "data_out" / "proj" / "table.json"
+    table = json.loads(path.read_text(encoding="utf-8"))
+    del table["auto_marks"]  # 0.4.4 までの table.json には無い
+    path.write_text(json.dumps(table, ensure_ascii=False), encoding="utf-8")
+    api.open_project("proj")
+    assert api.table()["auto_marks"] == [None] * 8
+
+
+@pytest.mark.parametrize("payload", [
+    {"index": 8, "mark": SMILE},  # 0〜7 の外
+    {"index": True, "mark": SMILE},  # 真偽は番号ではない
+    {"index": 0, "mark": {**SMILE, "key": ""}},  # キーが要る
+    {"index": 0, "mark": {**SMILE, "phrase": " "}},
+    {"index": 0, "mark": {**SMILE, "section": ""}},
+    {"index": 0, "mark": "smile"},
+])
+def test_bad_auto_mark_requests_are_rejected(api, imgs, payload):
+    api.load(imgs)
+    res = api.post("/set_auto_mark", payload)
+    assert res["success"] is False and res["message"]
+    assert api.table()["auto_marks"] == [None] * 8

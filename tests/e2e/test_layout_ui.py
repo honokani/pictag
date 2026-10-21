@@ -50,17 +50,19 @@ def spare_after_close_up(page):
     return picture["x"] + picture["width"] - 1 - (last["x"] + last["width"])
 
 
-def test_marks_are_two_columns_of_eight(page, imgs):
+def test_marks_are_three_columns_of_eight(page, imgs):
     load_dir(page, imgs)
 
-    def box(kind, number):
-        return td(page, f'.mark-btn[data-kind="{kind}"][data-mark="{number}"]').bounding_box()
+    def box(selector):
+        return td(page, selector).bounding_box()
 
-    a, star, h, spade = box("one", 0), box("many", 0), box("one", 7), box("many", 7)
-    assert abs(a["y"] - star["y"]) < 0.5 and star["x"] > a["x"]  # 左の列が A〜H、右の列が ★〜♠
-    assert a["y"] < box("one", 1)["y"] < h["y"]
-    assert abs(h["y"] - spade["y"]) < 0.5
-    assert width(td(page, "td.marks")) <= 64  # ボタン2つ分
+    a, star, one = box('.mark-btn[data-kind="one"][data-mark="0"]'), box('.mark-btn[data-kind="many"][data-mark="0"]'), box('.mark-auto[data-mark="0"]')
+    h, eight = box('.mark-btn[data-kind="one"][data-mark="7"]'), box('.mark-auto[data-mark="7"]')
+    assert abs(a["y"] - star["y"]) < 0.5 and abs(a["y"] - one["y"]) < 0.5  # 左が A〜H、真ん中が ★〜♠、右が ①〜⑧
+    assert a["x"] < star["x"] < one["x"]
+    assert a["y"] < box('.mark-btn[data-kind="one"][data-mark="1"]')["y"] < h["y"]
+    assert abs(h["y"] - eight["y"]) < 0.5
+    assert width(td(page, "td.marks")) <= 90  # ボタン3つ分
 
 
 def test_picture_column_ends_10px_after_close_up_and_keeps_its_width_while_editing(page, imgs):

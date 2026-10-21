@@ -61,7 +61,8 @@ def test_save_writes_readable_json(api, imgs, base_dir):
     table = json.loads((base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8"))
     assert table == {"sections": ["picture", "action", "girl", "guy"],
                      "rows": [{"image": "a.png", "is_dead": False, "texts": {"girl": "looks: standing"}},
-                              {"image": "b.png", "is_dead": False, "texts": {}}]}
+                              {"image": "b.png", "is_dead": False, "texts": {}}],
+                     "auto_marks": [None] * 8}  # 自動のマーク ①〜⑧ の語句の設定（どれも設定なし）
 
 
 def test_unreadable_table_is_not_opened(api, tool, imgs, base_dir):

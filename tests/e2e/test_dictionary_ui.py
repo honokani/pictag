@@ -246,7 +246,7 @@ def test_bulk_add_reports_rows_skipped_by_a_group(page, movies):
     page.select_option("#bulkSection", "girl")
     page.select_option("#bulkKey", "looks")
     page.fill("#bulkText", "sitting")
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(page.locator("#status")).to_have_text("3 行に追加しました（2 行は、同じグループの語句があるので足していません）")
     expect(line_of(page, "titanic.png", "looks")).to_have_text("looks: standing, eyes closed, smile")
     expect(line_of(page, "roman_holiday.png", "looks")).to_have_text("looks: sitting, smile")
