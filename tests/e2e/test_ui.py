@@ -1208,20 +1208,38 @@ def test_deselect_needs_a_long_press(page, imgs):
     page.mouse.up()
     expect(page.locator("#status")).to_have_text("選択を解除しました")
     expect(page.locator("#bulkForm")).to_be_hidden()
+    expect(page.locator("#deselectButton")).to_be_hidden()
     expect(page.locator("#gridBody tr.selected")).to_have_count(0)
 
 
 def test_selecting_rows_does_not_shift_the_table(page, imgs):
-    # 行を選ぶと3段目の帯に一括入力が並ぶが、帯の高さは変わらない（窓の幅 1440px 以上。絞り込みは単語の ①〜⑯ と下の段の ☓ まで、
-    # 一括入力は2段に積む）
+    # 行を選ぶと2段目の帯の右端に一括入力が出るが、帯の高さは変わらない（選んでいないときも一括入力の場所を取っておく。窓の幅 1440px 以上。
+    # 一括入力は2段に積み、2段目のほかの道具と同じ行に収める）
     page.set_viewport_size({"width": 1440, "height": 800})
     load_dir(page, imgs)
     before = page.locator("#grid").bounding_box()["y"]
     row(page, "a.png").locator("td.meta").click()
-    expect(page.locator("#bulkForm")).to_be_visible()
+    expect(page.locator("#tools #bulkForm")).to_be_visible()
     assert page.locator("#grid").bounding_box()["y"] == before
     upper, lower = page.locator("#bulkSection").bounding_box(), page.locator("#bulkText").bounding_box()
     assert lower["y"] >= upper["y"] + upper["height"]  # 段落・キーの下に、語句と追加・削除
+    move = page.locator("#moveForm").bounding_box()
+    assert upper["y"] < move["y"] + move["height"]  # 下の段に落ちない
+
+
+def test_deselect_sits_by_select_visible_and_mark_clears_on_the_filter_bar(page, imgs):
+    # 選択解除は「表示中を選択」の隣に、同じ大きさで（行を選んでいる間だけ）。マークのクリアは3段目の帯（絞り込みと一緒）の右端
+    load_dir(page, imgs)
+    expect(page.locator("#selectVisibleButton")).to_have_text("表示中を選択")
+    expect(page.locator("#deselectButton")).to_be_hidden()
+    expect(page.locator("#markTools .clear-marks .hold")).to_have_count(2)
+    row(page, "a.png").locator("td.meta").click()
+    select, deselect = page.locator("#selectVisibleButton").bounding_box(), page.locator("#deselectButton").bounding_box()
+    assert abs(select["y"] - deselect["y"]) < 0.5 and abs(select["height"] - deselect["height"]) < 0.5
+    assert 0 < deselect["x"] - (select["x"] + select["width"]) <= 12  # すぐ右
+    clear = page.locator("#markTools .clear-marks").bounding_box()
+    tools = page.locator("#markTools").bounding_box()
+    assert tools["x"] + tools["width"] - (clear["x"] + clear["width"]) <= 13  # 右端（帯の余白 12px）
 
 
 def test_hold_button_fills_while_pressed_and_resets_when_released_early(page, imgs):
