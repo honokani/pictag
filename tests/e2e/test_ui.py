@@ -215,7 +215,7 @@ def test_picture_editor_has_no_other_field_because_of_extra(page, imgs):
     page.select_option("#bulkSection", "picture")  # 入力欄を開いた行は選択状態
     page.select_option("#bulkKey", "")
     page.locator("#bulkText").fill("an old photo")
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(cell(page, "a.png", "picture").locator(".others")).to_have_text("その他:")
     cell(page, "a.png", "picture").locator(".text").click()
     expect(field(page, "a.png", "", "picture")).to_have_value("an old photo")
@@ -574,6 +574,46 @@ def test_leaving_action_ends_sentences_with_periods(page, imgs):
     expect(filled(page, "a.png")).to_have_text(["smiling"])
 
 
+def test_text_is_tidied_to_english(page, imgs):
+    # 英字にそろえる: 全角の英数字・記号・空白は半角、アクセントは外す、「、」「。」と曲がった引用符・ダッシュは英字の記号、タブは空白。
+    # そろえても英字（半角の英数字・記号・空白。入力欄は改行も）にならないかな・漢字などは消す
+    load_dir(page, imgs)
+    assert page.evaluate("englishOnly('ｌｏｎｇ　ｈａｉｒ，ｃａｆé、girl’s “wave” — ok。\\t黒髪\\nnext 😀')") == (
+        "long hair,cafe,girl's \"wave\" - ok. \nnext ")
+    assert page.evaluate("englishOnly('a\\nb', false)") == "ab"  # 1行の欄は改行も消す
+
+
+def test_fields_for_captions_take_english_only(page, imgs):
+    # キャプションや辞書に入る欄は、打ったそばから英字にそろえ、英字以外を消したときだけ知らせる。IME の変換中は待つ
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png", section="action")
+    editor.fill("girl ｓｍｉｌｅｓ")
+    expect(editor).to_have_value("girl smiles")
+    expect(page.locator("#status")).not_to_have_text(re.compile("英字以外"))  # 半角に直しただけなら知らせない
+    editor.fill("girl smiles 笑顔")
+    expect(editor).to_have_value("girl smiles ")
+    expect(page.locator("#status")).to_have_text("英字以外は入れられません（笑顔 を外しました）")
+
+    editor.fill("")
+    editor.evaluate("el => { el.value = 'あ'; el.dispatchEvent(new InputEvent('input', {isComposing: true})); }")
+    expect(editor).to_have_value("あ")  # 変換中は触らない
+    editor.evaluate("el => el.dispatchEvent(new CompositionEvent('compositionend'))")
+    expect(editor).to_have_value("")  # 確定したら直す
+    page.keyboard.press("Escape")
+
+    open_editor(page, "a.png")
+    field(page, "a.png", "looks").fill("ｓｔａｎｄｉｎｇ")
+    expect(field(page, "a.png", "looks")).to_have_value("standing")
+    page.keyboard.press("Escape")
+
+    for selector in ["#bulkText", "#movePhrase", "#sectionName"]:  # 一括入力（入力欄を開いた行は選択中）・キーを移す・段落を追加
+        page.locator(selector).fill("ｄｏｇ犬")
+        expect(page.locator(selector)).to_have_value("dog")
+    page.once("dialog", lambda dialog: dialog.accept("ｂｏｙ"))  # 段落の改名
+    page.locator('#gridHead th[data-section="guy"] .section-name').dblclick()
+    expect(page.locator('#gridHead th[data-section="boy"]')).to_be_attached()
+
+
 def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):
     load_dir(page, imgs)
     write(page, "a.png", "body: long hair")
@@ -612,7 +652,7 @@ def test_bulk_text_shows_space_marks_and_clears_them(page, imgs):
     page.locator("#bulkText").press_sequentially("long hair")
     marks = page.locator("#bulkForm .ws-marks .sp")
     expect(marks).to_have_count(1)
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(filled(page, "a.png")).to_have_text(["body: long hair"])
     expect(marks).to_have_count(0)  # 欄を空にしたら印も消す
 
@@ -635,7 +675,7 @@ def test_bulk_add_and_remove_on_selected_rows(page, imgs):
     page.select_option("#bulkSection", "girl")
     page.select_option("#bulkKey", "looks")
     page.fill("#bulkText", "standing")
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(page.locator("#status")).to_have_text("3 行に追加しました")
     for name in ["a.png", "b.png", "c.png"]:
         expect(filled(page, name)).to_have_text(["looks: standing"])
@@ -643,7 +683,7 @@ def test_bulk_add_and_remove_on_selected_rows(page, imgs):
     row(page, "b.png").locator("td.meta").click(modifiers=["Control"])
     expect(page.locator("#selectionInfo")).to_have_text("選択 2 行")
     page.fill("#bulkText", "standing")
-    page.click("text=選択行から削除")
+    page.click('#bulkForm button[value="remove"]')
     expect(filled(page, "a.png")).to_have_count(0)
     expect(filled(page, "b.png")).to_have_text(["looks: standing"])
     expect(filled(page, "c.png")).to_have_count(0)
@@ -1058,13 +1098,11 @@ def test_editing_selects_the_row(page, imgs):
     expect(page.locator("#selectionInfo")).to_have_text("選択 1 行")
 
 
-def test_bulk_form_replaces_key_help_only_while_selected(page, imgs):
+def test_bulk_form_shows_only_while_selected(page, imgs):
     load_dir(page, imgs)
-    expect(page.locator("#keyHelp")).to_be_visible()
     expect(page.locator("#bulkForm")).to_be_hidden()
     row(page, "a.png").locator("td.meta").click()
     expect(page.locator("#bulkForm")).to_be_visible()
-    expect(page.locator("#keyHelp")).to_be_hidden()
 
 
 def test_bulk_keys_follow_the_section(page, imgs):
@@ -1090,7 +1128,7 @@ def test_bulk_phrase_suggestions_follow_the_key(page, imgs):
     expect(page.locator("#suggestions li.active")).to_contain_text("long hair")
     page.locator("#bulkText").press("Enter")
     assert page.locator("#bulkText").input_value() == "long hair, "
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     expect(filled(page, "a.png")).to_have_text(["body: long hair"])
 
 
@@ -1107,11 +1145,13 @@ def test_deselect_needs_a_long_press(page, imgs):
     page.wait_for_timeout(1300)
     page.mouse.up()
     expect(page.locator("#status")).to_have_text("選択を解除しました")
-    expect(page.locator("#keyHelp")).to_be_visible()
+    expect(page.locator("#bulkForm")).to_be_hidden()
     expect(page.locator("#gridBody tr.selected")).to_have_count(0)
 
 
 def test_selecting_rows_does_not_shift_the_table(page, imgs):
+    # 行を選ぶと2段目の帯に一括入力が並ぶが、帯は1段のまま（窓の幅 1440px 以上。自動のマーク ①〜⑧ と絞り込みの「自動」を足してから）
+    page.set_viewport_size({"width": 1440, "height": 800})
     load_dir(page, imgs)
     before = page.locator("#grid").bounding_box()["y"]
     row(page, "a.png").locator("td.meta").click()

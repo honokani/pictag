@@ -18,7 +18,8 @@ from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generat
                   pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of,
                       insert_position, name_for_new, pov_choices, template_keys)
-from marks import MANY, ONE, check_many, check_one, clean_many, toggle_many
+from marks import (AUTO, COUNT, MANY, ONE, auto_marks_from_file, check_number, check_one, many_from_file, many_numbers,
+                   many_text, marks_to_file, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
@@ -92,24 +93,30 @@ def section_texts(df):
     sections = section_names(df)
     return [(s, to_text(r[s])) for r in df.to_dict('records') for s in sections]
 
-def table_to_json(df):
-    """表を JSON にする（空の入力は書かない）"""
+def table_to_json(df, auto_marks):
+    """表と自動のマークの設定を JSON にする（空の入力は書かない）"""
     sections = section_names(df)
     return {
         'sections': sections,
         'rows': [{'image': r['サムネイル'], 'is_dead': to_flag(r['is_dead']),
-                  **{column: r[column] for column in ('mark', 'marks') if to_text(r[column])},
+                  **marks_to_file(to_text(r['mark']), to_text(r['marks'])),
                   'texts': {s: r[s] for s in sections if to_text(r[s])}}
                  for r in df.to_dict('records')],
+        'auto_marks': auto_marks,
     }
 
 def table_from_json(data):
     sections = [check_section_name(s) for s in data['sections']]
     rows = [{'サムネイル': r['image'], 'is_dead': bool(r['is_dead']),
-             'mark': r.get('mark') if r.get('mark') in ONE else '', 'marks': clean_many(r.get('marks', '')),
+             'mark': one_from_file(r.get('mark')), 'marks': many_from_file(r.get('marks', '')),
              **{s: to_text(r['texts'].get(s, '')) for s in sections}}
             for r in data['rows']]
     return pd.DataFrame(rows, columns=FIXED_COLUMNS + sections)
+
+def read_auto_marks(path):
+    """保存済みの自動のマークの設定（表が無い・設定が無い（0.4.4 まで）なら、どれも設定なし）"""
+    data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+    return auto_marks_from_file(data.get('auto_marks') if isinstance(data, dict) else None)
 
 def read_table(path):
     """保存済みの表（無ければ空）。読めなければ例外にする（開いて保存すると上書きで消えるため）"""
@@ -175,6 +182,7 @@ class CaptionTool:
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
+        self.auto_marks = [None] * COUNT  # 自動のマークの設定（番号ごとに {section, key, phrase} か None。プロジェクトごと）
         self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
         self.hints = {}  # 画像名 → hint（画像フォルダの同じ名前の .txt）
         self.qwen_hints = {}  # 画像名 → Qwen の答え（data_work/<フォルダ名>/qwen/ の同じ名前の .txt）
@@ -259,8 +267,9 @@ class CaptionTool:
                 f.write(str(self.image_dir))
             logger.info(f"Created tgt_path.txt: {self.image_dir}")
 
-        # 保存済みの表
+        # 保存済みの表と、自動のマークの設定
         self.df = read_table(self.data_out_target / TABLE_FILE)
+        self.auto_marks = read_auto_marks(self.data_out_target / TABLE_FILE)
 
         # 画像ファイル存在チェックと dead/alive 状態管理
         self.manage_dead_alive_status()
@@ -510,8 +519,8 @@ class CaptionTool:
             data.append({
                 'サムネイル': img_file,
                 'is_dead': is_dead,
-                'mark': to_text(existing_row.get('mark', '')),
-                'marks': clean_many(existing_row.get('marks', '')),
+                'mark': one_text(one_number(to_text(existing_row.get('mark', '')))),
+                'marks': many_text(many_numbers(to_text(existing_row.get('marks', '')))),
                 **{s: to_text(existing_row.get(s, '')) for s in sections},
             })
 
@@ -742,13 +751,13 @@ class CaptionTool:
         return True
 
     def set_mark(self, rows, mark):
-        """排他のマーク（A〜D。空なら外す）を複数行に付ける"""
-        return self.mark_rows(rows, 'mark', lambda _: mark, lambda: check_one(mark))
+        """排他のマーク（番号 0〜7。None なら外す）を複数行に付ける"""
+        return self.mark_rows(rows, 'mark', lambda _: one_text(mark), lambda: check_one(mark))
 
     def set_marks(self, rows, mark, on):
-        """複数のマーク（★●▲■）を複数行に付ける・外す"""
+        """複数のマーク（番号 0〜7）を複数行に付ける・外す"""
         def check():
-            check_many(mark)
+            check_number(mark)
             if not isinstance(on, bool):
                 raise ValueError('付けるか外すかの指定が正しくありません')
         return self.mark_rows(rows, 'marks', lambda marks: toggle_many(marks, mark, on), check)
@@ -761,6 +770,27 @@ class CaptionTool:
         if 'サムネイル' in self.df.columns:
             self.df[column] = ''
         return True
+
+    def set_auto_mark(self, index, mark):
+        """自動のマーク（番号 0〜7）の設定を {section（A, B を除いた段落の名前）, key, phrase} にする（None なら外す）
+
+        行には持たない（画面が入力から付ける）。保存で table.json に書く。設定の一覧を返す（失敗は None）
+        """
+        self.last_error = ''
+        try:
+            check_number(index)
+            if mark is not None:
+                if not isinstance(mark, dict):
+                    raise ValueError('自動のマークの設定が正しくありません')
+                key = check_key(mark.get('key'))
+                if not key:
+                    raise ValueError('キーを選んでください')
+                mark = {'section': check_section_name(mark.get('section')), 'key': key, 'phrase': check_phrase(key, mark.get('phrase'))}
+        except ValueError as e:
+            self.fail(str(e))
+            return None
+        self.auto_marks = [mark if i == index else m for i, m in enumerate(self.auto_marks)]
+        return self.auto_marks
 
     def row_texts(self, record, sections):
         """キャプションに使う入力と characters。picture に characters（入力のある人物の段落から）を入れる"""
@@ -783,7 +813,7 @@ class CaptionTool:
         return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
                 'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
                 'hint': self.hints.get(record['サムネイル'], ''), 'qwen_hint': self.qwen_hints.get(record['サムネイル'], ''),
-                'mark': to_text(record['mark']), 'marks': to_text(record['marks']),
+                'mark': one_number(to_text(record['mark'])), 'marks': many_numbers(to_text(record['marks'])),
                 'caption': caption, 'tokens': token_counter.count(caption)}
 
     def row_views(self, indexes):
@@ -823,9 +853,9 @@ class CaptionTool:
             captions = [(i, self.caption_of(r, sections)) for i, r in others]
             if mode == 'random':
                 samples = pick_random_samples([caption for _, caption in captions])
-            else:  # mark: A〜D が同じ行 → ★●▲■ を共有する行 → ほかの行
-                one, many = to_text(records[position]['mark']), set(to_text(records[position]['marks']))
-                marks = {i: (to_text(r['mark']), set(to_text(r['marks']))) for i, r in others}
+            else:  # mark: 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行
+                one, many = to_text(records[position]['mark']), set(many_numbers(to_text(records[position]['marks'])))
+                marks = {i: (to_text(r['mark']), set(many_numbers(to_text(r['marks'])))) for i, r in others}
                 samples = pick_tiered_samples([[(i, c) for i, c in captions if one and marks[i][0] == one],
                                                [(i, c) for i, c in captions if many & marks[i][1]],
                                                captions])
@@ -886,7 +916,7 @@ class CaptionTool:
                 logger.warning(f"Removed {original_len - len(self.df)} duplicate rows before saving")
 
         # 表
-        write_json(self.data_out_target / TABLE_FILE, table_to_json(self.df))
+        write_json(self.data_out_target / TABLE_FILE, table_to_json(self.df, self.auto_marks))
 
         # captionsディレクトリ作成
         self.captions_dir.mkdir(exist_ok=True)
@@ -1013,7 +1043,8 @@ def get_table_data():
               'auto_keys': AUTO_KEYS, 'others_section': OTHERS, 'candidate_groups': CANDIDATE_GROUPS,
               'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'targeted': TARGETED,
                                'pov': pov_choices(caption_tool.subjects())},
-              'mark_choices': {'one': ONE, 'many': MANY}, 'qwen': bool(app.config.get('QWEN_URL'))}
+              'mark_choices': {'one': ONE, 'many': MANY, 'auto': AUTO}, 'auto_marks': caption_tool.auto_marks,
+              'qwen': bool(app.config.get('QWEN_URL'))}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})
 
@@ -1166,7 +1197,7 @@ def set_choice_on_rows():
 
 @app.route('/set_mark', methods=['POST'])
 def set_mark():
-    """排他のマーク（{rows, mark}。mark は A〜D、空なら外す）"""
+    """排他のマーク（{rows, mark}。mark は番号 0〜7（記号は marks.py の ONE）、null なら外す）"""
     data = request.get_json() or {}
     rows = data.get('rows')
     if not caption_tool.set_mark(rows, data.get('mark')):
@@ -1175,7 +1206,7 @@ def set_mark():
 
 @app.route('/set_marks', methods=['POST'])
 def set_marks():
-    """複数のマーク（{rows, mark, on}。mark は ★●▲■）"""
+    """複数のマーク（{rows, mark, on}。mark は番号 0〜7（記号は marks.py の MANY））"""
     data = request.get_json() or {}
     rows = data.get('rows')
     if not caption_tool.set_marks(rows, data.get('mark'), data.get('on')):
@@ -1188,6 +1219,15 @@ def clear_marks():
     data = request.get_json() or {}
     success = caption_tool.clear_marks(data.get('column'))
     return jsonify({'success': success, 'message': caption_tool.last_error})
+
+@app.route('/set_auto_mark', methods=['POST'])
+def set_auto_mark():
+    """自動のマークの設定（{index: 0〜7, mark: {section, key, phrase} か null}）。プロジェクトごと（保存で table.json に書く）"""
+    data = request.get_json() or {}
+    marks = caption_tool.set_auto_mark(data.get('index'), data.get('mark'))
+    if marks is None:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'auto_marks': marks})
 
 @app.route('/add_phrase', methods=['POST'])
 def add_phrase_to_rows():

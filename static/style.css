@@ -202,15 +202,31 @@ th .side-view { padding: 0 6px; font-size: 12px; line-height: 1.6; color: #555; 
 th .side-view + .side-view { margin-left: 2px; }
 th .side-view.on { background: #1f1f1f; border-color: #1f1f1f; color: #fff; cursor: default; }
 
-td.marks { width: 63px; }  /* ボタン2つ分（24px × 2 + 間 2px + 左右の余白） */
-.mark-grid { display: grid; grid-template-columns: repeat(2, 24px); grid-template-rows: repeat(4, auto); grid-auto-flow: column; gap: 2px; }
+td.marks { width: 89px; }  /* ボタン3つ分（24px × 3 + 間 2px × 2 + 左右の余白） */
+.mark-grid { display: grid; grid-template-columns: repeat(3, 24px); grid-template-rows: repeat(8, auto); grid-auto-flow: column; gap: 2px; }
 .mark-btn { width: 24px; padding: 0; font-size: 12px; line-height: 1.6; color: #888; border-color: #ccc; border-radius: 3px; }
 .mark-btn.on { color: #fff; font-weight: 700; }
-.mark-btn.on[data-mark="A"] { background: #d32f2f; border-color: #d32f2f; }
-.mark-btn.on[data-mark="B"] { background: #1976d2; border-color: #1976d2; }
-.mark-btn.on[data-mark="C"] { background: #388e3c; border-color: #388e3c; }
-.mark-btn.on[data-mark="D"] { background: #ef6c00; border-color: #ef6c00; }
+/* 排他のマークの色（番号ごと。A〜H） */
+.mark-btn.on[data-kind="one"][data-mark="0"] { background: #d32f2f; border-color: #d32f2f; }
+.mark-btn.on[data-kind="one"][data-mark="1"] { background: #1976d2; border-color: #1976d2; }
+.mark-btn.on[data-kind="one"][data-mark="2"] { background: #388e3c; border-color: #388e3c; }
+.mark-btn.on[data-kind="one"][data-mark="3"] { background: #ef6c00; border-color: #ef6c00; }
+.mark-btn.on[data-kind="one"][data-mark="4"] { background: #c2185b; border-color: #c2185b; }
+.mark-btn.on[data-kind="one"][data-mark="5"] { background: #00838f; border-color: #00838f; }
+.mark-btn.on[data-kind="one"][data-mark="6"] { background: #6d4c41; border-color: #6d4c41; }
+.mark-btn.on[data-kind="one"][data-mark="7"] { background: #455a64; border-color: #455a64; }
 .mark-btn.on[data-kind="many"] { background: #6a1b9a; border-color: #6a1b9a; }
+/* 自動のマーク（行。押せない）: 設定した語句のある行は色付き */
+.mark-auto { display: block; text-align: center; font-size: 12px; line-height: 1.6; color: #bbb; border: 1px solid #e3e3e3; border-radius: 3px; cursor: default; user-select: none; }
+.mark-auto.on { background: #00796b; border-color: #00796b; color: #fff; font-weight: 700; }
+/* 帯の自動のマークの設定（右クリックで語句を選ぶ。設定の無いものは薄く）と、設定の欄（押したボタンの下に開く） */
+.auto-marks { gap: 2px; color: #666; font-size: 12px; }
+.auto-mark { width: 24px; padding: 0; font-size: 13px; line-height: 1.6; }
+.auto-mark.unset { color: #bbb; }
+.auto-mark-form { position: fixed; z-index: 9; padding: 6px 8px; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+#autoMarkPhrase { width: 150px; }
+#filterAuto { max-width: 90px; }  /* 選択肢に語句が入るので、長い語句でも帯の幅を変えない */
+#autoMarkSection, #autoMarkKey { max-width: 100px; }
 tr.filtered { display: none; }
 .key-help { color: #666; font-size: 12px; }
 .clear-marks { margin-left: auto; }

@@ -50,13 +50,19 @@ def spare_after_close_up(page):
     return picture["x"] + picture["width"] - 1 - (last["x"] + last["width"])
 
 
-def test_marks_are_two_columns_of_four(page, imgs):
+def test_marks_are_three_columns_of_eight(page, imgs):
     load_dir(page, imgs)
-    box = {m: td(page, f'.mark-btn[data-mark="{m}"]').bounding_box() for m in ["A", "B", "D", "★", "■"]}
-    assert abs(box["A"]["y"] - box["★"]["y"]) < 0.5 and box["★"]["x"] > box["A"]["x"]  # 左の列が A〜D、右の列が ★●▲■
-    assert box["A"]["y"] < box["B"]["y"] < box["D"]["y"]
-    assert abs(box["D"]["y"] - box["■"]["y"]) < 0.5
-    assert width(td(page, "td.marks")) <= 64  # ボタン2つ分
+
+    def box(selector):
+        return td(page, selector).bounding_box()
+
+    a, star, one = box('.mark-btn[data-kind="one"][data-mark="0"]'), box('.mark-btn[data-kind="many"][data-mark="0"]'), box('.mark-auto[data-mark="0"]')
+    h, eight = box('.mark-btn[data-kind="one"][data-mark="7"]'), box('.mark-auto[data-mark="7"]')
+    assert abs(a["y"] - star["y"]) < 0.5 and abs(a["y"] - one["y"]) < 0.5  # 左が A〜H、真ん中が ★〜♠、右が ①〜⑧
+    assert a["x"] < star["x"] < one["x"]
+    assert a["y"] < box('.mark-btn[data-kind="one"][data-mark="1"]')["y"] < h["y"]
+    assert abs(h["y"] - eight["y"]) < 0.5
+    assert width(td(page, "td.marks")) <= 90  # ボタン3つ分
 
 
 def test_picture_column_ends_10px_after_close_up_and_keeps_its_width_while_editing(page, imgs):
@@ -90,11 +96,13 @@ def test_token_column_shows_the_count_over_the_limit_without_the_file_name(page,
 
 
 def test_thumbnail_is_a_square_as_tall_as_the_picture_cell(page, imgs):
+    # picture の欄の中身（キーの名前の行からボタンの下まで）と同じ高さの正方形。マークの列（8 段）の方が高い行では、行はサムネイルより高い
     load_dir(page, imgs)
     img = td(page, "td.thumb img").bounding_box()
-    row = page.locator('#gridBody tr[data-name="a.png"]').bounding_box()
+    text = td(page, 'td.cell[data-section="picture"] .text').bounding_box()
+    choices = td(page, 'td.cell[data-section="picture"] .choices').bounding_box()
     assert abs(img["width"] - img["height"]) < 0.5
-    assert abs(img["height"] + 9 - row["height"]) <= 1.5  # 上下の余白 8px と下の枠線 1px
+    assert abs(img["height"] - (choices["y"] + choices["height"] - text["y"])) <= 1.5
 
 
 def test_thumbnail_keeps_its_size_when_picture_values_are_written(page, imgs):
