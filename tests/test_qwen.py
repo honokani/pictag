@@ -166,6 +166,23 @@ def test_fill_text_treats_none_and_nan_as_no_tag():
     assert fill_text("", ["looks: Non presented", "body: (non presented)."], SUBJECT) == ""
 
 
+@pytest.mark.parametrize("line", [
+    "extra: no extra elements", "extra: No other details.", "extra: no notable features", "extra: no elements",
+    "view: no specific view", "vibes: no particular vibes", "place: no specific place",
+    "extra: nothing", "extra: N/A", "extra: not applicable", "extra: unknown",
+])
+def test_fill_section_drops_answers_that_only_say_nothing(line):
+    # 「無い」を言っているだけの答え（no + あいまいな語 + 物・そのキーの名前、nothing・n/a など）も、タグが無いものとして入れない
+    assert fill_text("", [line], PICTURE) == ""
+
+
+def test_fill_section_keeps_visible_absence():
+    # 見て分かる「無い」（no shoes・no glasses・no clothes）は残す。捨てるのは「無い」の語句だけ
+    assert fill_text("", ["clothes: no shoes, no clothes", "looks: no glasses"], SUBJECT) == (
+        "looks: no glasses\nclothes: no shoes, no clothes")
+    assert fill_text("", ["extra: no extra elements, speech bubble"], PICTURE) == "extra: speech bubble"
+
+
 def test_fill_section_returns_what_it_put_in():
     text, added = fill_section("looks: sitting", ["looks: standing", "clothes: red dress", "girl waves."], SUBJECT)
     assert text == "looks: sitting\nclothes: red dress\ngirl waves."
