@@ -34,7 +34,7 @@ header.bar { flex-wrap: nowrap; align-items: flex-start; }
 .bar label.grow { flex: 1 1 320px; }
 .bar label.grow input { flex: 1; }
 .group { display: flex; align-items: center; gap: 6px; }
-.bulk[hidden] { display: none; }
+.bulk.idle { visibility: hidden; }  /* 行を選んでいないとき: 見せないが場所は取る（2段目の帯の高さを変えない。hidden は場所ごと消える） */
 
 input[type=text], select, textarea {
     font: inherit;
@@ -44,9 +44,9 @@ input[type=text], select, textarea {
     background: #fff;
 }
 
-#bulkText { width: 170px; }
+#bulkText { width: 150px; }
 #bulkSection, #bulkKey { max-width: 120px; }
-/* 一括入力は2段に積み、部品は絞り込みのボタンと同じ高さ（21px）・文字（12px）。帯の高さは絞り込みの2段で決まり、行を選んでも変わらない */
+/* 一括入力（2段目の帯の右端）は2段に積み、部品は絞り込みのボタンと同じ高さ（21px）・文字（12px）。1440px で2段目のほかの道具と同じ行に収める */
 #bulkForm { flex-direction: column; align-items: flex-start; gap: 1px; }
 .bulk-row { display: flex; align-items: center; gap: 6px; }
 #bulkForm select, #bulkForm input, #bulkForm button { box-sizing: border-box; height: 21px; padding-top: 0; padding-bottom: 0; font-size: 12px; }

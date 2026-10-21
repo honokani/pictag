@@ -1319,7 +1319,8 @@ function paintSelection() {
 
 function updateSelectionInfo() {
     $('selectionInfo').textContent = `選択 ${state.selected.size} 行`;
-    $('bulkForm').hidden = state.selected.size === 0;  // 行を選んでいる間だけ、一括入力を出す
+    $('bulkForm').classList.toggle('idle', state.selected.size === 0);  // 行を選んでいる間だけ、一括入力と選択解除を出す
+    $('deselectButton').hidden = state.selected.size === 0;
 }
 
 // ---- 操作 ----
