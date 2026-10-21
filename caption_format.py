@@ -8,7 +8,14 @@
 
 - 空の段落・語句の無い行は出さない。行頭の「-」と前後の空白は無視する
 - キー付きの行は、末尾の語が同じ語句をまとめる（long hair, black hair → long black hair）。キーなしの文はまとめない
+- 文（. ! ? で終わる語句）はまとめず、その後ろは空白でつなぐ（mirror: a., b. → mirror: a. b.）。
+  文の終わりのすぐ後ろに語が続いていれば、空白を入れる（mirror.ball → mirror. ball）
 """
+import re
+from functools import reduce
+
+SENTENCE_END = ('.', '!', '?')
+GLUED = re.compile(r'(?<=[a-z]{2}[.!?])(?=[a-z])')  # 2文字以上の語の文の終わりと、続く小文字の間（e.g. や 1.5 は除く）
 
 
 def group_in_order(pairs):
@@ -38,10 +45,14 @@ def parse_lines(text):
     return [(key, phrases) for key, phrases in map(parse_line, text.splitlines()) if phrases]
 
 
+def ends_sentence(phrase):
+    return phrase.endswith(SENTENCE_END)
+
+
 def tail_group(phrase):
-    """末尾の語でまとめるためのキー（1語の語句はまとめない）"""
+    """末尾の語でまとめるためのキー（1語の語句と、文はまとめない）"""
     words = phrase.split()
-    return ('tail', words[-1].lower()) if len(words) >= 2 else ('single', phrase)
+    return ('tail', words[-1].lower()) if len(words) >= 2 and not ends_sentence(phrase) else ('single', phrase)
 
 
 def merge_group(phrases):
@@ -56,8 +67,14 @@ def merge_same_tail(phrases):
     return [merge_group(group) for _, group in group_in_order((tail_group(p), p) for p in phrases)]
 
 
+def join_phrases(phrases):
+    """語句をカンマでつなぐ。文の後ろは空白でつなぐ（a., b → a. b）"""
+    return reduce(lambda text, p: f"{text}{' ' if ends_sentence(text) else ', '}{p}", phrases[1:], phrases[0]) if phrases else ''
+
+
 def render_line(key, phrases):
-    return f"{key}: {', '.join(merge_same_tail(phrases))}" if key else ', '.join(phrases)
+    phrases = [GLUED.sub(' ', phrase) for phrase in phrases]
+    return f"{key}: {join_phrases(merge_same_tail(phrases))}" if key else join_phrases(phrases)
 
 
 def render_section(name, text):
