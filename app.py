@@ -20,7 +20,7 @@ from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generat
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of, display_names,
                       insert_position, name_for_new, pov_choices, pov_names, template_keys)
 from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
-                   many_numbers, many_text, marks_to_file, one_from_file, one_number, one_text, toggle_many)
+                   many_numbers, many_text, marks_to_file, matches_pattern, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
@@ -809,6 +809,62 @@ class CaptionTool:
         self.auto_marks = [mark if i == index else m for i, m in enumerate(self.auto_marks)]
         return self.auto_marks
 
+    def word_mark_phrase(self, mark):
+        """単語のマークで行に入れる語句: * が無ければその語句。* があれば、合う語句（その段落（A, B も）のそのキー）のうち
+        使用回数が最も多いもの（同数なら名前の順で先。候補の一覧と同じ並び。共用辞書だけの語句は 0 回）。無ければ None
+        """
+        if '*' not in mark['phrase']:
+            return mark['phrase']
+
+        def fits(section, key, phrase):
+            return base_name(section) == mark['section'] and key == mark['key'] and matches_pattern(mark['phrase'], phrase)
+
+        usage, _ = self.usage()
+        counts = Counter()
+        for (section, key, phrase), n in usage.items():
+            if fits(section, key, phrase):
+                counts[phrase] += n
+        for entry in self.shared['phrases']:
+            if fits(entry['section'], entry['key'], entry['phrase']):
+                counts[entry['phrase']] += 0
+        return min(counts, key=lambda p: (-counts[p], p)) if counts else None
+
+    def add_word_mark(self, rows, index):
+        """行の ①〜⑯ を押す: 単語のマーク（番号 index）の語句（word_mark_phrase）を、その段落のそのキーに足す（キーなしは文の行）
+
+        入れる段落は、その段落（A, B を除いた名前）のうち、その行で入力のあるものが1つならそれ、ほかは表で先のもの
+        （Qwen の答えの当て方と同じ）。付いている行と、同じグループの別の語句がある行には入れない。
+        1行だけに入れたときは、その行の書き換えとして時刻を付ける。(入れた語句, 入れなかった行の数) を返す（失敗は False）
+        """
+        self.last_error = ''
+        try:
+            check_number(index, AUTO_COUNT)
+        except ValueError as e:
+            return self.fail(str(e))
+        if not isinstance(rows, list) or not rows or not all(self.is_row(r) for r in rows):
+            return self.fail('行の指定が正しくありません')
+        mark = self.auto_marks[index]
+        if mark is None:
+            return self.fail(f'{AUTO[index]} の語句が決まっていません（帯の {AUTO[index]} を右クリックで決めます）')
+        sections = section_names(self.df)
+        if not any(base_name(s) == mark['section'] for s in sections):
+            return self.fail(f'段落「{mark["section"]}」がありません')
+        phrase = self.word_mark_phrase(mark)
+        if phrase is None:
+            return self.fail(f'{AUTO[index]} の語句（{mark["phrase"]}）に合う語句がまだありません')
+        targets = list(dict.fromkeys(rows))
+        put = []
+        for r in targets:
+            texts = {s: to_text(self.df.at[r, s]) for s in sections}
+            section = match_section(mark['section'], sections, [s for s in sections if phrases_of(texts[s])])
+            if index in auto_marks_of(texts, self.auto_marks) or blocked_by(self.shared['groups'], texts[section], mark['key'], phrase):
+                continue
+            self.df.at[r, section] = add_phrase(texts[section], mark['key'], phrase)
+            put.append(r)
+        if len(targets) == 1 and put:
+            self.mark_edited(put[0])
+        return phrase, len(targets) - len(put)
+
     def row_texts(self, record, sections):
         """キャプションに使う入力・characters・書き出す段落の名前 {段落: 名前}。picture に characters（入力のある人物の段落から）を入れる
 
@@ -1266,6 +1322,17 @@ def set_auto_mark():
     if marks is None:
         return jsonify({'success': False, 'message': caption_tool.last_error})
     return jsonify({'success': True, 'auto_marks': marks})
+
+@app.route('/add_word_mark', methods=['POST'])
+def add_word_mark():
+    """行の ①〜⑯ を押す（{rows, index}）: その番号の語句を行に入れる。入れた語句・入れなかった行の数と、行を返す"""
+    data = request.get_json() or {}
+    rows = data.get('rows')
+    result = caption_tool.add_word_mark(rows, data.get('index'))
+    if not result:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    phrase, skipped = result
+    return jsonify({'success': True, 'rows': caption_tool.row_views(rows), 'phrase': phrase, 'skipped': skipped})
 
 @app.route('/add_phrase', methods=['POST'])
 def add_phrase_to_rows():

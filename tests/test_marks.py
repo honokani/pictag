@@ -226,3 +226,89 @@ def test_word_marks_can_be_set_for_sections_without_keys(api, imgs):
     res = set_auto(api, 0, {"section": "action", "key": "", "phrase": "*spread arms*"})
     assert res["success"], res
     assert res["auto_marks"][0] == {"section": "action", "key": "", "phrase": "*spread arms*"}
+
+
+# ---- 行の ①〜⑯ を押す（その番号の語句を行に入れる） ----
+
+SPREAD = {"section": "action", "key": "", "phrase": "*spread arms*"}
+
+
+def put_word(api, rows, index):
+    return api.post("/add_word_mark", {"rows": rows, "index": index})
+
+
+def test_pressing_a_row_word_mark_puts_its_phrase_in_the_row(api, imgs):
+    # 行の ① を押すと、① の語句をその段落のそのキーに足す（① が付く）。付いている行には何もしない。1行だけなら、その行の書き換え
+    api.load(imgs)
+    set_auto(api, 0, SMILE)
+    a = api.row_index("a.png")
+    api.write(a, "looks: long hair")
+    res = put_word(api, [a], 0)
+    assert res["success"] and res["phrase"] == "smile" and res["skipped"] == 0, res
+    assert res["rows"][0]["texts"]["girl"] == "looks: long hair, smile"
+    stamp = res["rows"][0]["edited_at"]
+    res = put_word(api, [a], 0)
+    assert res["skipped"] == 1 and res["rows"][0]["texts"]["girl"] == "looks: long hair, smile"
+    assert res["rows"][0]["edited_at"] == stamp
+
+
+def test_a_word_mark_with_a_star_puts_the_most_used_matching_sentence(api, imgs):
+    # * を含む語句は、合う語句のうち使用回数が最も多いもの。キーなしは文の行として足す
+    api.load(imgs)
+    a, b, c = (api.row_index(n) for n in ("a.png", "b.png", "c.png"))
+    api.write(b, "girl spread arms wildly", section="action")
+    api.write(c, "girl spread arms wildly\ngirl spread arms", section="action")
+    api.write(a, "girl sits", section="action")
+    set_auto(api, 0, SPREAD)
+    res = put_word(api, [a], 0)
+    assert res["phrase"] == "girl spread arms wildly"
+    assert res["rows"][0]["texts"]["action"] == "girl sits\ngirl spread arms wildly"
+
+
+def test_a_tie_puts_the_phrase_that_comes_first_in_the_list(api, imgs):
+    # 同数なら、候補の一覧で上（名前の順で先）のもの
+    api.load(imgs)
+    b, c = api.row_index("b.png"), api.row_index("c.png")
+    api.write(b, "girl spread arms wide", section="action")
+    api.write(c, "girl spread arms up", section="action")
+    set_auto(api, 0, SPREAD)
+    assert put_word(api, [api.row_index("a.png")], 0)["phrase"] == "girl spread arms up"
+
+
+def test_a_word_mark_goes_to_the_section_with_input_in_each_row(api, imgs):
+    # girl A・girl B があれば、その行で入力のある girl が1つならそれ、ほかは表で先の girl A。複数行は書き換えとして数えない
+    api.load(imgs)
+    api.add_section("girl")  # girl → girl A、足したのは girl B
+    set_auto(api, 0, SMILE)
+    a, b = api.row_index("a.png"), api.row_index("b.png")
+    api.write(a, "looks: sitting", section="girl B")
+    rows = {r["サムネイル"]: r for r in put_word(api, [a, b], 0)["rows"]}
+    assert rows["a.png"]["texts"]["girl B"] == "looks: sitting, smile" and rows["a.png"]["texts"]["girl A"] == ""
+    assert rows["b.png"]["texts"]["girl A"] == "looks: smile"
+    assert rows["b.png"]["edited_at"] == ""
+
+
+def test_a_word_mark_is_not_put_where_another_phrase_of_its_group_is(api, imgs):
+    # 「1つだけ」のグループの別の語句がある行には入れない（一括入力と同じ）。入れなかった行の数を返す
+    api.load(imgs)
+    a, b, c = (api.row_index(n) for n in ("a.png", "b.png", "c.png"))
+    api.write(a, "looks: frown")
+    api.write(c, "looks: smile")  # グループにできるのは使っている語句だけ
+    assert api.post("/group_phrases", {"key": "looks", "phrases": ["smile", "frown"]})["success"]
+    set_auto(api, 0, SMILE)
+    res = put_word(api, [a, b], 0)
+    assert res["skipped"] == 1
+    rows = {r["サムネイル"]: r for r in res["rows"]}
+    assert rows["a.png"]["texts"]["girl"] == "looks: frown" and rows["b.png"]["texts"]["girl"] == "looks: smile"
+
+
+@pytest.mark.parametrize("index, mark, message", [
+    (1, None, "語句"),  # 語句を決めていない番号
+    (0, SPREAD, "合う語句"),  # * に合う語句がまだ無い
+])
+def test_a_word_mark_without_a_phrase_to_put_is_rejected(api, imgs, index, mark, message):
+    api.load(imgs)
+    if mark:
+        set_auto(api, index, mark)
+    res = put_word(api, [api.row_index("a.png")], index)
+    assert res["success"] is False and message in res["message"]
