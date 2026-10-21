@@ -76,14 +76,17 @@ def test_parse_caption_splits_sections_and_lines():
                                    ("girl A", ["looks: standing", "clothes: red dress"])]
 
 
-@pytest.mark.parametrize("name, sections, expected", [
-    ("girl", ["picture", "girl", "guy"], "girl"),
-    ("girl A", ["picture", "girl", "guy"], "girl"),  # A, B を除いた名前で1つに決まる
-    ("girl", ["picture", "girl A", "girl B"], None),  # 決まらない
-    ("stick figure", ["picture", "girl"], None),
+@pytest.mark.parametrize("name, sections, present, expected", [
+    ("girl", ["picture", "girl", "guy"], [], "girl"),
+    ("girl A", ["picture", "girl", "guy"], [], "girl"),  # A, B を除いた名前で1つに決まる
+    # 1つの行の人は A, B を除いた名前でも書き出す（girl A だけ → girl）ので、girl は「その行で入力のある girl が1つならそれ」
+    ("girl", ["picture", "girl A", "girl B"], ["girl B"], "girl B"),
+    ("girl", ["picture", "girl A", "girl B"], [], "girl A"),  # 無ければ（2つあっても）表で先のもの
+    ("girl", ["picture", "girl A", "girl B"], ["girl A", "girl B"], "girl A"),
+    ("stick figure", ["picture", "girl"], [], None),
 ])
-def test_match_section(name, sections, expected):
-    assert match_section(name, sections) == expected
+def test_match_section(name, sections, present, expected):
+    assert match_section(name, sections, present) == expected
 
 
 def test_fill_text_fills_keys_without_values_and_keeps_the_rest():

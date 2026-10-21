@@ -16,8 +16,8 @@ from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
 from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, match_section, parse_caption,
                   pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
-from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of,
-                      insert_position, name_for_new, pov_choices, template_keys)
+from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of, display_names,
+                      insert_position, name_for_new, pov_choices, pov_names, template_keys)
 from marks import (AUTO, COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
                    many_numbers, many_text, marks_to_file, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
@@ -791,23 +791,28 @@ class CaptionTool:
         return self.auto_marks
 
     def row_texts(self, record, sections):
-        """キャプションに使う入力と characters。picture に characters（入力のある人物の段落から）を入れる"""
+        """キャプションに使う入力・characters・書き出す段落の名前 {段落: 名前}。picture に characters（入力のある人物の段落から）を入れる
+
+        人物などの段落は、同じ名前（A, B を除く）で入力のある段落が1つなら、A, B を除いた名前で書き出す（guy A だけ → guy）
+        """
         texts = {s: to_text(record[s]) for s in sections}
-        characters = characters_of([(s, texts[s]) for s in sections if s not in FIXED_SECTIONS and phrases_of(texts[s])])
+        present = [s for s in sections if s not in FIXED_SECTIONS and phrases_of(texts[s])]
+        names = {**{s: s for s in sections}, **display_names(present)}
+        characters = characters_of([(names[s], texts[s]) for s in present])
         keys = self.shared['templates'].get('picture', [])
         if 'picture' in texts and 'characters' in keys:
             texts['picture'] = with_line(texts['picture'], 'characters', characters, keys)
-        return texts, characters
+        return texts, characters, names
 
     def caption_of(self, record, sections):
         """1行のキャプション（書き出す文面）"""
-        texts, _ = self.row_texts(record, sections)
-        return render_caption([(s, texts[s]) for s in sections])
+        texts, _, names = self.row_texts(record, sections)
+        return render_caption([(names[s], texts[s]) for s in sections])
 
     def row_view(self, index, record, sections):
         """画面に渡す1行（入力・characters・キャプション・トークン数・hint・Qwen の答え）"""
-        texts, characters = self.row_texts(record, sections)
-        caption = render_caption([(s, texts[s]) for s in sections])
+        texts, characters, names = self.row_texts(record, sections)
+        caption = render_caption([(names[s], texts[s]) for s in sections])
         return {'index': int(index), 'サムネイル': record['サムネイル'], 'is_dead': to_flag(record['is_dead']),
                 'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
                 'hint': self.hints.get(record['サムネイル'], ''), 'qwen_hint': self.qwen_hints.get(record['サムネイル'], ''),
@@ -873,9 +878,10 @@ class CaptionTool:
         before = {s: to_text(self.df.at[row_index, s]) for s in sections}
         drafts = self.read_qwen_drafts(name)
         texts = {s: clear_drafts(before[s], drafts.get(s, {})) for s in sections}
+        present = [s for s in sections if phrases_of(texts[s])]  # 答えの guy: は、この行で入力のある guy（1つなら）に当てる
         added = {}
         for block, lines in parse_caption(answer):
-            section = match_section(block, sections)
+            section = match_section(block, sections, present)
             if section is None:
                 continue
             texts[section], put = fill_section(texts[section], lines, keys[section])
@@ -929,8 +935,7 @@ class CaptionTool:
         for record in self.df.to_dict('records'):
             folder = self.captions_dead_dir if to_flag(record['is_dead']) else self.captions_dir
             caption_path = folder / f"{Path(record['サムネイル']).stem}{CAPTION_EXT}"
-            texts, _ = self.row_texts(record, sections)
-            caption_path.write_text(render_caption([(s, texts[s]) for s in sections]), encoding='utf-8', newline='\n')
+            caption_path.write_text(self.caption_of(record, sections), encoding='utf-8', newline='\n')
 
         logger.info(f"Data saved: {len(self.df)} rows, {len(sections)} sections")
 
@@ -1045,7 +1050,7 @@ def get_table_data():
     common = {'token_limit': TOKEN_LIMIT, 'templates': caption_tool.shared['templates'], 'fixed_sections': FIXED_SECTIONS,
               'auto_keys': AUTO_KEYS, 'others_section': OTHERS, 'candidate_groups': CANDIDATE_GROUPS,
               'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'targeted': TARGETED,
-                               'pov': pov_choices(caption_tool.subjects())},
+                               'pov': pov_choices(pov_names(caption_tool.subjects()))},
               'mark_choices': {'one': ONE, 'many': MANY, 'auto': AUTO}, 'auto_marks': caption_tool.auto_marks,
               'qwen': bool(app.config.get('QWEN_URL'))}
     if 'サムネイル' not in df.columns:

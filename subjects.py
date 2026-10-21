@@ -1,5 +1,6 @@
 """人物などの段落（girl / guy A / dog …）: 自動の命名、characters の自動計算、view の選択肢"""
 import re
+from collections import Counter
 
 from caption_format import group_in_order, phrases_of
 
@@ -33,6 +34,15 @@ def base_name(section):
     """guy A → guy（A〜Z の付かない名前はそのまま）"""
     match = LETTERED.match(section)
     return match.group(1) if match else section
+
+
+def display_names(present):
+    """その行で入力のある人物などの段落の、書き出す名前 {段落: 名前}（キャプションの段落名と characters）
+
+    同じ名前（A, B を除く）の段落が1つだけなら、A, B を除いた名前（guy A だけ → guy、girl B だけ → girl）。2つ以上ならそのまま
+    """
+    counts = Counter(base_name(s) for s in present)
+    return {s: base_name(s) if counts[base_name(s)] == 1 else s for s in present}
 
 
 def plural(word, count):
@@ -105,3 +115,11 @@ def pov_choices(subjects):
         return {'emoji': EMOJI.get(base, OTHER_EMOJI), 'label': label, 'tone': tone_of(base), 'phrase': f'{section} POV'}
 
     return [THIRD_PERSON, *(choice(s) for s in subjects if base_name(s) != OTHERS)]
+
+
+def pov_names(subjects):
+    """👀 の選択肢にする名前（表の並び）: 段落ごとに、A, B を除いた名前と段落の名前（guy A, guy B → guy, guy A, guy B）
+
+    入力のある段落が1つの種類は、その行では A, B を除いた名前で書くため。行ごとにどれを出すかは画面が決める
+    """
+    return list(dict.fromkeys(name for s in subjects for name in (base_name(s), s)))

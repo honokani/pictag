@@ -250,6 +250,27 @@ def test_table_data_names_else_and_leaves_it_out_of_pov(api, imgs):
     assert [c["phrase"] for c in body["view_choices"]["pov"]] == ["third-person POV", "girl POV", "guy POV"]
 
 
+def test_a_lone_lettered_person_is_written_without_the_letter(api, tool, imgs):
+    # 表に guy A・guy B があっても、行で入力のある guy が1人なら、その行のキャプションは guy:（characters は 1 guy）。
+    # 2人なら今までどおり guy A: と guy B:。保存する .caption も同じ。👀 の選択肢は全部の名前（行ごとの出し分けは画面）
+    api.load(imgs)
+    api.add_section("guy")  # guy → guy A、足したのは guy B
+    a, b = api.row_index("a.png"), api.row_index("b.png")
+    api.write(a, "looks: standing")
+    api.write(a, "looks: sitting", section="guy A")
+    api.write(b, "looks: sitting", section="guy A")
+    api.write(b, "looks: smile", section="guy B")
+    rows = {r["サムネイル"]: r for r in api.rows()}
+    assert "\n\nguy:\n  - looks: sitting" in rows["a.png"]["caption"]
+    assert rows["a.png"]["characters"] == "1 girl + 1 guy"
+    assert "\n\nguy A:\n" in rows["b.png"]["caption"] and "\n\nguy B:\n" in rows["b.png"]["caption"]
+    assert rows["b.png"]["characters"] == "2 guys (guy A, guy B)"
+    api.save()
+    assert "\n\nguy:\n  - looks: sitting" in (tool.captions_dir / "a.caption").read_text(encoding="utf-8")
+    phrases = [c["phrase"] for c in api.table()["view_choices"]["pov"]]
+    assert phrases == ["third-person POV", "girl POV", "guy POV", "guy A POV", "guy B POV"]
+
+
 def test_table_data_has_groups_that_share_phrase_suggestions(api, imgs):
     # 語句の候補は同じ種類の段落のものだけ。女性・男性はそれぞれ1つの組にまとめる（ほかは種類ごと）
     api.load(imgs)

@@ -884,6 +884,8 @@ def test_adding_girl_twice_names_them_a_and_b(page, imgs):
     page.click("#sectionForm button")
     expect(page.locator("#gridHead .section-name")).to_have_count(5)
     assert section_names(page) == ["picture", "action", "girl A", "girl B", "guy"]  # 同じ種類は隣に並べる
+    write(page, "a.png", "looks: smile", section="girl A")  # 入力のある girl が2人の行は、A, B の付いたボタン
+    write(page, "a.png", "looks: sitting", section="girl B")
     expect(choice(page, "a.png", "girl B POV")).to_have_text("👧 B")
     pov = cell(page, "a.png", "picture").locator(".choice-row.pov .choice")
     expect(pov).to_have_text(["☓", "👥", "👧 A", "👧 B", "👨"])  # third-person が先頭
@@ -944,6 +946,8 @@ def test_pov_buttons_show_letters_and_are_colored_by_gender(page, imgs):
     expect(choice(page, "a.png", "guy POV")).to_have_text("👨")  # guy は最初からある
     page.fill("#sectionName", "guy")
     page.click("#sectionForm button")
+    write(page, "a.png", "looks: sitting", section="guy A")  # 入力のある guy が2人の行は、A, B の付いたボタン
+    write(page, "a.png", "looks: smile", section="guy B")
     expect(choice(page, "a.png", "guy B POV")).to_have_text("👨 B")
     expect(choice(page, "a.png", "third-person POV")).to_have_text("👥")
 
@@ -952,6 +956,26 @@ def test_pov_buttons_show_letters_and_are_colored_by_gender(page, imgs):
     expect(guy).to_have_class(re.compile(r"\bmale\b"))
     background = "el => getComputedStyle(el).backgroundColor"
     assert girl.evaluate(background) != guy.evaluate(background)
+
+
+def test_pov_buttons_name_a_lone_person_without_the_letter(page, imgs):
+    # 表に guy A・guy B があっても、その行で入力のある guy が1人（か0人）なら 👀 は guy POV だけ（キャプションも guy:）
+    load_dir(page, imgs)
+    page.fill("#sectionName", "guy")
+    page.click("#sectionForm button")
+    write(page, "a.png", "looks: sitting", section="guy A")
+
+    def pov(name):
+        return cell(page, name, "picture").locator(".choice-row.pov .choice")
+
+    expect(pov("a.png")).to_have_text(["☓", "👥", "👧", "👨"])
+    expect(pov("b.png")).to_have_text(["☓", "👥", "👧", "👨"])  # guy の入力が無い行も
+    choice(page, "a.png", "guy POV").click()
+    expect(picture_view(page, "a.png")).to_have_text("view: guy POV")
+    write(page, "a.png", "looks: smile", section="guy B")  # 2人目を書くと、A, B の付いたボタン
+    expect(pov("a.png")).to_have_text(["☓", "👥", "👧", "👨 A", "👨 B"])
+    choice(page, "a.png", "guy B POV").click()  # POV は1つだけ（前の guy POV は外れる）
+    expect(picture_view(page, "a.png")).to_have_text("view: guy B POV")
 
 
 def test_emoji_buttons_are_as_wide_as_the_clear_button(page, imgs):
