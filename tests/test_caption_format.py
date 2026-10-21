@@ -71,6 +71,22 @@ def test_lines_without_key_are_not_merged():
         "action:\n  - girl raises arms, guy raises arms")
 
 
+@pytest.mark.parametrize("text", [
+    "mirror: face reflects on mirror., ball reflects on mirror.",  # 文をカンマで区切っても、末尾の語でまとめない
+    "mirror: face reflects on mirror.ball reflects on mirror.",    # . のすぐ後ろに続けても、空白を入れる
+    "mirror: face reflects on mirror. ball reflects on mirror.",
+])
+def test_sentences_under_a_key_are_joined_with_spaces(text):
+    # キーの値に書いた文（. ! ? で終わる語句）は、まとめずに空白でつなぐ（else の物ごとの文など）
+    assert render_caption([("else", text)]) == "else:\n  - mirror: face reflects on mirror. ball reflects on mirror."
+
+
+def test_space_after_a_period_keeps_abbreviations_and_numbers():
+    # . の後ろに空白を入れるのは、2文字以上の語の後ろで、小文字が続くときだけ（e.g. や 1.5 は変えない）
+    assert render_caption([("action", "girl sits.she smiles, e.g.dog, 1.5m")]) == (
+        "action:\n  - girl sits. she smiles, e.g.dog, 1.5m")
+
+
 def test_key_without_phrases_and_blank_lines_are_left_out():
     assert render_caption([("girl", "body:\n\nlooks: standing\n")]) == "girl:\n  - looks: standing"
 

@@ -141,6 +141,23 @@ const endSentence = line => line
     .replace(/(?<=\S)\s*,[\s,]*\./g, '.')
     .replace(/(?<=[^\s,.])\s*,[\s,]*$/, '.');
 
+// 「その他」の欄で、値の無いキーの行（mirror:）の次からのキーの無い行を、空行か次のキーの行まで、そのキーの行に空白でつなぐ
+// （else の物ごとの文: mirror: face reflects on mirror. ball reflects on mirror.）
+function foldBareKeys(lines) {
+    const out = [];
+    let open = false;  // 直前が、値の無いキーの行か、その続き
+    for (const line of lines) {
+        const {key, phrases} = parseLine(line);
+        if (open && !key && phrases.length) {
+            out[out.length - 1] = `${out[out.length - 1].trimEnd()} ${line.trim().replace(/^-+/, '').trim()}`;
+            continue;
+        }
+        open = Boolean(key) && !phrases.length;
+        out.push(line);
+    }
+    return out;
+}
+
 // 保存する形に整える: 各行を整え、空行と値の無いキーの行を落とす
 function tidyInput(text, section) {
     const sentence = line => section === 'action' && !parseLine(line).key;
@@ -191,7 +208,7 @@ function splitText(text, keys) {
 // 入力欄から入力に戻す（fields: [{key, value}]。「その他」の欄はキーが空）。確定タグのキーは並びどおりに1行ずつで、キーの欄の改行も語句の区切り。
 // 「その他」の欄に書いた同じキーの行もまとめる（同じ語句は1つ）。ほかの行はその後ろ
 function composeEditor(fields, keys) {
-    const rest = fields.filter(f => !f.key).flatMap(f => f.value.split('\n'));
+    const rest = foldBareKeys(fields.filter(f => !f.key).flatMap(f => f.value.split('\n')));
     const keyLines = keys.map(key => `${key}: ${splitPhrases([
         ...fields.filter(f => f.key === key).map(f => f.value.replace(/\n/g, ',')),
         ...rest.filter(line => parseLine(line).key === key).map(line => line.slice(line.indexOf(':') + 1)),

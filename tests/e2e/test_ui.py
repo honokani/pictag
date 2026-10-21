@@ -878,6 +878,19 @@ def test_else_has_no_template_keys_and_its_keys_join_characters(page, imgs):
     assert set(option_values(page, "#bulkKey")) == {"", "cat", "dog"}  # 確定タグは無く、使ったキーだけ
 
 
+def test_leaving_the_editor_puts_lines_after_a_bare_key_on_its_line(page, imgs):
+    # 値の無いキーの行（mirror:）の次からのキーの無い行は、空行か次のキーの行まで、そのキーの行に空白でつなぐ（else の物ごとの文）
+    load_dir(page, imgs)
+    page.fill("#sectionName", "else")
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(5)
+    editor = open_editor(page, "a.png", "else")
+    editor.fill("mirror:\nface reflects on mirror.\nball reflects on mirror.\n\nlamp: bright\ncurtain:\n- red, long")
+    editor.evaluate("el => el.blur()")
+    expect(cell(page, "a.png", "else").locator(".ln")).to_have_text(
+        ["mirror: face reflects on mirror. ball reflects on mirror.", "lamp: bright", "curtain: red, long"])
+
+
 def test_adding_girl_twice_names_them_a_and_b(page, imgs):
     load_dir(page, imgs)
     page.fill("#sectionName", "girl")
