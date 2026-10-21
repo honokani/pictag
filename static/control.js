@@ -1853,9 +1853,16 @@ const VERB_FORM_NAMES = {progressive: 'is doing の形（girl is sitting.）', p
 function verbSummary({counts, target, changes}) {
     const counted = `is doing の形 ${counts.progressive} 文・does の形 ${counts.present} 文`;
     if (!counts.progressive && !counts.present) return 'action に、形の分かる文がありません';
-    if (!target) return `${counted}。同じ数なので、そろえません`;
+    if (!target) return `${counted}。同じ数です。どちらにそろえますか？`;
     if (!changes.length) return `${counted}。${VERB_FORM_NAMES[target]}にそろっています`;
-    return `${counted} → ${VERB_FORM_NAMES[target]}にそろえます`;
+    const tie = counts.progressive === counts.present;
+    return `${counted}${tie ? '。同じ数なので、' : ' → '}${VERB_FORM_NAMES[target]}にそろえます`;
+}
+
+// 同じ数のとき: どちらにそろえるかのボタン（押すと、その形にそろえる案を出し直す）
+function verbChoiceHtml() {
+    return '<p class="verb-choice">' + Object.entries(VERB_FORM_NAMES).map(([target, name]) =>
+        `<button type="button" data-target="${target}">${name}</button>`).join(' ') + '</p>';
 }
 
 // 案の一覧: 直す文（初めからチェック）と、迷う文（入れるならチェック）
@@ -1872,13 +1879,22 @@ function verbListHtml(changes, sure) {
 async function openVerbForms() {
     commitEdit();
     await settled();
-    const res = await postJson('/verb_forms', {});
-    if (!res.success) return setStatus(res.message, 'error');
+    if (await showVerbForms({})) $('verbDialog').showModal();
+}
+
+// 案を窓に出す（{target} を渡すと、その形にそろえる案）。同じ数で形が決まらなければ、どちらにするか聞く。出せなければ false
+async function showVerbForms(payload) {
+    const res = await postJson('/verb_forms', payload);
+    if (!res.success) {
+        setStatus(res.message, 'error');
+        return false;
+    }
+    const ask = !res.target && res.counts.progressive > 0;  // 同じ数（どちらも 0 なら聞かない）
     state.verbChanges = res.changes;
     $('verbSummary').textContent = verbSummary(res);
-    $('verbLists').innerHTML = verbListHtml(res.changes, true) + verbListHtml(res.changes, false);
+    $('verbLists').innerHTML = ask ? verbChoiceHtml() : verbListHtml(res.changes, true) + verbListHtml(res.changes, false);
     $('verbApply').disabled = !res.changes.length;
-    $('verbDialog').showModal();
+    return true;
 }
 
 async function applyVerbForms() {
@@ -1913,6 +1929,10 @@ function wire() {
     $('removeDeadButton').addEventListener('click', guarded(removeDead));
     $('resumeButton').addEventListener('click', resume);
     $('verbApply').addEventListener('click', guarded(applyVerbForms));
+    $('verbLists').addEventListener('click', event => {
+        const choice = event.target.closest('.verb-choice button');
+        if (choice) guarded(showVerbForms)({target: choice.dataset.target});
+    });
     $('freezeButton').addEventListener('click', guarded(freezeDictionary));
     $('showDead').addEventListener('change', toggleDead);
     $('sectionForm').addEventListener('submit', event => {

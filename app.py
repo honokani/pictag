@@ -23,7 +23,7 @@ from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TAR
 from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
                    many_numbers, many_text, marks_to_file, matches_pattern, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
-from verbs import count_forms, majority, survey
+from verbs import PRESENT, PROGRESSIVE, count_forms, majority, survey
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
                    register_words, remove_phrase, rename_phrase, rename_registered, set_choice, ungroup_phrases,
@@ -475,12 +475,17 @@ class CaptionTool:
         """action の文で多い方の動詞の形（verbs の PROGRESSIVE / PRESENT。同じ数・文が無ければ None）"""
         return majority(count_forms([line for _, line in self.action_lines()], self.verb_subjects()))
 
-    def verb_forms(self):
-        """action の文の動詞の形（is doing / does）を数え、多い方にそろえる案 {counts, target, changes}（削除済みの行は除く）
+    def verb_forms(self, target=None):
+        """action の文の動詞の形（is doing / does）を数え、target（無ければ多い方）にそろえる案 {counts, target, changes}
 
-        changes: [{index, name, before, after, sure}]（文ごと。sure が False は、機械では迷う文）
+        削除済みの行は除く。同じ数で target が無ければ案は無い（画面がどちらにするか聞く）。
+        changes: [{index, name, before, after, sure}]（文ごと。sure が False は、機械では迷う文）。target が違えば None
         """
-        counts, target, changes = survey(self.action_lines(), self.verb_subjects())
+        self.last_error = ''
+        if target not in (None, PROGRESSIVE, PRESENT):
+            self.fail(f'そろえる形が正しくありません: {target}')
+            return None
+        counts, target, changes = survey(self.action_lines(), self.verb_subjects(), target)
         return {'counts': counts, 'target': target,
                 'changes': [{'index': index, 'name': name, 'before': before, 'after': after, 'sure': sure}
                             for (index, name), before, after, sure in changes]}
@@ -1242,8 +1247,12 @@ def move_phrases_route():
 
 @app.route('/verb_forms', methods=['POST'])
 def verb_forms_route():
-    """action の文の動詞の形（is doing / does）を数え、多い方にそろえる案（counts・target・changes）"""
-    return jsonify({'success': True, **caption_tool.verb_forms()})
+    """action の文の動詞の形（is doing / does）を数え、そろえる案（{target?}。無ければ多い方。counts・target・changes）"""
+    data = request.get_json() or {}
+    forms = caption_tool.verb_forms(data.get('target'))
+    if forms is None:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, **forms})
 
 @app.route('/apply_verb_forms', methods=['POST'])
 def apply_verb_forms_route():
