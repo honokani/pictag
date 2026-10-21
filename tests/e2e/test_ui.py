@@ -574,6 +574,16 @@ def test_leaving_action_ends_sentences_with_periods(page, imgs):
     expect(filled(page, "a.png")).to_have_text(["smiling"])
 
 
+def test_leaving_the_editor_tidies_periods(page, imgs):
+    # 続いた「.」は1つ（「...」も）。「.」の前の空白は消す（候補で選んだ単語の後ろの空白）。文の間の「. 」と .5 のような数は残す
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png", section="action")
+    editor.fill("girl sits..\nguy stands .\ngirl smiles. . guy waves...\npose: standing ..\nball size .5")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png", "action")).to_have_text(
+        ["girl sits.", "guy stands.", "girl smiles. guy waves.", "pose: standing.", "ball size .5"])
+
+
 def test_text_is_tidied_to_english(page, imgs):
     # 英字にそろえる: 全角の英数字・記号・空白は半角、アクセントは外す、「、」「。」と曲がった引用符・ダッシュは英字の記号、タブは空白。
     # そろえても英字（半角の英数字・記号・空白。入力欄は改行も）にならないかな・漢字などは消す
