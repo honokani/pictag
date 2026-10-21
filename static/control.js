@@ -547,7 +547,8 @@ function headHtml() {
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
         ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。上から ' +
-            `🤖: 上の ${state.qwenSamples} 行を見本に / 🔖: 同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに ` +
+            `🤖: 上の ${state.qwenSamples} 行を見本に / 🔖: 同じマークの行（単語①と複数★の両方 → 単語①だけ・複数★だけを同じ数ずつ → ` +
+            `単語① → 複数★ → 排他A）を先に、足りなければランダムに ` +
             `${state.qwenSamples} 行を見本に / 🔄: 🔖 と同じ見本で、入力のある欄も上書き（外れる単語のマークの語句は残す） / ` +
             `🎲: ほかの行からランダムに ${state.qwenSamples} 行を見本に">🤖</th>`] : []),
         '<th>マーク</th>',
