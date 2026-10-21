@@ -43,7 +43,7 @@ def select(page, name, modifiers=None):
 
 
 def auto(page, name, number):
-    """行の自動のマーク（表示だけ）"""
+    """行の単語のマーク（入力から付く。押すとその語句を入れる）"""
     return row(page, name).locator(f'.mark-auto[data-mark="{number}"]')
 
 

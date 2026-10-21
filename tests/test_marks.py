@@ -134,7 +134,7 @@ def test_mark_column_names_are_reserved(api, tool, imgs, name):
     assert api.add_section(name)["success"] is False
 
 
-# ---- 自動のマーク（①〜⑯。語句を設定すると、その語句のある行に付く。行には持たない） ----
+# ---- 単語のマーク（①〜⑯。語句を設定すると、その語句のある行に付く。行には持たない） ----
 
 def set_auto(api, index, mark):
     return api.post("/set_auto_mark", {"index": index, "mark": mark})

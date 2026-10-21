@@ -37,8 +37,9 @@ INSTRUCTIONS = ("You write training captions for an image generation model. Desc
 # キーの無い段落に添える書き方の例（else は物ごとにキーで書く。ほかは短い文）
 KEYLESS_EXAMPLES = {OTHERS: '(e.g. dog: brown fur, sitting)'}
 SENTENCE_EXAMPLE = '(e.g. boy is sitting.)'
-# Qwen がたまに「値が無い」の意味で返す語（人のいない画像の looks: nan、action: none など）。タグが無いものとして入れない
-NO_TAGS = {'none', 'nan'}
+# Qwen がたまに「値が無い」の意味で返す語（人のいない画像の looks: nan、action: none、ごくまれに non presented など）。
+# タグが無いものとして入れない（大文字・小文字、前後の括弧と文末の . は is_tag がそろえてから比べる）
+NO_TAGS = {'none', 'nan', 'non presented'}
 
 
 # ---- 送る文面 ----
@@ -159,11 +160,6 @@ def fill_section(text, lines, keys, overwrite=False):
             text = '\n'.join(filter(None, [text, value]))
             added['sentences'].append(value)
     return text, added
-
-
-def fill_text(text, lines, keys):
-    """fill_section で入れたあとの入力"""
-    return fill_section(text, lines, keys)[0]
 
 
 def clear_drafts(text, drafted):

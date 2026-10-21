@@ -21,8 +21,9 @@ const state = {
     foldedSections: new Set(),  // 畳んだ段落の列（プロジェクトごとにブラウザに覚える）
     sideView: 'hint',     // hint の列に出すもの（hint / preview / hint_by_qwen。出せないものなら先頭。プロジェクトごとにブラウザに覚える）
     thumbZoomed: false,   // サムネイルを 1.5 倍に広げているか（プロジェクトごとにブラウザに覚える）
-    qwen: false,          // qwen 版で起動したか（🤖🎲 の列と hint_by_qwen を出す）
-    qwenBusy: new Map(),  // Qwen が書いている行の index → 見本の選び方（near / random）
+    qwen: false,          // qwen 版で起動したか（Qwen の列（🤖🔖🔄🎲）と hint_by_qwen を出す）
+    qwenSamples: 0,       // Qwen に渡す見本の数（サーバーの qwen.py の SAMPLE_COUNT。表を読んだときに入れる）
+    qwenBusy: new Map(),  // Qwen が書いている行の index → 押したボタン（near / mark / overwrite / random）
     thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
     markChoices: {one: [], many: [], auto: []},  // マークの記号（番号の順。排他 A〜H、複数 ★●▲■◆♥♣♠、単語 ①〜⑯）。行のマークは番号で持つ
     autoMarks: [],                     // 単語のマークの設定（番号ごとに {section, key, phrase} か null。プロジェクトごと）
@@ -546,9 +547,9 @@ function headHtml() {
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
         ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。上から ' +
-            '🤖: 上の 10 行を見本に / 🔖: 同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに 10 行を見本に / ' +
-            '🔄: 🔖 と同じ見本で、入力のある欄も上書き（外れる単語のマークの語句は残す） / ' +
-            '🎲: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
+            `🤖: 上の ${state.qwenSamples} 行を見本に / 🔖: 同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに ` +
+            `${state.qwenSamples} 行を見本に / 🔄: 🔖 と同じ見本で、入力のある欄も上書き（外れる単語のマークの語句は残す） / ` +
+            `🎲: ほかの行からランダムに ${state.qwenSamples} 行を見本に">🤖</th>`] : []),
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
         sideHeadHtml(),
@@ -820,45 +821,45 @@ function metaHtml(row) {
     return `<div class="tokens${over ? ' over' : ''}" title="${escapeHtml(row.caption || '（空）')}">${known ? row.tokens : '—'}\n/ ${state.tokenLimit}</div>`;
 }
 
-const QWEN_SAMPLES = 10;  // 🤖🎲 に要る見本の数（空でないキャプション。qwen.py の SAMPLE_COUNT と同じ）
-
 // 見本になる行か（削除済みでなく、キャプションがある）
 const isSample = row => !row.is_dead && Boolean(row.caption);
 
-// 行より上にある見本の数（QWEN_SAMPLES まで数えれば足りる）
+// 行より上にある見本の数（見本の数（state.qwenSamples）まで数えれば足りる）
 function samplesAbove(index) {
     let count = 0;
     for (const row of state.rows) {
-        if (row.index === index || count >= QWEN_SAMPLES) break;
+        if (row.index === index || count >= state.qwenSamples) break;
         if (isSample(row)) count += 1;
     }
     return count;
 }
 
-// 🤖🎲 の欄（qwen 版だけ）: 上から 🤖 🔖 🔄 🎲。Qwen でその行の空の欄を下書きする（🔄 は入力のある欄も上書き）。
-// 🤖 は上の 10 行、🔖・🔄 は同じマークの行を先に、🎲 はほかの行からランダムに 10 行を見本に
+// Qwen の欄（qwen 版だけ）: 上から 🤖 🔖 🔄 🎲。Qwen でその行の空の欄を下書きする（🔄 は入力のある欄も上書き）。
+// 🤖 は上の行、🔖・🔄 は同じマークの行を先に、🎲 はほかの行からランダムに、見本の数（state.qwenSamples）だけ見本に
 // 見本が足りなければ押せない（理由は title）。書いている間は、押した方が ⏳ で、どれも押せない
 function qwenHtml(row) {
     const busy = state.qwenBusy.get(row.index);
+    const n = state.qwenSamples;
     const elsewhere = state.rows.filter(isSample).length - (isSample(row) ? 1 : 0);
-    const marked = '同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに 10 行';
+    const marked = `同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに ${n} 行`;
+    const missingElsewhere = `見本（キャプションのある行）がほかに ${n} 行必要です`;
     const button = (mode, mark, count, source, missing, does = '空の欄を下書きする') => {
-        const ready = !row.is_dead && count >= QWEN_SAMPLES && !busy;
+        const ready = !row.is_dead && count >= n && !busy;
         const title = busy === mode ? 'Qwen が書いています' : row.is_dead ? '元の画像がありません'
-            : count >= QWEN_SAMPLES ? `Qwen で、この行の${does}（見本は${source}）` : `${missing}（今 ${count} 行）`;
+            : count >= n ? `Qwen で、この行の${does}（見本は${source}）` : `${missing}（今 ${count} 行）`;
         return `<button type="button" class="qwen-btn" data-mode="${mode}" title="${title}"${ready ? '' : ' disabled'}>` +
             `${busy === mode ? '⏳' : mark}</button>`;
     };
     return '<td class="qwen">' +
-        button('near', '🤖', samplesAbove(row.index), '上の 10 行', `上に見本（キャプションのある行）が ${QWEN_SAMPLES} 行必要です`) +
-        button('mark', '🔖', elsewhere, marked, `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
-        button('overwrite', '🔄', elsewhere, marked, `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`,
+        button('near', '🤖', samplesAbove(row.index), `上の ${n} 行`, `上に見本（キャプションのある行）が ${n} 行必要です`) +
+        button('mark', '🔖', elsewhere, marked, missingElsewhere) +
+        button('overwrite', '🔄', elsewhere, marked, missingElsewhere,
             '欄を上書きする。答えにあるキーと文は入力があっても置き換え、外れる単語のマークの語句は残す') +
-        button('random', '🎲', elsewhere, 'ほかの行からランダムに 10 行', `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
+        button('random', '🎲', elsewhere, `ほかの行からランダムに ${n} 行`, missingElsewhere) +
         '</td>';
 }
 
-// 🤖 の欄だけを描き直す（キャプションが変わると、下の行の見本の数も変わる）
+// Qwen の欄（🤖🔖🔄🎲）だけを描き直す（キャプションが変わると、下の行の見本の数も変わる）
 function paintQwenButtons() {
     if (!state.qwen) return;
     const trs = new Map([...$('gridBody').rows].map(tr => [Number(tr.dataset.index), tr]));
@@ -1069,6 +1070,7 @@ async function refreshTable() {
     state.byIndex = new Map(body.data.map(r => [r.index, r]));
     state.hasHints = body.data.some(r => r.hint);
     state.tokenLimit = body.token_limit;
+    state.qwenSamples = body.qwen_samples;
     state.templates = body.templates;
     state.fixedSections = body.fixed_sections;
     state.autoKeys = body.auto_keys;

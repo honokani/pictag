@@ -43,6 +43,7 @@ SHARED_FILE = 'shared.json'  # data_work/ 直下。共用辞書（freeze した�
 SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォルダは SDXL 版のプロジェクト
 CAPTION_EXT = '.caption'  # 書き出すキャプションの拡張子（captions/<画像名>.caption）
 HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡張子のファイルは hint（読むだけ）
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}  # 画像フォルダで、画像として読むファイルの拡張子
 QWEN_DIR = 'qwen'  # data_work/<フォルダ名>/ の下の、Qwen の答えの置き場（<画像名>.txt。右端の列の hint_by_qwen で見る）
 # 押したボタン（見本の選び方）: 🤖 は上の行から近い順、🔖 は同じマークの行を先に、🎲 はほかの行からランダム。
 # 🔄 は 🔖 と同じ見本で、入力のある欄も上書きする
@@ -97,7 +98,7 @@ def section_texts(df):
     return [(s, to_text(r[s])) for r in df.to_dict('records') for s in sections]
 
 def table_to_json(df, auto_marks):
-    """表と自動のマークの設定を JSON にする（空の入力は書かない）"""
+    """表と単語のマークの設定を JSON にする（空の入力は書かない）"""
     sections = section_names(df)
     return {
         'sections': sections,
@@ -118,8 +119,16 @@ def table_from_json(data):
             for r in data['rows']]
     return pd.DataFrame(rows, columns=FIXED_COLUMNS + sections)
 
+def carried_row(name, is_dead, row, sections):
+    """読み直した表の1行: 前の行 row（無ければ {}）の入力・マーク・書き換えた時刻を引き継ぐ"""
+    return {'サムネイル': name, 'is_dead': is_dead,
+            'mark': one_text(one_number(to_text(row.get('mark', '')))),
+            'marks': many_text(many_numbers(to_text(row.get('marks', '')))),
+            'edited_at': to_text(row.get('edited_at', '')),
+            **{s: to_text(row.get(s, '')) for s in sections}}
+
 def read_auto_marks(path):
-    """保存済みの自動のマークの設定（表が無い・設定が無い（0.4.4 まで）なら、どれも設定なし）"""
+    """保存済みの単語のマークの設定（表が無い・設定が無い（0.4.4 まで）なら、どれも設定なし）"""
     data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     return auto_marks_from_file(data.get('auto_marks') if isinstance(data, dict) else None)
 
@@ -187,7 +196,7 @@ class CaptionTool:
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
-        self.auto_marks = [None] * AUTO_COUNT  # 自動のマークの設定（番号ごとに {section, key, phrase} か None。プロジェクトごと）
+        self.auto_marks = [None] * AUTO_COUNT  # 単語のマークの設定（番号ごとに {section, key, phrase} か None。プロジェクトごと）
         self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
         self.hints = {}  # 画像名 → hint（画像フォルダの同じ名前の .txt）
         self.qwen_hints = {}  # 画像名 → Qwen の答え（data_work/<フォルダ名>/qwen/ の同じ名前の .txt）
@@ -268,11 +277,10 @@ class CaptionTool:
         # tgt_path.txt作成
         tgt_path_file = self.data_out_target / "tgt_path.txt"
         if not tgt_path_file.exists():
-            with open(tgt_path_file, 'w', encoding='utf-8') as f:
-                f.write(str(self.image_dir))
+            tgt_path_file.write_text(str(self.image_dir), encoding='utf-8')
             logger.info(f"Created tgt_path.txt: {self.image_dir}")
 
-        # 保存済みの表と、自動のマークの設定
+        # 保存済みの表と、単語のマークの設定
         self.df = read_table(self.data_out_target / TABLE_FILE)
         self.auto_marks = read_auto_marks(self.data_out_target / TABLE_FILE)
 
@@ -474,118 +482,65 @@ class CaptionTool:
         return self.update_shared(lambda shared: ungroup_phrases(shared, pairs_of(pairs)))
 
     def manage_dead_alive_status(self):
-        """画像の生存状態を管理し、dead/alive状態を更新"""
-        # 画像ファイル拡張子
-        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp'}
-
-        # 元画像ファイル一覧取得
-        if self.image_dir.exists():
-            alive_image_files = {f.name for f in self.image_dir.iterdir()
-                                if f.is_file() and f.suffix.lower() in image_extensions}
-        else:
-            alive_image_files = set()
-
-        # サムネイル一覧取得
-        thumbnail_files = set()
-        if hasattr(self, 'data_work_target') and self.data_work_target.exists():
-            for f in self.data_work_target.iterdir():
-                if f.name.startswith('t_') and f.suffix.lower() in image_extensions:
-                    original_name = f.name[2:]
-                    thumbnail_files.add(original_name)
-
-        # 既存DataFrameから全ファイル取得（これが重要）
-        # 画像名ごとの行を1回だけ引いておく。画像名が文字列でない行は捨てる
+        """表を作り直す: 元フォルダにある画像は生きている行、表やサムネイルにだけ残る画像は削除済みの行
+        （入力・マーク・書き換えた時刻は前の行から引き継ぐ）。そのあとキャプションの txt を、生きている行は captions、
+        削除済みの行は captions_dead へ移す（サムネイルは画面が表示するときに作る。読み込みを待たせないため）
+        """
+        alive = ({f.name for f in self.image_dir.iterdir() if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS}
+                 if self.image_dir.exists() else set())
+        # サムネイル（t_<画像名>）だけが残っている画像も、削除済みの行として出す
+        thumbnails = ({f.name[2:] for f in self.data_work_target.iterdir()
+                       if f.name.startswith('t_') and f.suffix.lower() in IMAGE_EXTENSIONS}
+                      if self.data_work_target.exists() else set())
+        # 画像名ごとの前の行（1回だけ引く。画像名が文字列でない行は捨てる）
         has_table = 'サムネイル' in self.df.columns
-        existing_rows = {}
-        if has_table:
-            for record in self.df.to_dict('records'):
-                name = record['サムネイル']
-                if isinstance(name, str) and name not in existing_rows:
-                    existing_rows[name] = record
-        existing_files = set(existing_rows)
-
-        # 全ての画像ファイル（既存DataFrame + 新規alive + サムネイル）
-        all_image_files = existing_files | alive_image_files | thumbnail_files
-
+        existing = {}
+        for record in self.df.to_dict('records') if has_table else []:
+            if isinstance(record['サムネイル'], str):
+                existing.setdefault(record['サムネイル'], record)
         # 段落: 保存済みの表があればその段落を保つ（外した人物などの段落を戻さない）。固定の段落は必ず先頭に置く
-        # 新規プロジェクトは既定の段落（picture / action / girl）から始める
+        # 新規プロジェクトは既定の段落（DEFAULT_SECTIONS）から始める
         sections = with_fixed_sections(section_names(self.df)) if has_table else list(DEFAULT_SECTIONS)
+        names = sorted(set(existing) | alive | thumbnails)
+        self.df = pd.DataFrame([carried_row(name, name not in alive, existing.get(name, {}), sections) for name in names],
+                               columns=FIXED_COLUMNS + sections)
+        for name in names:
+            self.move_caption(name, name in alive)
+        logger.info(f"Managed dead/alive status: {len(alive)} alive, {len(names) - len(alive)} dead, total: {len(names)}")
 
-        # DataFrameを再構築
-        columns = FIXED_COLUMNS + sections
-        data = []
-
-        for img_file in sorted(all_image_files):
-            is_alive = img_file in alive_image_files
-            is_dead = not is_alive
-
-            # 既存の入力を引き継ぐ
-            existing_row = existing_rows.get(img_file, {})
-            data.append({
-                'サムネイル': img_file,
-                'is_dead': is_dead,
-                'mark': one_text(one_number(to_text(existing_row.get('mark', '')))),
-                'marks': many_text(many_numbers(to_text(existing_row.get('marks', '')))),
-                'edited_at': to_text(existing_row.get('edited_at', '')),
-                **{s: to_text(existing_row.get(s, '')) for s in sections},
-            })
-
-            # キャプション移動処理（サムネイルは画面が表示するときに作る。読み込みを待たせないため）
-            if is_alive:
-                # deadからの復帰処理
-                stem = Path(img_file).stem
-                dead_caption_path = self.captions_dead_dir / f"{stem}{CAPTION_EXT}"
-                if dead_caption_path.exists():
-                    self.move_caption_from_dead_to_alive(img_file)
-
-            else:
-                # aliveからdeadへの移動処理
-                stem = Path(img_file).stem
-                alive_caption_path = self.captions_dir / f"{stem}{CAPTION_EXT}"
-                if alive_caption_path.exists():
-                    self.move_caption_from_alive_to_dead(img_file)
-
-        # DataFrameを更新
-        if data:
-            self.df = pd.DataFrame(data, columns=columns)
-        else:
-            self.df = pd.DataFrame(columns=columns)
-
-        # dead数を正しくカウント
-        dead_count = len(self.df[self.df['is_dead'] == True]) if not self.df.empty else 0
-        logger.info(f"Managed dead/alive status: {len(alive_image_files)} alive, {dead_count} dead, total: {len(all_image_files)}")
-
-    def move_caption_from_dead_to_alive(self, image_name):
-        """キャプションファイルをdeadからaliveに移動"""
+    def move_caption(self, image_name, alive):
+        """キャプションの txt を、生きている行は captions_dead → captions、削除済みの行は captions → captions_dead へ移す
+        （移す先にあれば置き換える。移す元が無ければ何もしない）
+        """
+        file_name = f"{Path(image_name).stem}{CAPTION_EXT}"
+        src, dst = (self.captions_dead_dir, self.captions_dir) if alive else (self.captions_dir, self.captions_dead_dir)
+        state = 'alive' if alive else 'dead'
         try:
-            stem = Path(image_name).stem
-            dead_caption_path = self.captions_dead_dir / f"{stem}{CAPTION_EXT}"
-            alive_caption_path = self.captions_dir / f"{stem}{CAPTION_EXT}"
-
-            if dead_caption_path.exists():
-                # ファイル移動（上書き）
-                if alive_caption_path.exists():
-                    alive_caption_path.unlink()  # 既存ファイル削除
-                dead_caption_path.rename(alive_caption_path)
-                logger.info(f"Moved caption from dead to alive: {image_name}")
+            if (src / file_name).exists():
+                (src / file_name).replace(dst / file_name)
+                logger.info(f"Moved caption to {state}: {image_name}")
         except Exception as e:
-            logger.error(f"Failed to move caption from dead to alive for {image_name}: {e}")
+            logger.error(f"Failed to move caption to {state} for {image_name}: {e}")
 
-    def move_caption_from_alive_to_dead(self, image_name):
-        """キャプションファイルをaliveからdeadに移動"""
-        try:
-            stem = Path(image_name).stem
-            alive_caption_path = self.captions_dir / f"{stem}{CAPTION_EXT}"
-            dead_caption_path = self.captions_dead_dir / f"{stem}{CAPTION_EXT}"
+    def remove_dead(self):
+        """削除済みの行を表から消して保存する（行番号は画面の行位置とそろうよう振り直す）。消した行の数を返す（失敗は False）
 
-            if alive_caption_path.exists():
-                # ファイル移動（上書き）
-                if dead_caption_path.exists():
-                    dead_caption_path.unlink()  # 既存ファイル削除
-                alive_caption_path.rename(dead_caption_path)
-                logger.info(f"Moved caption from alive to dead: {image_name}")
-        except Exception as e:
-            logger.error(f"Failed to move caption from alive to dead for {image_name}: {e}")
+        その行のサムネイルも消す（残っていると、次の読み込みで削除済みの行として戻る）
+        """
+        self.last_error = ''
+        if self.df.empty:
+            return self.fail('データがありません')
+        dead = self.df['is_dead'].map(to_flag).astype(bool)
+        if not dead.any():
+            return self.fail('削除済み画像がありません')
+        for name in self.df.loc[dead, 'サムネイル']:
+            self.thumbnail_file(name).unlink(missing_ok=True)
+        before = len(self.df)
+        self.df = self.df[~dead].reset_index(drop=True)
+        removed = before - len(self.df)
+        logger.info(f"Removed {removed} dead rows. Total rows: {before} -> {len(self.df)}")
+        self.save_data()
+        return removed
 
     def thumbnail_file(self, image_name):
         """サムネイルのパス（生成済みかは問わない）"""
@@ -1040,8 +995,7 @@ def get_existing_projects():
             image_path = ""
             if tgt_path_file.exists():
                 try:
-                    with open(tgt_path_file, 'r', encoding='utf-8') as f:
-                        image_path = f.read().strip()
+                    image_path = tgt_path_file.read_text(encoding='utf-8').strip()
                 except Exception as e:
                     logger.warning(f"Failed to read tgt_path.txt: {e}")
 
@@ -1073,9 +1027,7 @@ def load_existing_project():
         return jsonify({'success': False, 'message': 'tgt_path.txt not found'})
 
     try:
-        with open(tgt_path_file, 'r', encoding='utf-8') as f:
-            image_dir = f.read().strip()
-
+        image_dir = tgt_path_file.read_text(encoding='utf-8').strip()
         caption_tool.setup_directories(image_dir)
         caption_tool.load_data()
         return jsonify({
@@ -1131,12 +1083,12 @@ def get_table_data():
               'view_choices': {'camera': CAMERA_GROUPS, 'camera_emoji': CAMERA_EMOJI, 'targeted': TARGETED,
                                'pov': pov_choices(pov_names(caption_tool.subjects()))},
               'mark_choices': {'one': ONE, 'many': MANY, 'auto': AUTO}, 'auto_marks': caption_tool.auto_marks,
-              'qwen': bool(app.config.get('QWEN_URL'))}
+              'qwen': bool(app.config.get('QWEN_URL')), 'qwen_samples': SAMPLE_COUNT}
     if 'サムネイル' not in df.columns:
         return jsonify({'sections': [], 'data': [], **common})
 
     sections = section_names(df)
-    data = [caption_tool.row_view(index, record, sections) for index, record in zip(df.index, df.to_dict('records'))]
+    data = [caption_tool.row_view(index, record, sections) for index, record in zip(df.index, df.to_dict('records'), strict=True)]
     return jsonify({'sections': sections, 'data': data, **common})
 
 @app.route('/thumbnail/<filename>')
@@ -1379,44 +1331,15 @@ def remove_section():
 
 @app.route('/remove_all_dead', methods=['POST'])
 def remove_all_dead():
-    """削除済み画像に対応する表の行を完全に削除"""
+    """削除済み画像に対応する表の行を完全に削除（あわせて保存）"""
     try:
-        if caption_tool.df.empty:
-            return jsonify({'success': False, 'message': 'データがありません'})
-
-        # 削除前のカウント
-        before_count = len(caption_tool.df)
-        dead_count = len(caption_tool.df[caption_tool.df['is_dead'] == True]) if 'is_dead' in caption_tool.df.columns else 0
-
-        if dead_count == 0:
-            return jsonify({'success': False, 'message': '削除済み画像がありません'})
-
-        # 削除する行のサムネイルも消す（残っていると次の読み込みで削除済み行として復活する）
-        dead_names = caption_tool.df.loc[caption_tool.df['is_dead'] == True, 'サムネイル'].tolist()
-        for name in dead_names:
-            thumb_path = caption_tool.thumbnail_file(name)
-            if thumb_path.exists():
-                thumb_path.unlink()
-
-        # is_dead == False の行のみ残す（行番号は画面の行位置と揃うよう振り直す）
-        caption_tool.df = caption_tool.df[caption_tool.df['is_dead'] == False].reset_index(drop=True)
-
-        after_count = len(caption_tool.df)
-
-        logger.info(f"Removed {dead_count} dead rows. Total rows: {before_count} -> {after_count}")
-
-        # 自動保存
-        caption_tool.save_data()
-
-        return jsonify({
-            'success': True,
-            'message': f'{dead_count}件の削除済み画像のデータを削除しました',
-            'removed_count': dead_count
-        })
-
+        removed = caption_tool.remove_dead()
     except Exception as e:
         logger.error(f"Failed to remove dead images: {e}")
         return jsonify({'success': False, 'message': str(e)})
+    if not removed:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'message': f'{removed}件の削除済み画像のデータを削除しました', 'removed_count': removed})
 
 @app.route('/save_data', methods=['POST'])
 def save_data():
