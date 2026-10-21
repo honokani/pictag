@@ -46,12 +46,19 @@
             <select id="moveTo" aria-label="移す先のキー"></select>
             <button type="submit">移す</button>
         </form>
-        <!-- 2段目（選択中は一括入力が並ぶ）を1行に収めて、選択で表がずれないようにここに置く -->
-        <span id="markTools-clear" class="group clear-marks">
-            <!-- 名前（A〜H など）は表を読んだときに marks.py の記号の表から入れる -->
-            <button type="button" class="hold" data-column="mark" title="1秒長押しで、全行の排他のマークを消す">排他をクリア</button>
-            <button type="button" class="hold" data-column="marks" title="1秒長押しで、全行の複数のマークを消す">複数をクリア</button>
-        </span>
+        <!-- 一括入力: 行を選んでいる間だけ見せる（選んでいないときも場所は取っておき、帯の高さを変えない）。2段に積む -->
+        <form id="bulkForm" class="group bulk idle">
+            <span class="bulk-row">
+                <span id="selectionInfo">選択 0 行</span>
+                <select id="bulkSection" aria-label="一括入力の段落"></select>
+                <select id="bulkKey" aria-label="一括入力のキー"></select>
+            </span>
+            <span class="bulk-row">
+                <input id="bulkText" type="text" placeholder="語句（例: standing）" autocomplete="off" aria-label="一括入力の語句">
+                <button type="submit" value="add" title="選択行に追加">追加</button>
+                <button type="submit" value="remove" title="選択行から削除">削除</button>
+            </span>
+        </form>
     </section>
 
     <section id="markTools" class="bar tools" hidden>
@@ -62,21 +69,14 @@
             <span class="filter-group" data-kind="many" data-label="複数"></span>
             <span id="autoMarks" class="filter-group" data-kind="auto" data-label="単語"></span>
         </span>
-        <button id="selectVisibleButton" type="button" title="Ctrl+A">表示中をすべて選択</button>
-        <!-- 行を選んでいる間だけ出す。2段に積む（絞り込みの2段と同じ高さにし、1440px で帯の高さを変えない） -->
-        <form id="bulkForm" class="group bulk" hidden>
-            <span class="bulk-row">
-                <span id="selectionInfo">選択 0 行</span>
-                <select id="bulkSection" aria-label="一括入力の段落"></select>
-                <select id="bulkKey" aria-label="一括入力のキー"></select>
-            </span>
-            <span class="bulk-row">
-                <input id="bulkText" type="text" placeholder="語句（例: standing）" autocomplete="off" aria-label="一括入力の語句">
-                <button type="submit" value="add" title="選択行に追加">追加</button>
-                <button type="submit" value="remove" title="選択行から削除">削除</button>
-                <button type="button" id="deselectButton" class="hold" title="1秒長押しで、選択を解除">選択解除</button>
-            </span>
-        </form>
+        <button id="selectVisibleButton" type="button" title="見えている行をすべて選ぶ（Ctrl+A）">表示中を選択</button>
+        <!-- 行を選んでいる間だけ出す -->
+        <button type="button" id="deselectButton" class="hold" title="1秒長押しで、選択を解除" hidden>選択解除</button>
+        <!-- マークのクリア（右端）。名前（A〜H など）は表を読んだときに marks.py の記号の表から入れる -->
+        <span id="markTools-clear" class="group clear-marks">
+            <button type="button" class="hold" data-column="mark" title="1秒長押しで、全行の排他のマークを消す">排他をクリア</button>
+            <button type="button" class="hold" data-column="marks" title="1秒長押しで、全行の複数のマークを消す">複数をクリア</button>
+        </span>
     </section>
 
     <main id="imagesView">
