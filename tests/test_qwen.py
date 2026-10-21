@@ -5,11 +5,16 @@ import pytest
 
 import app as pictag
 from helpers import FakeComfy, make_images
-from qwen import (INSTRUCTIONS, clear_drafts, fill_section, fill_text, keep_word_marks, match_section, parse_caption,
+from qwen import (INSTRUCTIONS, clear_drafts, fill_section, keep_word_marks, match_section, parse_caption,
                   pick_random_samples, pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
+
+
+def fill_text(text, lines, keys):
+    """fill_section で入れたあとの入力（入れたものは見ない）"""
+    return fill_section(text, lines, keys)[0]
 
 
 # ---- 送る文面 ----
@@ -101,12 +106,14 @@ def test_fill_text_adds_sentences_only_when_there_are_none():
 
 
 def test_fill_text_treats_none_and_nan_as_no_tag():
-    # Qwen がたまに返す「none」「nan」は、タグが無いものとして入れない（大文字・小文字、前後の括弧、文末の . は問わない。ほかの語句は入れる）
+    # Qwen がたまに返す「none」「nan」（ごくまれに「non presented」）は、タグが無いものとして入れない
+    # （大文字・小文字、前後の括弧、文末の . は問わない。ほかの語句は入れる）
     assert fill_text("", ["looks: nan", "clothes: None, red dress", "body: NaN"], SUBJECT) == "clothes: red dress"
     assert fill_text("", ["looks: NONE", "clothes: NAN", "body: (none)"], SUBJECT) == ""
     assert fill_text("", ["none"], []) == ""
     assert fill_text("", ["(none)", "(None)."], []) == ""
     assert fill_text("", ["none.", "girl waves."], []) == "girl waves."
+    assert fill_text("", ["looks: Non presented", "body: (non presented)."], SUBJECT) == ""
 
 
 def test_fill_section_returns_what_it_put_in():

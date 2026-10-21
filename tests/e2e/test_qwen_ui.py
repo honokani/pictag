@@ -1,5 +1,6 @@
 """qwen 版の画面（Playwright）: 🤖 の列と、右端の列の hint_by_qwen（ComfyUI は偽物）"""
 import re
+from itertools import pairwise
 
 import pytest
 
@@ -91,7 +92,7 @@ def test_qwen_column_sits_between_token_and_marks_at_half_the_token_width(page, 
     meta = row(page, "r10.png").locator("td.meta").evaluate(width)
     assert abs(row(page, "r10.png").locator("td.qwen").evaluate(width) - meta / 2) <= 1
     boxes = [button(page, "r10.png").bounding_box() for button in (robot, marker, rewriter, dice)]
-    for upper, lower in zip(boxes, boxes[1:]):
+    for upper, lower in pairwise(boxes):
         assert lower["y"] >= upper["y"] + upper["height"] - 0.5  # 🤖 の下に 🔖、その下に 🔄、その下に 🎲
     expect(dice(page, "r09.png")).to_be_disabled()  # ほかの見本は r00〜r08 の 9 行
 
