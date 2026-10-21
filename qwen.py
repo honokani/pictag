@@ -11,6 +11,7 @@
 import io
 import json
 import random
+import re
 import time
 import urllib.request
 import uuid
@@ -47,7 +48,12 @@ SENTENCE_EXAMPLES = {PROGRESSIVE: '(e.g. boy is sitting.)', PRESENT: '(e.g. boy 
 SENTENCE_EXAMPLE = SENTENCE_EXAMPLES[PROGRESSIVE]
 # Qwen がたまに「値が無い」の意味で返す語（人のいない画像の looks: nan、action: none、ごくまれに non presented など）。
 # タグが無いものとして入れない（大文字・小文字、前後の括弧と文末の . は is_tag がそろえてから比べる）
-NO_TAGS = {'none', 'nan', 'non presented'}
+NO_TAGS = {'none', 'nan', 'non presented', 'nothing', 'n/a', 'not applicable', 'unknown'}
+# 「無い」を言っているだけの答え（指示文で書くなと頼むと、かえって軒並み no で返すことがあったので、入れるときに捨てる）:
+# no + あいまいな語 + 物（no extra elements・no other details）か、no + あいまいな語 + そのキーの名前（view: no specific view）。
+# あいまいな語の付かない、見て分かる「無い」（no shoes・no glasses・no clothes）は残す
+VAGUE = r'(?:specific|particular|other|additional|extra|notable|special|distinct)'
+VAGUE_THINGS = re.compile(rf'no(?: {VAGUE})* (?:element|detail|feature|object|item|thing)s?')
 
 
 # ---- 送る文面 ----
@@ -153,9 +159,12 @@ def with_key(text, key, value, keys):
     return '\n'.join([*(line for line in text.splitlines() if parse_line(line)[0] != key), f'{key}: {value}'])
 
 
-def is_tag(phrase):
-    """答えの語句がタグか（none・nan は、大文字・小文字、前後の括弧（(none)）、文末の . を問わずタグではない）"""
-    return phrase.strip(' .()').lower() not in NO_TAGS
+def is_tag(phrase, key=''):
+    """答えの語句がタグか。none・nan などと、「無い」を言っているだけの語句（extra: no extra elements・view: no specific view）は
+    タグではない（大文字・小文字、前後の括弧（(none)）、文末の . は問わない）"""
+    p = phrase.strip(' .()').lower()
+    vague_key = bool(key) and re.fullmatch(rf'no(?: {VAGUE})+ {re.escape(key.lower())}s?', p)
+    return not (p in NO_TAGS or VAGUE_THINGS.fullmatch(p) or vague_key)
 
 
 def is_sentence(line):
@@ -171,7 +180,7 @@ def fill_section(text, lines, keys, overwrite=False):
     答えの none・nan は捨て、語句が残らなかったキー・文は入れない（overwrite でも、それで消すことはない）。
     (入れたあとの入力, 入れたもの {'keys': {キー: 値}, 'sentences': [文]}) を返す（押し直したときに置き換える下書き）
     """
-    answer = [(key, [phrase for phrase in phrases if is_tag(phrase)]) for key, phrases in map(parse_line, lines)]
+    answer = [(key, [phrase for phrase in phrases if is_tag(phrase, key)]) for key, phrases in map(parse_line, lines)]
     if overwrite and any(not key and phrases for key, phrases in answer):
         text = '\n'.join(line for line in text.splitlines() if not is_sentence(line))
     present = [parse_line(line) for line in text.splitlines()]
