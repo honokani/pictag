@@ -1,12 +1,23 @@
 """人物などの段落: 自動の命名、characters の自動計算、view の選択肢"""
 import pytest
 
-from subjects import CAMERA_EMOJI, CAMERA_GROUPS, base_name, characters_of, insert_position, name_for_new, pov_choices
+from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, base_name, characters_of, display_names, insert_position, name_for_new,
+                      pov_choices)
 
 
 @pytest.mark.parametrize("section, expected", [("guy A", "guy"), ("girl", "girl"), ("big dog B", "big dog"), ("A", "A")])
 def test_base_name(section, expected):
     assert base_name(section) == expected
+
+
+@pytest.mark.parametrize("present, expected", [
+    (["girl", "guy A"], {"girl": "girl", "guy A": "guy"}),  # 入力のある guy が1人なら A, B を外す
+    (["girl B", "guy A", "guy B"], {"girl B": "girl", "guy A": "guy A", "guy B": "guy B"}),  # 2人ならそのまま
+    (["dog A", "else"], {"dog A": "dog", "else": "else"}),
+])
+def test_display_names_drop_the_letter_of_a_lone_person(present, expected):
+    # 書き出す段落の名前（キャプション・characters）: 入力のある段落のうち、同じ名前（A, B を除く）が1つだけなら A, B を除いた名前
+    assert display_names(present) == expected
 
 
 @pytest.mark.parametrize("present, expected", [

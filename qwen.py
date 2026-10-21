@@ -102,12 +102,15 @@ def parse_caption(text):
     return blocks
 
 
-def match_section(name, sections):
-    """答えの段落名を表の段落に当てる: 同じ名前。無ければ A, B を除いた名前で1つに決まる段落（決まらなければ None）"""
+def match_section(name, sections, present=()):
+    """答えの段落名を表の段落に当てる: 同じ名前。無ければ A, B を除いた名前が同じ段落（いくつもあれば、その行で入力のある段落
+    （present）が1つならそれ、ほかは表で先のもの。1人の行は A, B を除いた名前で書き出すので、見本も答えも guy: になる）。無ければ None
+    """
     if name in sections:
         return name
     same = [section for section in sections if base_name(section) == base_name(name)]
-    return same[0] if len(same) == 1 else None
+    written = [section for section in same if section in present]
+    return written[0] if len(written) == 1 else same[0] if same else None
 
 
 def with_key(text, key, value, keys):

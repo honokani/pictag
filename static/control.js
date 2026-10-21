@@ -856,6 +856,22 @@ async function qwenFill(index, mode) {
     }
 }
 
+// その行の 👀 の選択肢: 人物の種類（A, B を除いた名前）ごとに、その行で入力のある段落が2つ以上ならその段落（guy A, guy B）、
+// ほかは種類の名前（guy）だけ（入力のある段落が1つの種類は、キャプションも A, B を除いた名前で書き出す）。
+// 選ぶ元は、サーバーの選択肢（第三者と、種類の名前・段落の名前の全部）
+function rowPovChoices(row) {
+    const [third, ...people] = state.viewChoices.pov;
+    const nameOf = choice => choice.phrase.replace(/ POV$/, '');
+    const present = state.sections.filter(s => !state.fixedSections.includes(s)
+        && (row.texts[s] || '').split('\n').some(line => parseLine(line).phrases.length));
+    const bases = [...new Set(people.map(c => baseName(nameOf(c))))];
+    return [third, ...bases.flatMap(base => {
+        const written = present.filter(s => baseName(s) === base);
+        const names = written.length >= 2 ? written : [base];
+        return names.map(name => people.find(c => nameOf(c) === name)).filter(Boolean);
+    })];
+}
+
 // view のボタン（各組の先頭の ☓ でその組の語句を消す）。押されている語句は on
 // 🎥 は絵文字だけ、👀 は絵文字と A, B（女性・男性で色を変える）。語句はマウスを載せると見える
 function choicesHtml(row) {
@@ -875,7 +891,7 @@ function choicesHtml(row) {
         `<span class="group">${clear(`camera${g}`)}` +
         `${phrases.map(p => button(p, emoji[p] || p.replace(/^from /, ''), `camera${g}`, emoji[p] ? ['icon'] : [])).join('')}</span>`);
     const pov = `<span class="group">${clear('pov')}` +
-        `${state.viewChoices.pov.map(c => button(c.phrase, [c.emoji, c.label].filter(Boolean).join(' '), 'pov', [c.tone, c.label ? '' : 'icon'])).join('')}</span>`;
+        `${rowPovChoices(row).map(c => button(c.phrase, [c.emoji, c.label].filter(Boolean).join(' '), 'pov', [c.tone, c.label ? '' : 'icon'])).join('')}</span>`;
     return `<div class="choices"><div class="choice-row camera"><span class="choice-label">🎥</span>${camera.join('')}</div>` +
         `<div class="choice-row pov"><span class="choice-label">👀</span>${pov}</div></div>`;
 }
