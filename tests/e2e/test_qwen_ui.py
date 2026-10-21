@@ -62,8 +62,13 @@ def robot(page, name):
 
 
 def marker(page, name):
-    """🔖: 同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行を見本に"""
+    """🔖: 同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに 10 行を見本に"""
     return row(page, name).locator('.qwen-btn[data-mode="mark"]')
+
+
+def rewriter(page, name):
+    """🔄: 🔖 と同じ見本で、入力のある欄も上書き"""
+    return row(page, name).locator('.qwen-btn[data-mode="overwrite"]')
 
 
 def dice(page, name):
@@ -72,7 +77,7 @@ def dice(page, name):
 
 
 def test_qwen_column_sits_between_token_and_marks_at_half_the_token_width(page, project, qwen_mode):
-    # 列は token の半分の幅のまま。🤖・🔖・🎲 は横に並べず、上から縦に積む
+    # 列は token の半分の幅のまま。🤖・🔖・🔄・🎲 は横に並べず、上から縦に積む
     open_project(page)
     head = page.locator("#gridHead th")
     expect(head.nth(1)).to_have_text("token")
@@ -80,13 +85,14 @@ def test_qwen_column_sits_between_token_and_marks_at_half_the_token_width(page, 
     expect(head.nth(3)).to_have_text("マーク")
     expect(robot(page, "r10.png")).to_have_text("🤖")
     expect(marker(page, "r10.png")).to_have_text("🔖")
+    expect(rewriter(page, "r10.png")).to_have_text("🔄")
     expect(dice(page, "r10.png")).to_have_text("🎲")
     width = "el => el.getBoundingClientRect().width"
     meta = row(page, "r10.png").locator("td.meta").evaluate(width)
     assert abs(row(page, "r10.png").locator("td.qwen").evaluate(width) - meta / 2) <= 1
-    boxes = [button(page, "r10.png").bounding_box() for button in (robot, marker, dice)]
+    boxes = [button(page, "r10.png").bounding_box() for button in (robot, marker, rewriter, dice)]
     for upper, lower in zip(boxes, boxes[1:]):
-        assert lower["y"] >= upper["y"] + upper["height"] - 0.5  # 🤖 の下に 🔖、その下に 🎲
+        assert lower["y"] >= upper["y"] + upper["height"] - 0.5  # 🤖 の下に 🔖、その下に 🔄、その下に 🎲
     expect(dice(page, "r09.png")).to_be_disabled()  # ほかの見本は r00〜r08 の 9 行
 
 
@@ -121,6 +127,21 @@ def test_robot_fills_empty_keys_and_hint_by_qwen_shows_the_answer(page, project,
     page.locator('#gridHead .side-view[data-view="hint_by_qwen"]').click()  # hint が無いので preview / hint_by_qwen
     expect(row(page, "r10.png").locator("td.hint textarea")).to_have_value(ANSWER)
     expect(row(page, "r09.png").locator("td.hint textarea")).to_have_count(0)  # 答えの無い行は空
+
+
+def test_rewriter_overwrites_fields_that_have_input(page, project, qwen_mode):
+    # 🔄 は入力のある欄も Qwen の答えで置き換える（🤖・🔖・🎲 は空の欄だけ）
+    project.write(project.row_index("r10.png"), "looks: sitting")
+    project.write(project.row_index("r10.png"), "girl sits.", section="action")
+    project.save()
+    open_project(page)
+    expect(rewriter(page, "r10.png")).to_have_attribute("title", re.compile("上書き"))
+    rewriter(page, "r10.png").click()
+    girl = row(page, "r10.png").locator('td.cell[data-section="girl"] .ln:not(.empty)')
+    expect(girl).to_have_text(["looks: standing", "clothes: red dress"])
+    expect(row(page, "r10.png").locator('td.cell[data-section="action"] .ln')).to_have_text(["girl waves."])
+    expect(page.locator("#status")).to_have_class("ok")
+    expect(page.locator("#status")).to_contain_text("上書き")
 
 
 def test_without_the_qwen_option_there_is_no_robot(page, project):

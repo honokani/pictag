@@ -544,9 +544,10 @@ function headHtml() {
     return [
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
-        ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。' +
-            '🤖（上）: 上の 10 行を見本に / 🔖（中）: 同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行を見本に / ' +
-            '🎲（下）: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
+        ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。上から ' +
+            '🤖: 上の 10 行を見本に / 🔖: 同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに 10 行を見本に / ' +
+            '🔄: 🔖 と同じ見本で、入力のある欄も上書き（外れる単語のマークの語句は残す） / ' +
+            '🎲: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
         sideHeadHtml(),
@@ -801,22 +802,25 @@ function samplesAbove(index) {
     return count;
 }
 
-// 🤖🎲 の欄（qwen 版だけ）: Qwen でその行の空の欄を下書きする。🤖 は上の 10 行、🎲 はほかの行からランダムに 10 行を見本に
-// 見本が足りなければ押せない（理由は title）。書いている間は、押した方が ⏳ で、どちらも押せない
+// 🤖🎲 の欄（qwen 版だけ）: 上から 🤖 🔖 🔄 🎲。Qwen でその行の空の欄を下書きする（🔄 は入力のある欄も上書き）。
+// 🤖 は上の 10 行、🔖・🔄 は同じマークの行を先に、🎲 はほかの行からランダムに 10 行を見本に
+// 見本が足りなければ押せない（理由は title）。書いている間は、押した方が ⏳ で、どれも押せない
 function qwenHtml(row) {
     const busy = state.qwenBusy.get(row.index);
     const elsewhere = state.rows.filter(isSample).length - (isSample(row) ? 1 : 0);
-    const button = (mode, mark, count, source, missing) => {
+    const marked = '同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに 10 行';
+    const button = (mode, mark, count, source, missing, does = '空の欄を下書きする') => {
         const ready = !row.is_dead && count >= QWEN_SAMPLES && !busy;
         const title = busy === mode ? 'Qwen が書いています' : row.is_dead ? '元の画像がありません'
-            : count >= QWEN_SAMPLES ? `Qwen で、この行の空の欄を下書きする（見本は${source}）` : `${missing}（今 ${count} 行）`;
+            : count >= QWEN_SAMPLES ? `Qwen で、この行の${does}（見本は${source}）` : `${missing}（今 ${count} 行）`;
         return `<button type="button" class="qwen-btn" data-mode="${mode}" title="${title}"${ready ? '' : ' disabled'}>` +
             `${busy === mode ? '⏳' : mark}</button>`;
     };
     return '<td class="qwen">' +
         button('near', '🤖', samplesAbove(row.index), '上の 10 行', `上に見本（キャプションのある行）が ${QWEN_SAMPLES} 行必要です`) +
-        button('mark', '🔖', elsewhere, '同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行',
-            `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
+        button('mark', '🔖', elsewhere, marked, `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
+        button('overwrite', '🔄', elsewhere, marked, `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`,
+            '欄を上書きする。答えにあるキーと文は入力があっても置き換え、外れる単語のマークの語句は残す') +
         button('random', '🎲', elsewhere, 'ほかの行からランダムに 10 行', `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
         '</td>';
 }
@@ -831,7 +835,8 @@ function paintQwenButtons() {
     }
 }
 
-// 🤖 / 🎲: Qwen（ComfyUI）に下書きさせ、その行の空の欄に入れる（数秒。ComfyUI が初めて Qwen を読むときは数十秒）
+// 🤖 / 🔖 / 🔄 / 🎲: Qwen（ComfyUI）に下書きさせ、その行の空の欄に入れる（🔄 は入力のある欄も上書き。数秒。
+// ComfyUI が初めて Qwen を読むときは数十秒）
 async function qwenFill(index, mode) {
     commitEdit();
     const name = state.byIndex.get(index)['サムネイル'];
@@ -847,9 +852,11 @@ async function qwenFill(index, mode) {
         replaceRow(res.row);
         setDirty(true);
         refreshWords();
+        const overwrite = mode === 'overwrite';
         setStatus(res.filled.length
-            ? `${name} の ${res.filled.join('・')} に下書きを入れました（Qwen の答えは hint_by_qwen で見られます）`
-            : `${name}: 入れられる空の欄がありませんでした（Qwen の答えは hint_by_qwen で見られます）`, res.filled.length ? 'ok' : 'warn');
+            ? `${name} の ${res.filled.join('・')} ${overwrite ? 'を上書きしました' : 'に下書きを入れました'}（Qwen の答えは hint_by_qwen で見られます）`
+            : `${name}: ${overwrite ? '入れられる答えがありませんでした' : '入れられる空の欄がありませんでした'}（Qwen の答えは hint_by_qwen で見られます）`,
+            res.filled.length ? 'ok' : 'warn');
     } finally {
         state.qwenBusy.delete(index);
         paintQwenButtons();

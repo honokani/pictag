@@ -1,8 +1,9 @@
 """Qwen（ComfyUI の TextGenerate。Krea2 のテキストエンコーダーと同じ Qwen3-VL-4B）で、空の欄を下書きする
 
 - 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、
-  見本（キャプション 10 個。🤖 は上にある行から近い順、🔖 は同じマークの行を先にランダム、🎲 はほかの行からランダム）
-- 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）
+  見本（キャプション 10 個。🤖 は上にある行から近い順、🔖・🔄 は同じマークの行を先にランダム、🎲 はほかの行からランダム）
+- 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）。
+  🔄 は答えにあるキーと文を、書いてあっても置き換える（外れる単語のマークの語句は残す）
 - ComfyUI の呼び方は pj_loratrain（loratrain/backends.py）と同じ。ComfyUI の起動・停止はしない（起動しておいたものに乗るだけ）
 """
 import io
@@ -15,6 +16,7 @@ import uuid
 from PIL import Image
 
 from caption_format import parse_line, with_line
+from marks import auto_marks_of, matches_pattern
 from subjects import OTHERS, base_name
 from words import AUTO_KEYS
 
@@ -125,19 +127,27 @@ def is_tag(phrase):
     return phrase.strip(' .()').lower() not in NO_TAGS
 
 
-def fill_section(text, lines, keys):
-    """入力 text に、答えの行 lines を入れる。入れるのは値の無いキー（自動のキーは除く）と、文が1つも無いときの文だけ
+def is_sentence(line):
+    """キーの無い、語句のある行（文）か"""
+    key, phrases = parse_line(line)
+    return not key and bool(phrases)
 
-    答えの none・nan は捨て、語句が残らなかったキー・文は入れない。
+
+def fill_section(text, lines, keys, overwrite=False):
+    """入力 text に、答えの行 lines を入れる。入れるのは値の無いキー（自動のキーは除く）と、文が1つも無いときの文だけ
+    （overwrite（🔄）なら、答えにあるキーは値があっても置き換え、答えに文があれば前の文を置き換える）
+
+    答えの none・nan は捨て、語句が残らなかったキー・文は入れない（overwrite でも、それで消すことはない）。
     (入れたあとの入力, 入れたもの {'keys': {キー: 値}, 'sentences': [文]}) を返す（押し直したときに置き換える下書き）
     """
+    answer = [(key, [phrase for phrase in phrases if is_tag(phrase)]) for key, phrases in map(parse_line, lines)]
+    if overwrite and any(not key and phrases for key, phrases in answer):
+        text = '\n'.join(line for line in text.splitlines() if not is_sentence(line))
     present = [parse_line(line) for line in text.splitlines()]
-    filled = {key for key, phrases in present if key and phrases}
+    filled = set() if overwrite else {key for key, phrases in present if key and phrases}
     has_sentence = any(not key and phrases for key, phrases in present)
     added = {'keys': {}, 'sentences': []}
-    for line in lines:
-        key, phrases = parse_line(line)
-        phrases = [phrase for phrase in phrases if is_tag(phrase)]
+    for key, phrases in answer:
         if not phrases or key in AUTO_KEYS or (key and key in filled) or (not key and has_sentence):
             continue
         value = ', '.join(phrases)
@@ -170,6 +180,34 @@ def clear_drafts(text, drafted):
         return bool(phrases) and (keys.get(key) == ', '.join(phrases) if key else drop_sentences)
 
     return '\n'.join(line for line, key, phrases in parsed if not is_draft(key, phrases))
+
+
+def keep_word_marks(before, after, auto_marks, keys):
+    """🔄 の上書きで外れた単語のマーク（①など）の語句を、押す前の入力 before から after に足し直す（{段落: 入力} を返す）
+
+    足すのは外れたマークに当たっていた語句だけ（答えにも当たる語句があれば、外れないので足さない）。
+    キーのある語句はそのキーの値の末尾に、キーなしの語句は文の行として末尾に。keys は {段落: 確定タグのキー}
+    """
+    lost = [auto_marks[i] for i in set(auto_marks_of(before, auto_marks)) - set(auto_marks_of(after, auto_marks))]
+
+    def hits(section, key, phrases):
+        return [phrase for phrase in phrases
+                if any(base_name(section) == m['section'] and key == m['key'] and matches_pattern(m['phrase'], phrase) for m in lost)]
+
+    def restored(section):
+        text = after[section]
+        for key, phrases in map(parse_line, before.get(section, '').splitlines()):
+            words = hits(section, key, phrases)
+            if not words:
+                continue
+            if key:
+                current = [phrase for k, ps in map(parse_line, text.splitlines()) if k == key for phrase in ps]
+                text = with_key(text, key, ', '.join(dict.fromkeys([*current, *words])), keys[section])
+            else:
+                text = '\n'.join(filter(None, [text, ', '.join(words)]))
+        return text
+
+    return {section: restored(section) for section in after}
 
 
 # ---- ComfyUI（pj_loratrain の loratrain/backends.py と同じ呼び方） ----
