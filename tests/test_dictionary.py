@@ -62,7 +62,7 @@ def test_save_writes_readable_json(api, imgs, base_dir):
     assert table == {"sections": ["picture", "action", "girl", "guy"],
                      "rows": [{"image": "a.png", "is_dead": False, "texts": {"girl": "looks: standing"}},
                               {"image": "b.png", "is_dead": False, "texts": {}}],
-                     "auto_marks": [None] * 8}  # 自動のマーク ①〜⑧ の語句の設定（どれも設定なし）
+                     "auto_marks": [None] * 16}  # 単語のマーク ①〜⑯ の語句の設定（どれも設定なし）
 
 
 def test_unreadable_table_is_not_opened(api, tool, imgs, base_dir):

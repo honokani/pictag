@@ -5,8 +5,8 @@ import pytest
 
 import app as pictag
 from helpers import FakeComfy, make_images
-from qwen import (INSTRUCTIONS, clear_drafts, fill_section, fill_text, match_section, parse_caption, pick_random_samples,
-                  pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt)
+from qwen import (INSTRUCTIONS, clear_drafts, fill_section, fill_text, keep_word_marks, match_section, parse_caption,
+                  pick_random_samples, pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
@@ -130,6 +130,42 @@ def test_fill_text_adds_keys_outside_the_template_at_the_end():
         "looks: sitting\nclothes: red dress\npose: arms up")
 
 
+def test_fill_section_overwrite_replaces_answered_keys_and_sentences():
+    # 🔄: 答えにあるキーは値があっても置き換え、答えに文があれば前の文を置き換える。答えに無いキー（body）は残す
+    text, added = fill_section("looks: sitting\nbody: long hair\ngirl sits.",
+                               ["looks: standing", "clothes: red dress", "girl waves."], SUBJECT, overwrite=True)
+    assert text == "looks: standing\nclothes: red dress\nbody: long hair\ngirl waves."
+    assert added == {"keys": {"looks": "standing", "clothes": "red dress"}, "sentences": ["girl waves."]}
+
+
+def test_fill_section_overwrite_keeps_what_the_answer_does_not_have():
+    # 答えに文が無ければ前の文は残す。none・nan と自動のキー（characters）では消さない
+    text, added = fill_section("looks: sitting\ngirl sits.", ["looks: none", "characters: 1 girl"], SUBJECT, overwrite=True)
+    assert text == "looks: sitting\ngirl sits." and added == {"keys": {}, "sentences": []}
+
+
+WORD_MARKS = [{"section": "action", "key": "", "phrase": "*spread arms*"}, None,
+              {"section": "girl", "key": "looks", "phrase": "ponytail"}]
+KEYS = {"picture": PICTURE, "action": [], "girl A": SUBJECT}
+
+
+def test_keep_word_marks_adds_back_the_words_the_overwrite_dropped():
+    # 🔄 で外れた単語のマーク（①など）は、押す前の入力で当たっていた語句を足し直す
+    # （キーのある語句はそのキーの値の末尾に、キーなしの語句は文の行として末尾に。当たらなかった語句（smile）は足さない）
+    before = {"picture": "", "action": "girl spread arms", "girl A": "looks: ponytail, smile"}
+    after = {"picture": "place: beach", "action": "girl waves.", "girl A": "looks: long hair\nclothes: red dress"}
+    assert keep_word_marks(before, after, WORD_MARKS, KEYS) == {
+        "picture": "place: beach", "action": "girl waves.\ngirl spread arms",
+        "girl A": "looks: long hair, ponytail\nclothes: red dress"}
+
+
+def test_keep_word_marks_adds_nothing_when_the_answer_keeps_the_mark():
+    # 答えにも同じマークに当たる語句があれば、外れないので足さない（重ならない）
+    before = {"picture": "", "action": "girl spread arms", "girl A": "looks: ponytail"}
+    after = {"picture": "", "action": "girl spread arms wide.", "girl A": "looks: ponytail, smile"}
+    assert keep_word_marks(before, after, WORD_MARKS, KEYS) == after
+
+
 # ---- API（偽の ComfyUI で） ----
 
 ANSWER = ("picture:\n  - place: hilltop\n  - characters: 1 girl\n  - view: from side\n\naction:\n  - girl waves.\n\n"
@@ -194,6 +230,23 @@ def test_pressing_again_replaces_only_the_previous_draft(qwen_api, comfy):
     assert texts["picture"] == "place: beach"  # 新しい答えに無い view は、前の下書きごと消える
 
 
+def test_overwrite_replaces_filled_fields_and_keeps_word_mark_words(qwen_api):
+    # 🔄: 答えにあるキーと文は、入力があっても置き換える（答えに無い body は残す。ボタンで選んだ view も答えで置き換わる）。
+    # 上書きで外れる単語のマーク（①）の語句は足し直す
+    row = qwen_api.row_index("r10.png")
+    qwen_api.write(row, "view: from behind", section="picture")
+    qwen_api.write(row, "girl spread arms", section="action")
+    qwen_api.write(row, "looks: sitting\nbody: long hair")
+    qwen_api.post("/set_auto_mark", {"index": 0, "mark": {"section": "action", "key": "", "phrase": "*spread arms*"}})
+    res = qwen_api.qwen_fill(row, mode="overwrite")
+    assert res["success"], res
+    texts = res["row"]["texts"]
+    assert texts["picture"] == "place: hilltop\nview: from side"
+    assert texts["action"] == "girl waves.\ngirl spread arms"
+    assert texts["girl"] == "looks: standing\nclothes: red dress\nbody: long hair"
+    assert res["filled"] == ["picture", "action", "girl"]
+
+
 def test_qwen_answer_stays_for_hint_by_qwen_after_reopening(qwen_api):
     qwen_api.qwen_fill(qwen_api.row_index("r10.png"))
     qwen_api.save()
@@ -234,7 +287,8 @@ def test_qwen_fill_mark_takes_rows_with_the_same_marks_first(qwen_api, comfy):
     assert sorted(used[-2:]) == [1, 2] and used[-3] == 3  # A の行が最後、その前に ★ の行
 
 
-def test_qwen_fill_mark_takes_rows_sharing_word_marks_before_the_others(qwen_api, comfy):
+@pytest.mark.parametrize("mode", ["mark", "overwrite"])  # 🔄 も 🔖 と同じ見本
+def test_qwen_fill_mark_takes_rows_sharing_word_marks_before_the_others(qwen_api, comfy, mode):
     # 🔖: 単語のマーク（①〜⑧。設定した語句が入力にある）を共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行
     # → ほかの行（単語のマークを共有する行が頼む文の直前）
     index = {i: qwen_api.row_index(f"r{i:02}.png") for i in range(12)}
@@ -243,7 +297,7 @@ def test_qwen_fill_mark_takes_rows_sharing_word_marks_before_the_others(qwen_api
     qwen_api.post("/set_auto_mark", {"index": 0, "mark": {"section": "girl", "key": "looks", "phrase": "pose3"}})
     qwen_api.post("/set_mark", {"rows": [index[1], index[2], index[10]], "mark": 0})
     qwen_api.post("/set_marks", {"rows": [index[4], index[10]], "mark": 0, "on": True})
-    res = qwen_api.qwen_fill(index[10], mode="mark")
+    res = qwen_api.qwen_fill(index[10], mode=mode)
     assert res["success"], res
     used = [int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"])]
     assert len(set(used)) == 10 and 10 not in used

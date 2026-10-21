@@ -11,7 +11,7 @@ from marks import auto_marks_of, matches_pattern
 
 ONE = list("ABCDEFGH")
 MANY = ["★", "●", "▲", "■", "◆", "♥", "♣", "♠"]
-AUTO = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
+AUTO = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩", "⑪", "⑫", "⑬", "⑭", "⑮", "⑯"]  # 単語は 16 個
 SMILE = {"section": "girl", "key": "looks", "phrase": "smile"}
 
 
@@ -134,7 +134,7 @@ def test_mark_column_names_are_reserved(api, tool, imgs, name):
     assert api.add_section(name)["success"] is False
 
 
-# ---- 自動のマーク（①〜⑧。語句を設定すると、その語句のある行に付く。行には持たない） ----
+# ---- 自動のマーク（①〜⑯。語句を設定すると、その語句のある行に付く。行には持たない） ----
 
 def set_auto(api, index, mark):
     return api.post("/set_auto_mark", {"index": index, "mark": mark})
@@ -143,16 +143,16 @@ def set_auto(api, index, mark):
 def test_auto_marks_are_set_per_project_and_saved_in_the_table(api, imgs, base_dir):
     # 設定は「A, B を除いた段落の名前・キー・語句」。プロジェクトごとに table.json へ保存する
     api.load(imgs)
-    assert api.table()["auto_marks"] == [None] * 8
+    assert api.table()["auto_marks"] == [None] * 16
     res = set_auto(api, 2, {"section": " girl ", "key": "looks", "phrase": " smile "})
-    assert res["success"] and res["auto_marks"] == [None, None, SMILE] + [None] * 5
+    assert res["success"] and res["auto_marks"] == [None, None, SMILE] + [None] * 13
     api.save()
     path = base_dir / "data_out" / "proj" / "table.json"
     assert json.loads(path.read_text(encoding="utf-8"))["auto_marks"][2] == SMILE
 
     api.open_project("proj")
     assert api.table()["auto_marks"][2] == SMILE
-    assert set_auto(api, 2, None)["auto_marks"] == [None] * 8  # 外す
+    assert set_auto(api, 2, None)["auto_marks"] == [None] * 16  # 外す
 
 
 def test_tables_without_auto_marks_have_none_set(api, imgs, base_dir):
@@ -163,11 +163,25 @@ def test_tables_without_auto_marks_have_none_set(api, imgs, base_dir):
     del table["auto_marks"]  # 0.4.4 までの table.json には無い
     path.write_text(json.dumps(table, ensure_ascii=False), encoding="utf-8")
     api.open_project("proj")
-    assert api.table()["auto_marks"] == [None] * 8
+    assert api.table()["auto_marks"] == [None] * 16
+
+
+def test_word_marks_go_up_to_sixteen_and_tables_with_eight_are_read(api, imgs, base_dir):
+    # 単語のマークは ①〜⑯ の 16 個（排他・複数は 8 個のまま）。8 個だったときの table.json も読める（足りない番号は設定なし）
+    api.load(imgs)
+    assert set_auto(api, 15, SMILE)["auto_marks"][15] == SMILE
+    api.save()
+    path = base_dir / "data_out" / "proj" / "table.json"
+    table = json.loads(path.read_text(encoding="utf-8"))
+    table["auto_marks"] = [SMILE] + [None] * 7  # 0.5.5 までは 8 個
+    path.write_text(json.dumps(table, ensure_ascii=False), encoding="utf-8")
+    api.open_project("proj")
+    assert api.table()["auto_marks"] == [SMILE] + [None] * 15
+    assert set_mark(api, [0], 8)["success"] is False  # 排他は 0〜7 のまま
 
 
 @pytest.mark.parametrize("payload", [
-    {"index": 8, "mark": SMILE},  # 0〜7 の外
+    {"index": 16, "mark": SMILE},  # 0〜15 の外
     {"index": True, "mark": SMILE},  # 真偽は番号ではない
     {"index": 0, "mark": {**SMILE, "key": "a,b"}},  # キーにカンマは使えない（キーなしは空）
     {"index": 0, "mark": {**SMILE, "phrase": " "}},
@@ -178,7 +192,7 @@ def test_bad_auto_mark_requests_are_rejected(api, imgs, payload):
     api.load(imgs)
     res = api.post("/set_auto_mark", payload)
     assert res["success"] is False and res["message"]
-    assert api.table()["auto_marks"] == [None] * 8
+    assert api.table()["auto_marks"] == [None] * 16
 
 
 @pytest.mark.parametrize("pattern, phrase, expected", [

@@ -14,11 +14,11 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, match_section, parse_caption,
-                  pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
+from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, keep_word_marks, match_section,
+                  parse_caption, pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of, display_names,
                       insert_position, name_for_new, pov_choices, pov_names, template_keys)
-from marks import (AUTO, COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
+from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
                    many_numbers, many_text, marks_to_file, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
@@ -43,7 +43,9 @@ SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォ�
 CAPTION_EXT = '.caption'  # 書き出すキャプションの拡張子（captions/<画像名>.caption）
 HINT_EXT = '.txt'  # 画像フォルダの、画像と同じ名前のこの拡張子のファイルは hint（読むだけ）
 QWEN_DIR = 'qwen'  # data_work/<フォルダ名>/ の下の、Qwen の答えの置き場（<画像名>.txt。右端の列の hint_by_qwen で見る）
-QWEN_MODES = ('near', 'mark', 'random')  # 見本の選び方: 🤖 は上の行から近い順、🔖 は同じマークの行を先に、🎲 はほかの行からランダム
+# 押したボタン（見本の選び方）: 🤖 は上の行から近い順、🔖 は同じマークの行を先に、🎲 はほかの行からランダム。
+# 🔄 は 🔖 と同じ見本で、入力のある欄も上書きする
+QWEN_MODES = ('near', 'mark', 'overwrite', 'random')
 FIXED_SECTIONS = ['picture', 'action']  # 固定の段落: どのプロジェクトにも必ずあり、外せない・改名できない
 DEFAULT_SECTIONS = [*FIXED_SECTIONS, 'girl', 'guy']  # 新規プロジェクトの段落（dog などは必要なときに足す。空の段落は出力しない）
 TOKENIZER_FILE = Path('tokenizer') / 'qwen3vl_tokenizer.json'  # data_work/ 配下
@@ -182,7 +184,7 @@ class CaptionTool:
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
-        self.auto_marks = [None] * COUNT  # 自動のマークの設定（番号ごとに {section, key, phrase} か None。プロジェクトごと）
+        self.auto_marks = [None] * AUTO_COUNT  # 自動のマークの設定（番号ごとに {section, key, phrase} か None。プロジェクトごと）
         self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
         self.hints = {}  # 画像名 → hint（画像フォルダの同じ名前の .txt）
         self.qwen_hints = {}  # 画像名 → Qwen の答え（data_work/<フォルダ名>/qwen/ の同じ名前の .txt）
@@ -772,13 +774,13 @@ class CaptionTool:
         return True
 
     def set_auto_mark(self, index, mark):
-        """単語のマーク（番号 0〜7）の設定を {section（A, B を除いた段落の名前）, key（キーなしは空）, phrase（* は何文字でも）} にする
+        """単語のマーク（番号 0〜15）の設定を {section（A, B を除いた段落の名前）, key（キーなしは空）, phrase（* は何文字でも）} にする
 
         None なら外す。行には持たない（画面とサーバーが入力から付ける）。保存で table.json に書く。設定の一覧を返す（失敗は None）
         """
         self.last_error = ''
         try:
-            check_number(index)
+            check_number(index, AUTO_COUNT)
             if mark is not None:
                 if not isinstance(mark, dict):
                     raise ValueError('単語のマークの設定が正しくありません')
@@ -834,8 +836,9 @@ class CaptionTool:
         """Qwen に下書きさせ、その行の空の欄（値の無いキーと、文の無い段落）に入れる
 
         見本は空でないキャプション 10 個（削除済みの行は除く）。mode が near（🤖）なら上にある行から近い順に、
-        mark（🔖）なら A〜D が同じ行 → ★●▲■ を共有する行 → ほかの行の順にランダムに、
-        random（🎲）ならその行のほかの全部の行からランダムに。(画面に渡す1行, 入れた段落) を返す。
+        mark（🔖）なら単語のマークを共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行の順にランダムに、
+        random（🎲）ならその行のほかの全部の行からランダムに。overwrite（🔄）は mark と同じ見本で、答えにあるキーと文を
+        入力があっても置き換える（外れる単語のマークの語句は足し直す）。(画面に渡す1行, 入れた段落) を返す。
         行・見本・画像の問題は ValueError、ComfyUI の問題は OSError（繋がらない・時間切れ）か RuntimeError（実行の失敗）
         """
         if mode not in QWEN_MODES:
@@ -856,7 +859,7 @@ class CaptionTool:
             captions = [(i, self.caption_of(r, sections)) for i, r in others]
             if mode == 'random':
                 samples = pick_random_samples([caption for _, caption in captions])
-            else:  # mark: 単語のマークを共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行
+            else:  # mark・overwrite: 単語のマークを共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行
                 def marks_of(r):
                     words = set(auto_marks_of({s: to_text(r[s]) for s in sections}, self.auto_marks))
                     return words, to_text(r['mark']), set(many_numbers(to_text(r['marks'])))
@@ -879,15 +882,18 @@ class CaptionTool:
         drafts = self.read_qwen_drafts(name)
         texts = {s: clear_drafts(before[s], drafts.get(s, {})) for s in sections}
         present = [s for s in sections if phrases_of(texts[s])]  # 答えの guy: は、この行で入力のある guy（1つなら）に当てる
+        overwrite = mode == 'overwrite'
         added = {}
         for block, lines in parse_caption(answer):
             section = match_section(block, sections, present)
             if section is None:
                 continue
-            texts[section], put = fill_section(texts[section], lines, keys[section])
+            texts[section], put = fill_section(texts[section], lines, keys[section], overwrite)
             drafted = added.setdefault(section, {'keys': {}, 'sentences': []})
             drafted['keys'].update(put['keys'])
             drafted['sentences'] += put['sentences']
+        if overwrite:
+            texts = keep_word_marks(before, texts, self.auto_marks, keys)
         for section in sections:
             if texts[section] != before[section]:
                 self.update_text(row_index, section, texts[section])
@@ -1165,7 +1171,8 @@ def freeze_dictionary():
 
 @app.route('/qwen_fill', methods=['POST'])
 def qwen_fill():
-    """🤖 / 🔖 / 🎲: Qwen に下書きさせ、その行の空の欄に入れる（{row_index, mode: near（既定）/ mark / random}。qwen 版のときだけ）
+    """🤖 / 🔖 / 🔄 / 🎲: Qwen に下書きさせ、その行の空の欄に入れる（🔄 は入力のある欄も上書き）
+    （{row_index, mode: near（既定）/ mark / overwrite / random}。qwen 版のときだけ）
 
     入れた段落と、行を返す
     """
@@ -1230,7 +1237,7 @@ def clear_marks():
 
 @app.route('/set_auto_mark', methods=['POST'])
 def set_auto_mark():
-    """単語のマークの設定（{index: 0〜7, mark: {section, key（キーなしは空）, phrase} か null}）。プロジェクトごと（保存で table.json に書く）"""
+    """単語のマークの設定（{index: 0〜15, mark: {section, key（キーなしは空）, phrase} か null}）。プロジェクトごと（保存で table.json に書く）"""
     data = request.get_json() or {}
     marks = caption_tool.set_auto_mark(data.get('index'), data.get('mark'))
     if marks is None:

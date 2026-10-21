@@ -55,24 +55,27 @@
     </section>
 
     <section id="markTools" class="bar tools" hidden>
-        <!-- 絞り込み: 押すとその印の行だけ（押した印のどれかがある行）、もう一度押すと外す。段の左端の ☓ はその段の印の無い行
-             単語の ①〜⑧ は右クリックで語句を選ぶ。ボタンは表を読んだときに入れる -->
+        <!-- 絞り込み: 押すとその印の行だけ（押した印のどれかがある行）、もう一度押すと外す。段ごとに2段で、記号の真下の ☓ はその印の無い行、
+             段の左端の ☓ はその段の印の無い行（☓ は全部に掛ける）。単語の ①〜⑯ は右クリックで語句を選ぶ。ボタンは表を読んだときに入れる -->
         <span id="markFilters" class="group mark-filters">
             <span class="filter-group" data-kind="one" data-label="排他"></span>
             <span class="filter-group" data-kind="many" data-label="複数"></span>
             <span id="autoMarks" class="filter-group" data-kind="auto" data-label="単語"></span>
         </span>
         <button id="selectVisibleButton" type="button" title="Ctrl+A">表示中をすべて選択</button>
-        <!-- 行を選んでいる間だけ出す -->
+        <!-- 行を選んでいる間だけ出す。2段に積む（絞り込みの2段と同じ高さにし、1440px で帯の高さを変えない） -->
         <form id="bulkForm" class="group bulk" hidden>
-            <span id="selectionInfo">選択 0 行</span>
-            <select id="bulkSection" aria-label="一括入力の段落"></select>
-            <select id="bulkKey" aria-label="一括入力のキー"></select>
-            <input id="bulkText" type="text" placeholder="語句（例: standing）" autocomplete="off" aria-label="一括入力の語句">
-            <!-- 名前は短く（2段目の帯を、単語のマークと並べても 1440px で1段に収める） -->
-            <button type="submit" value="add" title="選択行に追加">追加</button>
-            <button type="submit" value="remove" title="選択行から削除">削除</button>
-            <button type="button" id="deselectButton" class="hold" title="1秒長押しで、選択を解除">選択解除</button>
+            <span class="bulk-row">
+                <span id="selectionInfo">選択 0 行</span>
+                <select id="bulkSection" aria-label="一括入力の段落"></select>
+                <select id="bulkKey" aria-label="一括入力のキー"></select>
+            </span>
+            <span class="bulk-row">
+                <input id="bulkText" type="text" placeholder="語句（例: standing）" autocomplete="off" aria-label="一括入力の語句">
+                <button type="submit" value="add" title="選択行に追加">追加</button>
+                <button type="submit" value="remove" title="選択行から削除">削除</button>
+                <button type="button" id="deselectButton" class="hold" title="1秒長押しで、選択を解除">選択解除</button>
+            </span>
         </form>
     </section>
 
@@ -132,7 +135,7 @@
 
     <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
 
-    <!-- 単語のマークの設定（帯の ①〜⑧ を右クリックで、その下に開く） -->
+    <!-- 単語のマークの設定（帯の ①〜⑯ を右クリックで、その下に開く） -->
     <form id="autoMarkForm" class="group auto-mark-form" hidden>
         <span id="autoMarkLabel"></span>
         <select id="autoMarkSection" aria-label="単語のマークの段落"></select>

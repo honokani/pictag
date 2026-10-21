@@ -24,9 +24,10 @@ const state = {
     qwen: false,          // qwen 版で起動したか（🤖🎲 の列と hint_by_qwen を出す）
     qwenBusy: new Map(),  // Qwen が書いている行の index → 見本の選び方（near / random）
     thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
-    markChoices: {one: [], many: [], auto: []},  // マークの記号（番号の順。排他 A〜H、複数 ★●▲■◆♥♣♠、単語 ①〜⑧）。行のマークは番号で持つ
+    markChoices: {one: [], many: [], auto: []},  // マークの記号（番号の順。排他 A〜H、複数 ★●▲■◆♥♣♠、単語 ①〜⑯）。行のマークは番号で持つ
     autoMarks: [],                     // 単語のマークの設定（番号ごとに {section, key, phrase} か null。プロジェクトごと）
-    filter: {one: new Set(), many: new Set(), auto: new Set()},  // 絞り込みで押しているボタン（番号か、その段の印の無い行の 'none'）
+    filter: {one: new Set(), many: new Set(), auto: new Set()},  // 絞り込みで押している印のボタン（番号）
+    without: {one: new Set(), many: new Set(), auto: new Set()},  // 押している ☓（番号か、左端の ☓ の 'none'）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count, shared}]
     words: [],            // キーなしの文の単語 [{section, word, count, shared}]
@@ -544,9 +545,10 @@ function headHtml() {
     return [
         thumbHeadHtml(),
         '<th title="キャプションのトークン数 / 上限">token</th>',
-        ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。' +
-            '🤖（上）: 上の 10 行を見本に / 🔖（中）: 同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行を見本に / ' +
-            '🎲（下）: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
+        ...(state.qwen ? ['<th class="qwen-head" title="Qwen（ComfyUI）で、その行の空の欄を下書きする。上から ' +
+            '🤖: 上の 10 行を見本に / 🔖: 同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに 10 行を見本に / ' +
+            '🔄: 🔖 と同じ見本で、入力のある欄も上書き（外れる単語のマークの語句は残す） / ' +
+            '🎲: ほかの行からランダムに 10 行を見本に">🤖</th>'] : []),
         '<th>マーク</th>',
         ...state.sections.map(sectionHeadHtml),
         sideHeadHtml(),
@@ -595,7 +597,7 @@ function autoMarkTitle(i) {
     return m ? `${label} ${m.section} / ${keyLabel(m.key)} / ${m.phrase}（右クリックで変える）` : `${label}（右クリックで、段落・キー・語句を選ぶ）`;
 }
 
-// マークの欄: 縦長の 3 列 × 8 行。左の列が排他（A〜H のどれか1つ）、真ん中が複数（★●▲■◆♥♣♠）、右が単語（①〜⑧。押せない）
+// マークの欄: 縦長の 4 列 × 8 行。左から排他（A〜H のどれか1つ）、複数（★●▲■◆♥♣♠）、単語（①〜⑧ と ⑨〜⑯。押せない）
 // ボタンは番号を持ち、記号を見せる
 function marksHtml(row) {
     const button = (kind, mark, label, on) =>
@@ -608,12 +610,15 @@ function marksHtml(row) {
     return `<td class="marks"><div class="mark-grid">${one}${many}${auto}</div></td>`;
 }
 
-// マークの絞り込みに合うか: 何も押していなければ全部。押していれば、押した印のどれかがある行（'none' はその段の印が無い行）
+// マークの絞り込みに合うか: 何も押していなければ全部。印のボタンを押していれば、押した印のどれかがある行。
+// ☓ を押していれば、その印（左端の ☓ はその段の印すべて）が無い行（☓ は全部に掛ける）
 function matchesFilter(row) {
-    const {one, many, auto} = state.filter;
-    if (!one.size && !many.size && !auto.size) return true;
-    const hits = (pressed, marks) => [...pressed].some(m => (m === 'none' ? !marks.length : marks.includes(m)));
-    return hits(one, row.mark === null ? [] : [row.mark]) || hits(many, row.marks) || hits(auto, autoMarksOf(row));
+    const kinds = ['one', 'many', 'auto'];
+    if (kinds.every(kind => !state.filter[kind].size && !state.without[kind].size)) return true;
+    const marks = {one: row.mark === null ? [] : [row.mark], many: row.marks, auto: autoMarksOf(row)};
+    const pressed = kinds.filter(kind => state.filter[kind].size);
+    const any = !pressed.length || pressed.some(kind => [...state.filter[kind]].some(m => marks[kind].includes(m)));
+    return any && kinds.every(kind => [...state.without[kind]].every(m => (m === 'none' ? !marks[kind].length : !marks[kind].includes(m))));
 }
 
 // hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）。全文を出し（高さは中身に合わせる）、右上のボタンで畳める
@@ -801,22 +806,25 @@ function samplesAbove(index) {
     return count;
 }
 
-// 🤖🎲 の欄（qwen 版だけ）: Qwen でその行の空の欄を下書きする。🤖 は上の 10 行、🎲 はほかの行からランダムに 10 行を見本に
-// 見本が足りなければ押せない（理由は title）。書いている間は、押した方が ⏳ で、どちらも押せない
+// 🤖🎲 の欄（qwen 版だけ）: 上から 🤖 🔖 🔄 🎲。Qwen でその行の空の欄を下書きする（🔄 は入力のある欄も上書き）。
+// 🤖 は上の 10 行、🔖・🔄 は同じマークの行を先に、🎲 はほかの行からランダムに 10 行を見本に
+// 見本が足りなければ押せない（理由は title）。書いている間は、押した方が ⏳ で、どれも押せない
 function qwenHtml(row) {
     const busy = state.qwenBusy.get(row.index);
     const elsewhere = state.rows.filter(isSample).length - (isSample(row) ? 1 : 0);
-    const button = (mode, mark, count, source, missing) => {
+    const marked = '同じマークの行（単語① → 排他A → 複数★）を先に、足りなければランダムに 10 行';
+    const button = (mode, mark, count, source, missing, does = '空の欄を下書きする') => {
         const ready = !row.is_dead && count >= QWEN_SAMPLES && !busy;
         const title = busy === mode ? 'Qwen が書いています' : row.is_dead ? '元の画像がありません'
-            : count >= QWEN_SAMPLES ? `Qwen で、この行の空の欄を下書きする（見本は${source}）` : `${missing}（今 ${count} 行）`;
+            : count >= QWEN_SAMPLES ? `Qwen で、この行の${does}（見本は${source}）` : `${missing}（今 ${count} 行）`;
         return `<button type="button" class="qwen-btn" data-mode="${mode}" title="${title}"${ready ? '' : ' disabled'}>` +
             `${busy === mode ? '⏳' : mark}</button>`;
     };
     return '<td class="qwen">' +
         button('near', '🤖', samplesAbove(row.index), '上の 10 行', `上に見本（キャプションのある行）が ${QWEN_SAMPLES} 行必要です`) +
-        button('mark', '🔖', elsewhere, '同じマークの行（A〜D → ★●▲■）を先に、足りなければランダムに 10 行',
-            `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
+        button('mark', '🔖', elsewhere, marked, `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
+        button('overwrite', '🔄', elsewhere, marked, `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`,
+            '欄を上書きする。答えにあるキーと文は入力があっても置き換え、外れる単語のマークの語句は残す') +
         button('random', '🎲', elsewhere, 'ほかの行からランダムに 10 行', `見本（キャプションのある行）がほかに ${QWEN_SAMPLES} 行必要です`) +
         '</td>';
 }
@@ -831,7 +839,8 @@ function paintQwenButtons() {
     }
 }
 
-// 🤖 / 🎲: Qwen（ComfyUI）に下書きさせ、その行の空の欄に入れる（数秒。ComfyUI が初めて Qwen を読むときは数十秒）
+// 🤖 / 🔖 / 🔄 / 🎲: Qwen（ComfyUI）に下書きさせ、その行の空の欄に入れる（🔄 は入力のある欄も上書き。数秒。
+// ComfyUI が初めて Qwen を読むときは数十秒）
 async function qwenFill(index, mode) {
     commitEdit();
     const name = state.byIndex.get(index)['サムネイル'];
@@ -847,9 +856,11 @@ async function qwenFill(index, mode) {
         replaceRow(res.row);
         setDirty(true);
         refreshWords();
+        const overwrite = mode === 'overwrite';
         setStatus(res.filled.length
-            ? `${name} の ${res.filled.join('・')} に下書きを入れました（Qwen の答えは hint_by_qwen で見られます）`
-            : `${name}: 入れられる空の欄がありませんでした（Qwen の答えは hint_by_qwen で見られます）`, res.filled.length ? 'ok' : 'warn');
+            ? `${name} の ${res.filled.join('・')} ${overwrite ? 'を上書きしました' : 'に下書きを入れました'}（Qwen の答えは hint_by_qwen で見られます）`
+            : `${name}: ${overwrite ? '入れられる答えがありませんでした' : '入れられる空の欄がありませんでした'}（Qwen の答えは hint_by_qwen で見られます）`,
+            res.filled.length ? 'ok' : 'warn');
     } finally {
         state.qwenBusy.delete(index);
         paintQwenButtons();
@@ -1495,31 +1506,34 @@ function fillMarkFilters(choices) {
     });
 }
 
-// 絞り込みのボタン（3段目の帯）を描く: 段（排他・複数・単語）ごとに、左端の ☓（その段の印の無い行）と記号。押しているものは on
-// 単語の ①〜⑧ は設定の無いものを薄く、語句は title（右クリックで設定）
+// 絞り込みのボタン（3段目の帯）を描く: 段（排他・複数・単語）ごとに2段。上の段は名前・左端の ☓（その段の印の無い行）・記号、
+// 下の段は記号の真下に ☓（その印の無い行）。押しているものは on。単語の ①〜⑯ は設定の無いもの（と下の ☓）を薄く、語句は title（右クリックで設定）
 function paintMarkFilters() {
     const noneTitle = {one: '排他の印の無い行だけ', many: '複数の印の無い行だけ', auto: '単語の印の無い行だけ'};
     document.querySelectorAll('#markFilters .filter-group').forEach(group => {
         const kind = group.dataset.kind;
-        const button = (mark, label, title, extra = '') => `<button type="button" class="filter-btn${extra}` +
-            `${state.filter[kind].has(mark) ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}" title="${escapeHtml(title)}">${escapeHtml(label)}</button>`;
-        const marks = state.markChoices[kind].map((label, i) => (kind === 'auto'
-            ? button(i, label, autoMarkTitle(i), ` auto-mark${state.autoMarks[i] ? '' : ' unset'}`)
-            : button(i, label, `${label} の行だけ（もう一度押すと外す）`)));
-        group.innerHTML = escapeHtml(group.dataset.label) + button('none', '☓', `${noneTitle[kind]}（もう一度押すと外す）`, ' none') + marks.join('');
+        const button = (pressed, mark, label, title, extra = '') => `<button type="button" class="filter-btn${extra}` +
+            `${pressed.has(mark) ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}" title="${escapeHtml(title)}">${escapeHtml(label)}</button>`;
+        const unset = i => (kind === 'auto' && !state.autoMarks[i] ? ' unset' : '');
+        const pairs = state.markChoices[kind].map((label, i) => (kind === 'auto'
+            ? button(state.filter[kind], i, label, autoMarkTitle(i), ` auto-mark${unset(i)}`)
+            : button(state.filter[kind], i, label, `${label} の行だけ（もう一度押すと外す）`))
+            + button(state.without[kind], i, '☓', `${label} の無い行だけ（もう一度押すと外す）`, ` without${unset(i)}`));
+        group.innerHTML = `<span class="filter-label">${escapeHtml(group.dataset.label)}</span>` +
+            button(state.without[kind], 'none', '☓', `${noneTitle[kind]}（もう一度押すと外す）`, ' none') + '<span></span>' + pairs.join('');
     });
 }
 
-// 絞り込みのボタンを押す・外す（押したボタンのどれかに合う行を出す）
-function toggleFilter(kind, mark) {
-    const pressed = state.filter[kind];
+// 絞り込みのボタンを押す・外す（印のボタンは押したもののどれかがある行、☓ はどれも無い行を出す）
+function toggleFilter(kind, mark, without) {
+    const pressed = (without ? state.without : state.filter)[kind];
     if (pressed.has(mark)) pressed.delete(mark);
     else pressed.add(mark);
     paintMarkFilters();
     applyFilter();
 }
 
-// ---- 単語のマークの設定（帯の ①〜⑧ を右クリック: 段落 → キー → 語句を選ぶと、その語句のある行に付く） ----
+// ---- 単語のマークの設定（帯の ①〜⑯ を右クリック: 段落 → キー → 語句を選ぶと、その語句のある行に付く） ----
 
 // 設定の欄を、押したボタンの下に開く（今の設定を入れておく）
 function openAutoMarkForm(button) {
@@ -1549,7 +1563,11 @@ async function sendAutoMark(mark) {
     const res = await postJson('/set_auto_mark', {index: Number($('autoMarkForm').dataset.mark), mark});
     if (!res.success) return setStatus(res.message, 'error');
     state.autoMarks = res.auto_marks;
-    state.autoMarks.forEach((m, i) => { if (!m) state.filter.auto.delete(i); });  // 外した番号の絞り込みも外す
+    state.autoMarks.forEach((m, i) => {  // 外した番号の絞り込み（下の ☓ も）も外す
+        if (m) return;
+        state.filter.auto.delete(i);
+        state.without.auto.delete(i);
+    });
     closeAutoMarkForm();
     paintMarkFilters();
     rerenderRows();
@@ -1825,7 +1843,8 @@ function wire() {
         hideSuggestions();
     });
 
-    // 絞り込みのボタン: 押すとその印の行だけ、もう一度押すと外す（設定の無い単語の ①〜⑧ は、絞り込まずに案内だけ）
+    // 絞り込みのボタン: 押すとその印の行だけ（☓ はその印の無い行だけ）、もう一度押すと外す
+    // （設定の無い単語の ①〜⑯ と、その下の ☓ は、絞り込まずに案内だけ）
     $('markFilters').addEventListener('click', event => {
         const button = event.target.closest('.filter-btn');
         if (!button) return;
@@ -1835,9 +1854,9 @@ function wire() {
             setStatus('右クリックで、段落・キー・語句を選びます（その語句のある行に付きます）');
             return;
         }
-        toggleFilter(kind, mark);
+        toggleFilter(kind, mark, mark === 'none' || button.classList.contains('without'));
     });
-    // 単語のマーク: 帯の ①〜⑧ を右クリックで設定の欄を開く。欄の外を押すか Esc で閉じる
+    // 単語のマーク: 帯の ①〜⑯ を右クリックで設定の欄を開く。欄の外を押すか Esc で閉じる
     $('autoMarks').addEventListener('contextmenu', event => {
         const button = event.target.closest('.auto-mark');
         if (!button) return;
