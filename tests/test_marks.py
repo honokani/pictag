@@ -7,6 +7,7 @@ import json
 import pytest
 
 from helpers import caption_of, make_images
+from marks import auto_marks_of, matches_pattern
 
 ONE = list("ABCDEFGH")
 MANY = ["★", "●", "▲", "■", "◆", "♥", "♣", "♠"]
@@ -168,7 +169,7 @@ def test_tables_without_auto_marks_have_none_set(api, imgs, base_dir):
 @pytest.mark.parametrize("payload", [
     {"index": 8, "mark": SMILE},  # 0〜7 の外
     {"index": True, "mark": SMILE},  # 真偽は番号ではない
-    {"index": 0, "mark": {**SMILE, "key": ""}},  # キーが要る
+    {"index": 0, "mark": {**SMILE, "key": "a,b"}},  # キーにカンマは使えない（キーなしは空）
     {"index": 0, "mark": {**SMILE, "phrase": " "}},
     {"index": 0, "mark": {**SMILE, "section": ""}},
     {"index": 0, "mark": "smile"},
@@ -178,3 +179,36 @@ def test_bad_auto_mark_requests_are_rejected(api, imgs, payload):
     res = api.post("/set_auto_mark", payload)
     assert res["success"] is False and res["message"]
     assert api.table()["auto_marks"] == [None] * 8
+
+
+@pytest.mark.parametrize("pattern, phrase, expected", [
+    ("smile", "smile", True),
+    ("smile", "slight smile", False),  # 語句そのもの
+    ("girl spread arms", "girl spread arms.", True),  # 文末の . は外して比べる
+    ("girl spread arms.", "girl spread arms", True),
+    ("*girl spread arms*", "girl spread arms wildly.", True),  # * は何文字でも
+    ("*hair", "black hair", True),
+    ("*hair", "hair clip", False),
+    ("a*c", "abc", True),
+    ("a.c", "abc", False),  # * のほかの記号は文字のまま
+])
+def test_word_mark_patterns(pattern, phrase, expected):
+    assert matches_pattern(pattern, phrase) is expected
+
+
+def test_word_marks_of_a_row_look_at_the_key_in_sections_of_the_same_name():
+    # 単語のマーク: 設定した語句が、A, B を除いた名前の段落のそのキー（キーなしは文）の語句に合えば付く
+    marks = [{"section": "girl", "key": "looks", "phrase": "smile"}, None,
+             {"section": "action", "key": "", "phrase": "*spread arms*"},
+             {"section": "guy", "key": "looks", "phrase": "smile"},
+             {"section": "girl", "key": "body", "phrase": "smile"}] + [None] * 3
+    texts = {"girl A": "looks: standing, smile", "action": "girl spread arms wide.", "guy": "looks: sitting"}
+    assert auto_marks_of(texts, marks) == [0, 2]
+
+
+def test_word_marks_can_be_set_for_sections_without_keys(api, imgs):
+    # action など確定タグの無い段落は、キーなし（空）で文に合わせる
+    api.load(imgs)
+    res = set_auto(api, 0, {"section": "action", "key": "", "phrase": "*spread arms*"})
+    assert res["success"], res
+    assert res["auto_marks"][0] == {"section": "action", "key": "", "phrase": "*spread arms*"}

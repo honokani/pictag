@@ -53,7 +53,7 @@ def write(page, name, text, section="girl"):
     cell.click()
     cell.locator('textarea[data-key=""]').fill(text)
     page.evaluate("document.activeElement.blur()")
-    expect(cell.locator(".val").first).to_be_visible()
+    expect(cell.locator(".ln:not(.empty)").first).to_be_visible()
 
 
 def test_eight_exclusive_and_eight_multi_marks(page, imgs):
@@ -206,3 +206,26 @@ def test_auto_marks_follow_the_phrase_chosen_by_right_click(page, imgs):
     expect(form).to_be_hidden()
     expect(auto(page, "a.png", 0)).not_to_have_class(ON)
     expect(setting).to_have_class(re.compile(r"\bunset\b"))
+
+
+def test_word_marks_match_sentences_of_action_without_keys(page, imgs):
+    # 帯の名前は「単語」。action のように確定タグの無い段落は「（キーなし）」で文に合わせる（文末の . は外し、* は何文字でも）
+    load_dir(page, imgs)
+    expect(page.locator("#autoMarks")).to_contain_text("単語")
+    write(page, "a.png", "girl spread arms wildly", section="action")
+    write(page, "b.png", "girl spread legs.", section="action")  # 文末に . のある文
+    page.wait_for_function("() => state.phrases.some(p => p.phrase === 'girl spread legs.')")
+    setting = page.locator('#autoMarks .auto-mark[data-mark="0"]')
+    setting.click(button="right")
+    page.select_option("#autoMarkSection", "action")
+    expect(page.locator("#autoMarkKey option")).to_have_text(["（キーなし）"])
+    phrase = page.locator("#autoMarkPhrase")
+    phrase.press_sequentially("legs")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("girl spread legs")  # 候補はその段落の文（. は外す）
+    expect(page.locator("#suggestions:visible li.active")).not_to_contain_text("legs.")
+    phrase.fill("*spread arms*")
+    page.locator('#autoMarkForm button[type="submit"]').click()
+    expect(page.locator("#autoMarkForm")).to_be_hidden()
+    expect(setting).to_have_attribute("title", "① action / （キーなし） / *spread arms*（右クリックで変える）")
+    expect(auto(page, "a.png", 0)).to_have_class(ON)
+    expect(auto(page, "b.png", 0)).not_to_have_class(ON)

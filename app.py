@@ -18,8 +18,8 @@ from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generat
                   pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of,
                       insert_position, name_for_new, pov_choices, template_keys)
-from marks import (AUTO, COUNT, MANY, ONE, auto_marks_from_file, check_number, check_one, many_from_file, many_numbers,
-                   many_text, marks_to_file, one_from_file, one_number, one_text, toggle_many)
+from marks import (AUTO, COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
+                   many_numbers, many_text, marks_to_file, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
@@ -772,19 +772,17 @@ class CaptionTool:
         return True
 
     def set_auto_mark(self, index, mark):
-        """自動のマーク（番号 0〜7）の設定を {section（A, B を除いた段落の名前）, key, phrase} にする（None なら外す）
+        """単語のマーク（番号 0〜7）の設定を {section（A, B を除いた段落の名前）, key（キーなしは空）, phrase（* は何文字でも）} にする
 
-        行には持たない（画面が入力から付ける）。保存で table.json に書く。設定の一覧を返す（失敗は None）
+        None なら外す。行には持たない（画面とサーバーが入力から付ける）。保存で table.json に書く。設定の一覧を返す（失敗は None）
         """
         self.last_error = ''
         try:
             check_number(index)
             if mark is not None:
                 if not isinstance(mark, dict):
-                    raise ValueError('自動のマークの設定が正しくありません')
+                    raise ValueError('単語のマークの設定が正しくありません')
                 key = check_key(mark.get('key'))
-                if not key:
-                    raise ValueError('キーを選んでください')
                 mark = {'section': check_section_name(mark.get('section')), 'key': key, 'phrase': check_phrase(key, mark.get('phrase'))}
         except ValueError as e:
             self.fail(str(e))
@@ -853,11 +851,16 @@ class CaptionTool:
             captions = [(i, self.caption_of(r, sections)) for i, r in others]
             if mode == 'random':
                 samples = pick_random_samples([caption for _, caption in captions])
-            else:  # mark: 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行
-                one, many = to_text(records[position]['mark']), set(many_numbers(to_text(records[position]['marks'])))
-                marks = {i: (to_text(r['mark']), set(many_numbers(to_text(r['marks'])))) for i, r in others}
-                samples = pick_tiered_samples([[(i, c) for i, c in captions if one and marks[i][0] == one],
-                                               [(i, c) for i, c in captions if many & marks[i][1]],
+            else:  # mark: 単語のマークを共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行
+                def marks_of(r):
+                    words = set(auto_marks_of({s: to_text(r[s]) for s in sections}, self.auto_marks))
+                    return words, to_text(r['mark']), set(many_numbers(to_text(r['marks'])))
+
+                words, one, many = marks_of(records[position])
+                marks = {i: marks_of(r) for i, r in others}
+                samples = pick_tiered_samples([[(i, c) for i, c in captions if words & marks[i][0]],
+                                               [(i, c) for i, c in captions if one and marks[i][1] == one],
+                                               [(i, c) for i, c in captions if many & marks[i][2]],
                                                captions])
             missing = f'見本（キャプションのある行）がほかに {SAMPLE_COUNT} 行必要です'
         if not samples:
@@ -1222,7 +1225,7 @@ def clear_marks():
 
 @app.route('/set_auto_mark', methods=['POST'])
 def set_auto_mark():
-    """自動のマークの設定（{index: 0〜7, mark: {section, key, phrase} か null}）。プロジェクトごと（保存で table.json に書く）"""
+    """単語のマークの設定（{index: 0〜7, mark: {section, key（キーなしは空）, phrase} か null}）。プロジェクトごと（保存で table.json に書く）"""
     data = request.get_json() or {}
     marks = caption_tool.set_auto_mark(data.get('index'), data.get('mark'))
     if marks is None:
