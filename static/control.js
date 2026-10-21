@@ -26,7 +26,7 @@ const state = {
     thumbBase: null,      // 広げる前のサムネイルの大きさ（px。picture の欄の高さから測る）
     markChoices: {one: [], many: [], auto: []},  // マークの記号（番号の順。排他 A〜H、複数 ★●▲■◆♥♣♠、単語 ①〜⑧）。行のマークは番号で持つ
     autoMarks: [],                     // 単語のマークの設定（番号ごとに {section, key, phrase} か null。プロジェクトごと）
-    filter: {one: '', many: '', auto: ''},  // マークの絞り込み（'' はすべて、'none' はマークなし、ほかは番号）
+    filter: {one: new Set(), many: new Set(), auto: new Set()},  // 絞り込みで押しているボタン（番号か、その段の印の無い行の 'none'）
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count, shared}]
     words: [],            // キーなしの文の単語 [{section, word, count, shared}]
@@ -608,13 +608,12 @@ function marksHtml(row) {
     return `<td class="marks"><div class="mark-grid">${one}${many}${auto}</div></td>`;
 }
 
-// マークの絞り込みに合うか
+// マークの絞り込みに合うか: 何も押していなければ全部。押していれば、押した印のどれかがある行（'none' はその段の印が無い行）
 function matchesFilter(row) {
     const {one, many, auto} = state.filter;
-    const okOne = !one || (one === 'none' ? row.mark === null : row.mark === Number(one));
-    const okMany = !many || (many === 'none' ? !row.marks.length : row.marks.includes(Number(many)));
-    const okAuto = !auto || (auto === 'none' ? !autoMarksOf(row).length : autoMarksOf(row).includes(Number(auto)));
-    return okOne && okMany && okAuto;
+    if (!one.size && !many.size && !auto.size) return true;
+    const hits = (pressed, marks) => [...pressed].some(m => (m === 'none' ? !marks.length : marks.includes(m)));
+    return hits(one, row.mark === null ? [] : [row.mark]) || hits(many, row.marks) || hits(auto, autoMarksOf(row));
 }
 
 // hint の欄: 読むだけ（編集できず、保存やキャプションに影響しない）。全文を出し（高さは中身に合わせる）、右上のボタンで畳める
@@ -1022,7 +1021,7 @@ async function refreshTable() {
     if (state.markChoices.one.length === 0) fillMarkFilters(body.mark_choices);
     state.markChoices = body.mark_choices;
     state.autoMarks = body.auto_marks;
-    paintAutoMarks();
+    paintMarkFilters();
     state.selected = new Set([...state.selected].filter(i => state.byIndex.has(i)));
     if (!state.byIndex.has(state.anchor)) state.anchor = null;
     state.loaded = true;
@@ -1471,12 +1470,8 @@ function toggleDead() {
 // マークの記号の並び（A〜H のように最初と最後）。クリアのボタンと知らせに使う
 const markRange = labels => `${labels[0]}〜${labels[labels.length - 1]}`;
 
-// 絞り込みの選択肢（値は番号、見せるのは記号）と、クリアのボタンの名前（記号は marks.py の表から）
+// クリアのボタンの名前（記号は marks.py の表から）
 function fillMarkFilters(choices) {
-    const options = (all, marks) => [`<option value="">${all}</option>`,
-        ...marks.map((m, i) => `<option value="${i}">${escapeHtml(m)}</option>`), '<option value="none">なし</option>'].join('');
-    $('filterOne').innerHTML = options('排他: すべて', choices.one);
-    $('filterMany').innerHTML = options('複数: すべて', choices.many);
     document.querySelectorAll('.clear-marks .hold').forEach(button => {
         const range = markRange(button.dataset.column === 'mark' ? choices.one : choices.many);
         button.textContent = `${range} をクリア`;
@@ -1484,18 +1479,28 @@ function fillMarkFilters(choices) {
     });
 }
 
-// 単語のマークの設定を描く: 帯の ①〜⑧（設定の無いものは薄く。語句は title）と、絞り込みの選択肢（① smile のように語句も）
-function paintAutoMarks() {
-    $('autoMarks').innerHTML = '単語' + state.markChoices.auto.map((label, i) =>
-        `<button type="button" class="auto-mark${state.autoMarks[i] ? '' : ' unset'}" data-mark="${i}" ` +
-        `title="${escapeHtml(autoMarkTitle(i))}">${escapeHtml(label)}</button>`).join('');
-    const keep = $('filterAuto').value;
-    $('filterAuto').innerHTML = ['<option value="">単語: すべて</option>',
-        ...state.markChoices.auto.map((label, i) => {
-            const m = state.autoMarks[i];
-            return `<option value="${i}">${escapeHtml(m ? `${label} ${m.phrase}` : label)}</option>`;
-        }), '<option value="none">なし</option>'].join('');
-    $('filterAuto').value = keep;
+// 絞り込みのボタン（3段目の帯）を描く: 段（排他・複数・単語）ごとに、左端の ☓（その段の印の無い行）と記号。押しているものは on
+// 単語の ①〜⑧ は設定の無いものを薄く、語句は title（右クリックで設定）
+function paintMarkFilters() {
+    const noneTitle = {one: '排他の印の無い行だけ', many: '複数の印の無い行だけ', auto: '単語の印の無い行だけ'};
+    document.querySelectorAll('#markFilters .filter-group').forEach(group => {
+        const kind = group.dataset.kind;
+        const button = (mark, label, title, extra = '') => `<button type="button" class="filter-btn${extra}` +
+            `${state.filter[kind].has(mark) ? ' on' : ''}" data-kind="${kind}" data-mark="${mark}" title="${escapeHtml(title)}">${escapeHtml(label)}</button>`;
+        const marks = state.markChoices[kind].map((label, i) => (kind === 'auto'
+            ? button(i, label, autoMarkTitle(i), ` auto-mark${state.autoMarks[i] ? '' : ' unset'}`)
+            : button(i, label, `${label} の行だけ（もう一度押すと外す）`)));
+        group.innerHTML = escapeHtml(group.dataset.label) + button('none', '☓', `${noneTitle[kind]}（もう一度押すと外す）`, ' none') + marks.join('');
+    });
+}
+
+// 絞り込みのボタンを押す・外す（押したボタンのどれかに合う行を出す）
+function toggleFilter(kind, mark) {
+    const pressed = state.filter[kind];
+    if (pressed.has(mark)) pressed.delete(mark);
+    else pressed.add(mark);
+    paintMarkFilters();
+    applyFilter();
 }
 
 // ---- 単語のマークの設定（帯の ①〜⑧ を右クリック: 段落 → キー → 語句を選ぶと、その語句のある行に付く） ----
@@ -1528,8 +1533,9 @@ async function sendAutoMark(mark) {
     const res = await postJson('/set_auto_mark', {index: Number($('autoMarkForm').dataset.mark), mark});
     if (!res.success) return setStatus(res.message, 'error');
     state.autoMarks = res.auto_marks;
+    state.autoMarks.forEach((m, i) => { if (!m) state.filter.auto.delete(i); });  // 外した番号の絞り込みも外す
     closeAutoMarkForm();
-    paintAutoMarks();
+    paintMarkFilters();
     rerenderRows();
     applyFilter();
     setDirty(true);
@@ -1539,7 +1545,6 @@ const saveAutoMark = () => sendAutoMark({section: $('autoMarkSection').value, ke
     phrase: splitPhrases($('autoMarkPhrase').value)[0] || ''});
 
 function applyFilter() {
-    state.filter = {one: $('filterOne').value, many: $('filterMany').value, auto: $('filterAuto').value};
     for (const tr of $('gridBody').rows) {
         tr.classList.toggle('filtered', !matchesFilter(state.byIndex.get(Number(tr.dataset.index))));
     }
@@ -1804,18 +1809,24 @@ function wire() {
         hideSuggestions();
     });
 
-    $('filterOne').addEventListener('change', applyFilter);
-    $('filterMany').addEventListener('change', applyFilter);
-    $('filterAuto').addEventListener('change', applyFilter);
-    // 単語のマーク: 帯の ①〜⑧ を右クリックで設定の欄を開く（左クリックは案内だけ）。欄の外を押すか Esc で閉じる
+    // 絞り込みのボタン: 押すとその印の行だけ、もう一度押すと外す（設定の無い単語の ①〜⑧ は、絞り込まずに案内だけ）
+    $('markFilters').addEventListener('click', event => {
+        const button = event.target.closest('.filter-btn');
+        if (!button) return;
+        const {kind} = button.dataset;
+        const mark = button.dataset.mark === 'none' ? 'none' : Number(button.dataset.mark);
+        if (kind === 'auto' && mark !== 'none' && !state.autoMarks[mark]) {
+            setStatus('右クリックで、段落・キー・語句を選びます（その語句のある行に付きます）');
+            return;
+        }
+        toggleFilter(kind, mark);
+    });
+    // 単語のマーク: 帯の ①〜⑧ を右クリックで設定の欄を開く。欄の外を押すか Esc で閉じる
     $('autoMarks').addEventListener('contextmenu', event => {
         const button = event.target.closest('.auto-mark');
         if (!button) return;
         event.preventDefault();
         openAutoMarkForm(button);
-    });
-    $('autoMarks').addEventListener('click', event => {
-        if (event.target.closest('.auto-mark')) setStatus('右クリックで、段落・キー・語句を選びます（その語句のある行に付きます）');
     });
     $('autoMarkForm').addEventListener('submit', event => {
         event.preventDefault();

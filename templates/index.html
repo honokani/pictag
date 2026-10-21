@@ -55,14 +55,14 @@
     </section>
 
     <section id="markTools" class="bar tools" hidden>
-        <span class="group">絞り込み
-            <select id="filterOne" aria-label="排他のマークで絞り込み"></select>
-            <select id="filterMany" aria-label="複数のマークで絞り込み"></select>
-            <select id="filterAuto" aria-label="単語のマークで絞り込み"></select>
+        <!-- 絞り込み: 押すとその印の行だけ（押した印のどれかがある行）、もう一度押すと外す。段の左端の ☓ はその段の印の無い行
+             単語の ①〜⑧ は右クリックで語句を選ぶ。ボタンは表を読んだときに入れる -->
+        <span id="markFilters" class="group mark-filters">
+            <span class="filter-group" data-kind="one" data-label="排他"></span>
+            <span class="filter-group" data-kind="many" data-label="複数"></span>
+            <span id="autoMarks" class="filter-group" data-kind="auto" data-label="単語"></span>
         </span>
         <button id="selectVisibleButton" type="button" title="Ctrl+A">表示中をすべて選択</button>
-        <!-- 単語のマーク ①〜⑧ の設定（右クリックで段落・キー・語句を選ぶ。ボタンは表を読んだときに入れる） -->
-        <span id="autoMarks" class="group auto-marks">単語</span>
         <!-- 行を選んでいる間だけ出す -->
         <form id="bulkForm" class="group bulk" hidden>
             <span id="selectionInfo">選択 0 行</span>
