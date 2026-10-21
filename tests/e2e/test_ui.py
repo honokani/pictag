@@ -569,6 +569,43 @@ def test_bulk_key_text_shows_phrases_after_two_spaces(page, imgs):
     assert bulk.input_value() == "smile, short hair, "
 
 
+def test_letters_after_two_spaces_of_a_key_field_narrow_its_phrases(page, imgs):
+    # キーのある行のスペース2つはカンマと同じ: その後ろに打った文字で、次の語句を絞る
+    load_dir(page, imgs)
+    write(page, "b.png", "looks: short hair, big eyes")
+    wait_for_phrase(page, "big eyes")
+
+    open_editor(page, "a.png")
+    looks = field(page, "a.png", "looks")
+    looks.press_sequentially("smile  b")
+    shown = page.locator("#suggestions:visible")
+    expect(shown.locator("li.active")).to_contain_text("big eyes")
+    expect(shown).not_to_contain_text("short hair")
+    looks.press("Enter")  # 打ちかけがあるので Enter で決まる
+    assert looks.input_value() == "smile, big eyes, "
+
+
+def test_two_spaces_in_a_key_line_become_a_comma_when_leaving(page, imgs):
+    # 候補を選ばなくても、キーのある行の語の間のスペース2つは、確定するとカンマになる（キーの無い文は空白1つ）
+    load_dir(page, imgs)
+    open_editor(page, "a.png")
+    field(page, "a.png", "looks").fill("smile  big eyes")
+    other = field(page, "a.png", "")
+    other.fill("girl is  smiling\neyes: blue  round")
+    other.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["looks: smile, big eyes", "girl is smiling", "eyes: blue, round"])
+
+
+def test_bulk_key_text_turns_two_spaces_into_a_comma(page, imgs):
+    load_dir(page, imgs)
+    row(page, "a.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "girl")
+    page.select_option("#bulkKey", "looks")
+    page.fill("#bulkText", "smile  big eyes")
+    page.click('#bulkForm button[value="add"]')
+    expect(filled(page, "a.png")).to_have_text(["looks: smile, big eyes"])
+
+
 def test_bulk_keyless_text_shows_words_after_two_spaces(page, imgs):
     load_dir(page, imgs)
     write_spread(page)
@@ -593,9 +630,9 @@ def test_leaving_the_editor_tidies_commas_and_spaces(page, imgs):
     expect(filled(page, "a.png", "action")).to_have_text(["a, b", "c, d", "e, f", "g, h", "i, j", "k, l", "m n."])
 
     editor = open_editor(page, "a.png")
-    editor.fill("looks:  , standing,,smiling\nbody: long  hair ,  bare hands,")
+    editor.fill("looks:  , standing,,smiling\nbody: long  hair ,  bare hands,")  # キーのある行の語の間のスペース2つはカンマと同じ
     editor.evaluate("el => el.blur()")
-    expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "body: long hair, bare hands"])
+    expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "body: long, hair, bare hands"])
 
 
 def test_leaving_the_editor_merges_a_repeated_key(page, imgs):
