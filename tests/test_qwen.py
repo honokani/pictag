@@ -85,14 +85,14 @@ def test_written_skeleton_is_empty_when_nothing_is_written():
 def test_pick_samples_takes_the_nearest_ten_non_empty_captions_in_table_order():
     captions = [f"c{i}" if i % 3 else "" for i in range(20)]  # 空の行が混ざる
     assert pick_samples(captions, count=10) == ["c5", "c7", "c8", "c10", "c11", "c13", "c14", "c16", "c17", "c19"]
-    assert pick_samples(["c"] * 9 + [""], count=10) == []  # 10 個に満たなければ渡さない
+    assert pick_samples(["c1", "", "c2"], count=10) == ["c1", "c2"]  # 足りなければある分だけ（足りない分は公開の例）
 
 
 def test_pick_random_samples_takes_ten_different_non_empty_captions():
     captions = [f"c{i}" if i % 3 else "" for i in range(30)]  # 空でないものは 20 個
     picked = pick_random_samples(captions, count=10)
     assert len(set(picked)) == 10 and set(picked) <= set(captions) - {""}
-    assert pick_random_samples([f"c{i}" for i in range(9)] + [""], count=10) == []  # 10 個に満たなければ渡さない
+    assert sorted(pick_random_samples([f"c{i}" for i in range(9)] + [""], count=10)) == [f"c{i}" for i in range(9)]  # ある分だけ
 
 
 def test_pick_tiered_samples_fills_from_the_first_tier_then_the_next():
@@ -105,7 +105,7 @@ def test_pick_tiered_samples_fills_from_the_first_tier_then_the_next():
     assert sorted(picked[-3:]) == ["a0", "a1", "a2"]
     assert sorted(picked[2:7]) == ["s3", "s4", "s5", "s6", "s7"]
     assert all(p.startswith("r") for p in picked[:2])
-    assert pick_tiered_samples([[[(0, "a")]], [[(1, "b"), (2, "")]]], count=10) == []  # 全部で 10 個に満たなければ渡さない
+    assert pick_tiered_samples([[[(0, "a")]], [[(1, "b"), (2, "")]]], count=10) == ["b", "a"]  # 足りなければある分だけ
 
 
 def test_pick_tiered_samples_takes_the_same_number_from_each_group_of_a_tier():
@@ -250,10 +250,16 @@ def qwen_api(api, comfy, tmp_path, monkeypatch):
     return api
 
 
-def sample_numbers(comfy):
-    """送った見本の looks: poseN の N（並びのまま）。最後の --- の後ろ（その行に書いてあるものと頼む文）は見ない"""
-    prompt = comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
-    return [int(i) for i in re.findall(r"looks: pose(\d+)", prompt.rsplit("\n\n---\n\n", 1)[0])]
+def sample_captions(comfy, call=0):
+    """call 回目に送った見本（並びのまま）。最後の --- の後ろ（その行に書いてあるものと頼む文）は見ない"""
+    prompt = comfy.prompts[call]["prompt"]["tg"]["inputs"]["prompt"]
+    head = "Example captions of other images in the same set:\n\n"
+    return prompt.rsplit("\n\n---\n\n", 1)[0].removeprefix(head).split("\n\n---\n\n")
+
+
+def sample_numbers(comfy, call=0):
+    """送った見本の looks: poseN の N（並びのまま。公開の例には無い）"""
+    return [int(i) for caption in sample_captions(comfy, call) for i in re.findall(r"looks: pose(\d+)", caption)]
 
 
 def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api, comfy, tool):
@@ -262,6 +268,7 @@ def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api
     qwen_api.write(row, "looks: sitting")
     res = qwen_api.qwen_fill(row)
     assert res["success"], res
+    assert res["public"] == 0  # 上に 16 行あれば、公開の例は使わない
     texts = res["row"]["texts"]
     assert texts["picture"] == "place: hilltop\nview: from side"  # characters は自動なので入れない
     assert texts["action"] == "girl waves."
@@ -360,21 +367,55 @@ def test_qwen_answer_stays_for_hint_by_qwen_after_reopening(qwen_api):
     assert asked["qwen_hint"] == ANSWER
 
 
-def test_qwen_fill_needs_sixteen_samples_above(qwen_api, comfy):
+def test_qwen_fill_fills_up_with_public_samples_when_short(qwen_api, comfy):
+    # 見本が 16 に満たなければ、ある分（上の 5 行）と、足りない分を公開の例（映画の場面。10 個まで）から。
+    # 公開の例は頼む文から遠い前の方
     res = qwen_api.qwen_fill(qwen_api.row_index("r05.png"))
-    assert res["success"] is False and "16" in res["message"]
-    assert comfy.prompts == []
+    assert res["success"] and res["public"] == 10, res
+    samples = sample_captions(comfy)
+    assert len(samples) == 15 and all("third-person POV" in s for s in samples[:10])
+    assert sample_numbers(comfy) == [0, 1, 2, 3, 4]
+
+
+def test_qwen_fill_works_without_any_samples(api, comfy, tmp_path, monkeypatch):
+    # キャプションのある行が1つも無くても、公開の例（10 個）を見本にして押せる（4つのボタンのどれでも）
+    monkeypatch.setitem(pictag.app.config, "QWEN_URL", comfy.url)
+    api.load(make_images(tmp_path / "imgs" / "proj", {"a.png": (100, 100)}))
+    for call, mode in enumerate(pictag.QWEN_MODES):
+        res = api.qwen_fill(api.row_index("a.png"), mode=mode)
+        assert res["success"] and res["public"] == 10, res
+        assert len(sample_captions(comfy, call)) == 10
+
+
+def test_public_samples_follow_the_majority_verb_form(api, comfy, tmp_path, monkeypatch):
+    # 公開の例の action の文（s を省いた現在形）は、プロジェクトで多い方の形に直して渡す（決まらなければ書いてあるまま）
+    monkeypatch.setitem(pictag.app.config, "QWEN_URL", comfy.url)
+    api.load(make_images(tmp_path / "imgs" / "proj", {"a.png": (100, 100)}))
+    row = api.row_index("a.png")
+
+    def prompt(call):
+        return comfy.prompts[call]["prompt"]["tg"]["inputs"]["prompt"]
+
+    api.qwen_fill(row)  # action の文がまだ無い
+    assert "girl spread arms, guy hold girl's waist from behind" in prompt(0)
+    api.write(row, "girl is sitting.\nguy is standing.", section="action")
+    api.qwen_fill(row)
+    assert "girl is spreading arms, guy is holding girl's waist from behind" in prompt(1)
+    api.write(row, "girl sits.", section="action")
+    api.qwen_fill(row)
+    assert "girl spreads arms, guy holds girl's waist from behind" in prompt(2)
 
 
 def test_qwen_fill_random_takes_samples_from_the_whole_project(qwen_api, comfy):
-    # 🎲: その行と削除済みを除く、キャプションのある行からランダムに 16 個（下の行も）
+    # 🎲: その行と削除済みを除く、キャプションのある行からランダムに 16 個（下の行も）。足りなければ公開の例で補う
     row = qwen_api.row_index("r05.png")
-    assert qwen_api.qwen_fill(row, mode="random")["success"] is False  # ほかの行は r00〜r04・r06〜r15 の 15 行だけ
+    res = qwen_api.qwen_fill(row, mode="random")  # ほかの行は r00〜r04・r06〜r15 の 15 行だけ
+    assert res["success"] and res["public"] == 1, res
+    assert sorted(sample_numbers(comfy)) == [*range(5), *range(6, 16)]
     qwen_api.write(qwen_api.row_index(SPARE), "looks: pose17")
     res = qwen_api.qwen_fill(row, mode="random")
-    assert res["success"], res
-    used = sorted(sample_numbers(comfy))
-    assert used == [*range(5), *range(6, 16), 17]  # ほかに 16 行なので全部。その行（5）は入らない
+    assert res["success"] and res["public"] == 0, res
+    assert sorted(sample_numbers(comfy, 1)) == [*range(5), *range(6, 16), 17]  # ほかに 16 行なので全部。その行（5）は入らない
 
 
 def test_qwen_fill_mark_takes_rows_with_the_same_marks_first(qwen_api, comfy):

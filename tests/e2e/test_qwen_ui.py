@@ -99,18 +99,18 @@ def test_qwen_column_sits_between_token_and_marks_at_half_the_token_width(page, 
     boxes = [button(page, ASK).bounding_box() for button in (robot, marker, rewriter, dice)]
     for upper, lower in pairwise(boxes):
         assert lower["y"] >= upper["y"] + upper["height"] - 0.5  # 🤖 の下に 🔖、その下に 🔄、その下に 🎲
-    expect(dice(page, LAST)).to_be_disabled()  # ほかの見本は r00〜r14 の 15 行
+    expect(dice(page, LAST)).to_be_enabled()  # ほかの見本は 15 行（足りない 1 行は公開の例）
 
 
-def test_robot_needs_sixteen_samples_above_and_dice_sixteen_elsewhere(page, project, qwen_mode):
-    project.write(project.row_index(SPARE), "looks: pose17")  # 見本は r00〜r15 と r17 の 17 行
-    project.save()
+def test_buttons_fill_up_with_public_samples_when_short(page, project, qwen_mode):
+    # 見本が足りなくても押せる。足りない分は公開の例（映画の場面）で補う（title と、押したあとの知らせに出す）
     open_project(page)
-    expect(robot(page, "r05.png")).to_be_disabled()  # 上は 5 行
-    expect(robot(page, "r05.png")).to_have_attribute("title", re.compile("16"))
-    expect(dice(page, "r05.png")).to_be_enabled()  # ほかに 16 行
-    expect(marker(page, "r05.png")).to_be_enabled()  # 🔖 も足りない分はランダムなので、🎲 と同じ
-    expect(robot(page, ASK)).to_be_enabled()
+    expect(robot(page, "r05.png")).to_be_enabled()  # 上は 5 行
+    expect(robot(page, "r05.png")).to_have_attribute("title", re.compile("公開の例（映画の場面）を 10 行足す"))
+    expect(robot(page, ASK)).not_to_have_attribute("title", re.compile("公開の例"))  # 上に 16 行
+    expect(marker(page, "r05.png")).to_have_attribute("title", re.compile("単語①と複数★の両方"))
+    robot(page, "r05.png").click()
+    expect(page.locator("#status")).to_contain_text("見本のうち 10 行は公開の例")
 
 
 def test_dice_fills_with_samples_from_the_whole_project(page, project, qwen_mode, comfy):
