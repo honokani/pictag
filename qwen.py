@@ -1,7 +1,8 @@
 """Qwen（ComfyUI の TextGenerate。Krea2 のテキストエンコーダーと同じ Qwen3-VL-4B）で、空の欄を下書きする
 
 - 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、
-  見本（キャプション 10 個。🤖 は上にある行から近い順、🔖・🔄 は同じマークの行を先にランダム、🎲 はほかの行からランダム）
+  見本（キャプション 10 個。🤖 は上にある行から近い順、🔖・🔄 は同じマークの行を先にランダム、🎲 はほかの行からランダム）、
+  その行に書いてあるもの（前に Qwen が入れて、そのあと直していない下書きは除く）を入れたひな形（何か書いてあるときだけ）
 - 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）。
   🔄 は答えにあるキーと文を、書いてあっても置き換える（外れる単語のマークの語句は残す）
 - ComfyUI の呼び方は pj_loratrain（loratrain/backends.py）と同じ。ComfyUI の起動・停止はしない（起動しておいたものに乗るだけ）
@@ -15,7 +16,7 @@ import uuid
 
 from PIL import Image
 
-from caption_format import parse_line, with_line
+from caption_format import parse_line, parse_lines, render_line, with_line
 from marks import auto_marks_of, matches_pattern
 from subjects import OTHERS, base_name
 from words import AUTO_KEYS
@@ -34,6 +35,9 @@ INSTRUCTIONS = ("You write training captions for an image generation model. Desc
                 "Expressions, gaze, appearance and clothing belong to each character's section, never to action. "
                 "Match the vocabulary and level of detail of the example captions. Leave out sections and keys that do not "
                 "apply. Output only the caption.")
+# その行に書いてあるもの（written_skeleton）を送るときの頼み方
+WRITTEN_INTRO = ("Part of the caption for this image is already written. Keep what is written as it is, and fill in the empty "
+                 "parts by looking at the image:")
 # キーの無い段落に添える書き方の例（else は物ごとにキーで書く。ほかは短い文）
 KEYLESS_EXAMPLES = {OTHERS: '(e.g. dog: brown fur, sitting)'}
 SENTENCE_EXAMPLE = '(e.g. boy is sitting.)'
@@ -53,13 +57,30 @@ def skeleton(sections):
     return '\n\n'.join(block(name, keys) for name, keys in sections)
 
 
+def written_skeleton(sections):
+    """[(段落, 確定タグのキー, 入力)] から、書いてある語句を入れたひな形を作る（何も書いていなければ ''）
+
+    確定タグのキーはその並びで（同じキーの行はまとめる。値の無いキーは空のまま）、ほかのキーと文は書いた順に後ろへ
+    """
+    def block(name, keys, text):
+        lines = parse_lines(text)
+        values = {key: [phrase for k, phrases in lines if k == key for phrase in phrases] for key in keys}
+        rows = [render_line(key, values[key]) if values[key] else f'{key}:' for key in keys]
+        rest = [render_line(key, phrases) for key, phrases in lines if key not in keys]
+        return '\n'.join([f'{name}:', *(f'  - {row}' for row in [*rows, *rest])])
+
+    return '\n\n'.join(block(*section) for section in sections) if any(parse_lines(text) for _, _, text in sections) else ''
+
+
 def system_prompt(sections):
     return f'{INSTRUCTIONS}\n\nFormat:\n{skeleton(sections)}'
 
 
-def user_prompt(samples):
+def user_prompt(samples, written=''):
+    """見本と頼む文。書いてあるもの（written_skeleton）があれば、頼む文の前に置く"""
+    written_part = f'{WRITTEN_INTRO}\n\n{written}\n\n' if written else ''
     return ('Example captions of other images in the same set:\n\n' + '\n\n---\n\n'.join(samples)
-            + '\n\n---\n\nWrite the caption for this image.')
+            + f'\n\n---\n\n{written_part}Write the caption for this image.')
 
 
 def pick_samples(captions_above, count=SAMPLE_COUNT):
