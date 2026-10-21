@@ -1,7 +1,7 @@
 """Qwen（ComfyUI の TextGenerate。Krea2 のテキストエンコーダーと同じ Qwen3-VL-4B）で、空の欄を下書きする
 
 - 送るもの: システムプロンプト（指示文と、段落・確定タグの空のひな形）、その行の画像、
-  見本（キャプション 10 個。🤖 は上にある行から近い順、🔖・🔄 は同じマークの行を先にランダム、🎲 はほかの行からランダム）、
+  見本（キャプション 16 個。🤖 は上にある行から近い順、🔖・🔄 は同じマークの行を先にランダム、🎲 はほかの行からランダム）、
   その行に書いてあるもの（前に Qwen が入れて、そのあと直していない下書きは除く）を入れたひな形（何か書いてあるときだけ）
 - 答えのキャプションを段落と行に分け、値の無いキーと、文の無い段落にだけ入れる（書いてあるものは変えない）。
   🔄 は答えにあるキーと文を、書いてあっても置き換える（外れる単語のマークの語句は残す）
@@ -23,7 +23,7 @@ from words import AUTO_KEYS
 
 DEFAULT_URL = 'http://127.0.0.1:8189'
 CLIP = 'qwen3vl_4b_fp8_scaled.safetensors'  # Krea2 のテキストエンコーダー
-SAMPLE_COUNT = 10   # 見本の数（上にある行の、空でないキャプション）
+SAMPLE_COUNT = 16   # 見本の数（空でないキャプション。10 個で約 4,700 トークンだった）
 MAX_LENGTH = 700    # 答えの長さの上限（トークン。キャプションの上限 507 に余裕を足す）
 IMAGE_SIDE = 1024   # 送る画像の長辺（画像のトークン数を抑える）
 UPLOAD_FOLDER = 'pictag'  # ComfyUI の input/ の下に置く（同じ画像は上書きする）
@@ -98,15 +98,21 @@ def pick_random_samples(captions, count=SAMPLE_COUNT):
 def pick_tiered_samples(tiers, count=SAMPLE_COUNT):
     """先の段から順に、空でないキャプションをランダムに選んで count 個にする（その段で足りない分は次の段から）
 
-    tiers: [[(行, キャプション)]]。同じ行が後の段にあっても選ぶのは1回。並びは後の段が先で、最初の段が最後
-    （いちばん似た見本を、頼む文の直前に置く）。全部で count 個に満たなければ []
+    tiers: [[[(行, キャプション)]]]（段ごとの、行の組）。組が2つ以上ある段は、どの組からも同じ数ずつ選ぶ（どれかの組が尽きるか、
+    残りの枠を組の数で割れなくなるまで。余りは次の段へ）。同じ行が後の段や後の組にあっても選ぶのは1回。
+    並びは後の段が先で、最初の段が最後（いちばん似た見本を、頼む文の直前に置く。段の中は混ぜる）。全部で count 個に満たなければ []
     """
     chosen, picked = set(), []
-    for tier in tiers:
-        pool = [(row, caption) for row, caption in tier if caption and row not in chosen]
-        taken = random.sample(pool, min(len(pool), count - len(chosen)))
+    for groups in tiers:
+        pools, seen = [], set(chosen)
+        for group in groups:
+            pool = [(row, caption) for row, caption in group if caption and row not in seen]
+            seen.update(row for row, _ in pool)
+            pools.append(pool)
+        each = min(min(map(len, pools)), (count - len(chosen)) // len(pools))
+        taken = [pair for pool in pools for pair in random.sample(pool, each)]
         chosen.update(row for row, _ in taken)
-        picked.append([caption for _, caption in taken])
+        picked.append(random.sample([caption for _, caption in taken], len(taken)))
     return [caption for captions in reversed(picked) for caption in captions] if len(chosen) == count else []
 
 

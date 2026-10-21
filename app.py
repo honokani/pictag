@@ -864,8 +864,9 @@ class CaptionTool:
     def qwen_fill(self, row_index, url, mode='near'):
         """Qwen に下書きさせ、その行の空の欄（値の無いキーと、文の無い段落）に入れる
 
-        見本は空でないキャプション 10 個（削除済みの行は除く）。mode が near（🤖）なら上にある行から近い順に、
-        mark（🔖）なら単語のマークを共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行の順にランダムに、
+        見本は空でないキャプション SAMPLE_COUNT（16）個（削除済みの行は除く）。mode が near（🤖）なら上にある行から近い順に、
+        mark（🔖）なら単語と複数のマークの両方を共有する行 → 単語だけ・複数だけを共有する行を同じ数ずつ → 単語の残り →
+        複数の残り → 排他のマークが同じ行 → ほかの行の順にランダムに、
         random（🎲）ならその行のほかの全部の行からランダムに。overwrite（🔄）は mark と同じ見本で、答えにあるキーと文を
         入力があっても置き換える（外れる単語のマークの語句は足し直す）。どの mode でも、その行に書いてあるもの（前の下書きは
         除く）を入れたひな形も送る。(画面に渡す1行, 入れた段落) を返す。
@@ -889,17 +890,22 @@ class CaptionTool:
             captions = [(i, self.caption_of(r, sections)) for i, r in others]
             if mode == 'random':
                 samples = pick_random_samples([caption for _, caption in captions])
-            else:  # mark・overwrite: 単語のマークを共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行
+            else:  # mark・overwrite
                 def marks_of(r):
                     words = set(auto_marks_of({s: to_text(r[s]) for s in sections}, self.auto_marks))
                     return words, to_text(r['mark']), set(many_numbers(to_text(r['marks'])))
 
+                def rows_in(rows):
+                    return [(i, c) for i, c in captions if i in rows]
+
                 words, one, many = marks_of(records[position])
                 marks = {i: marks_of(r) for i, r in others}
-                samples = pick_tiered_samples([[(i, c) for i, c in captions if words & marks[i][0]],
-                                               [(i, c) for i, c in captions if one and marks[i][1] == one],
-                                               [(i, c) for i, c in captions if many & marks[i][2]],
-                                               captions])
+                word = {i for i, _ in captions if words & marks[i][0]}  # 単語のマークを共有する行
+                multi = {i for i, _ in captions if many & marks[i][2]}  # 複数のマークを共有する行
+                same = {i for i, _ in captions if one and marks[i][1] == one}  # 排他のマークが同じ行
+                # 単語と複数の両方 → 単語だけ・複数だけを同じ数ずつ → 単語の残り → 複数の残り → 排他 → ほかの行
+                samples = pick_tiered_samples([[rows_in(word & multi)], [rows_in(word - multi), rows_in(multi - word)],
+                                               [rows_in(word)], [rows_in(multi)], [rows_in(same)], [captions]])
             missing = f'見本（キャプションのある行）がほかに {SAMPLE_COUNT} 行必要です'
         if not samples:
             raise ValueError(missing)
