@@ -703,17 +703,22 @@ function toggleHint(button) {
 }
 
 // 段落の列を畳む・開く（見出しの ◀ / ▶）。編集中の欄は先に確定し、表を描き直す
-function toggleSection(section) {
+// 段落の列を畳む・開く。描き直すとほかの列の幅が変わって行の高さが変わるので、行 index（既定は見えていた最初の行。
+// 上が切れていない行）を、押す前と同じ位置に見せ直す
+function toggleSection(section, index = null) {
     commitEdit();
+    const anchor = index === null ? firstWholeRow() : rowElement(index);
+    const gap = anchor ? belowHead(anchor) : 0;
     if (state.foldedSections.has(section)) state.foldedSections.delete(section);
     else state.foldedSections.add(section);
     saveFolded('sections', state.foldedSections);
     renderTable();
+    if (anchor) showRowBelowHead(Number(anchor.dataset.index), gap);
 }
 
-// 畳んだ列の欄をクリック: 列を開いて、その欄の編集を始める
+// 畳んだ列の欄をクリック: 列を開いて、その欄の編集を始める（クリックした行は、押す前と同じ位置に）
 function openSection(section, index) {
-    toggleSection(section);
+    toggleSection(section, index);
     startEdit(rowElement(index).querySelector(`td.cell[data-section="${CSS.escape(section)}"]`));
 }
 
