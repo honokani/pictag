@@ -28,6 +28,12 @@ def test_skeleton_lists_keys_without_values_and_shows_keyless_sections_an_exampl
                                   "else:\n  - (e.g. dog: brown fur, sitting)")
 
 
+def test_skeleton_takes_the_sentence_example():
+    # 文の例は、プロジェクトで多い方の動詞の形に合わせて渡せる（else の例は変わらない）
+    assert skeleton([("action", []), ("else", [])], "(e.g. boy sits.)") == (
+        "action:\n  - (e.g. boy sits.)\n\nelse:\n  - (e.g. dog: brown fur, sitting)")
+
+
 def test_system_prompt_is_instructions_and_skeleton():
     sections = [("girl", SUBJECT)]
     assert system_prompt(sections) == f"{INSTRUCTIONS}\n\nFormat:\n{skeleton(sections)}"
@@ -316,6 +322,17 @@ def test_every_qwen_button_sends_what_is_written(qwen_api, comfy, mode):
     qwen_api.write(row, "view: from side, guy POV", section="picture")
     assert qwen_api.qwen_fill(row, mode=mode)["success"]
     assert "  - view: from side, guy POV\n" in comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
+
+
+def test_qwen_sentence_example_follows_the_majority_verb_form(qwen_api, comfy):
+    # ひな形の文の例は、action の文で多い方の動詞の形（文が無い・同じ数なら boy is sitting.）
+    def system(call):
+        return comfy.prompts[call]["prompt"]["tg"]["inputs"]["system_prompt"]
+
+    qwen_api.qwen_fill(qwen_api.row_index(ASK))  # 文はまだ無い。答えで action に「girl waves.」（does の形）が入る
+    assert "action:\n  - (e.g. boy is sitting.)" in system(0)
+    qwen_api.qwen_fill(qwen_api.row_index(SPARE))
+    assert "action:\n  - (e.g. boy sits.)" in system(1)
 
 
 def test_overwrite_replaces_filled_fields_and_keeps_word_mark_words(qwen_api):

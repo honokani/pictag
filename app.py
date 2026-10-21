@@ -15,14 +15,15 @@ from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
-from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, keep_word_marks, match_section,
-                  parse_caption, pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt,
-                  written_skeleton)
+from qwen import (DEFAULT_URL, SAMPLE_COUNT, SENTENCE_EXAMPLE, SENTENCE_EXAMPLES, clear_drafts, fill_section, generate,
+                  jpeg_of, keep_word_marks, match_section, parse_caption, pick_random_samples, pick_samples,
+                  pick_tiered_samples, system_prompt, user_prompt, written_skeleton)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of, display_names,
                       insert_position, name_for_new, pov_choices, pov_names, template_keys)
 from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
                    many_numbers, many_text, marks_to_file, matches_pattern, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
+from verbs import count_forms, majority, survey
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
                    register_words, remove_phrase, rename_phrase, rename_registered, set_choice, ungroup_phrases,
@@ -456,6 +457,58 @@ class CaptionTool:
         if changed:
             self.df[sections] = after
         logger.info(f"Moved phrases: {base}: {src} -> {dst} {phrases} (rows: {changed})")
+        return changed
+
+    def verb_subjects(self):
+        """文の主語になる名前: 人物などの段落（固定の段落と else を除く）の名前と、A, B を除いた名前"""
+        names = [s for s in section_names(self.df) if s not in FIXED_SECTIONS and base_name(s) != OTHERS]
+        return tuple(sorted({*names, *map(base_name, names)}))
+
+    def action_lines(self):
+        """削除済みでない行の action の文 [((行, 画像名), 文)]（表の順）"""
+        if 'action' not in self.df.columns:
+            return []
+        return [((int(i), r['サムネイル']), line) for i, r in zip(self.df.index, self.df.to_dict('records'))
+                if not to_flag(r['is_dead']) for line in to_text(r['action']).splitlines() if line.strip()]
+
+    def verb_target(self):
+        """action の文で多い方の動詞の形（verbs の PROGRESSIVE / PRESENT。同じ数・文が無ければ None）"""
+        return majority(count_forms([line for _, line in self.action_lines()], self.verb_subjects()))
+
+    def verb_forms(self):
+        """action の文の動詞の形（is doing / does）を数え、多い方にそろえる案 {counts, target, changes}（削除済みの行は除く）
+
+        changes: [{index, name, before, after, sure}]（文ごと。sure が False は、機械では迷う文）
+        """
+        counts, target, changes = survey(self.action_lines(), self.verb_subjects())
+        return {'counts': counts, 'target': target,
+                'changes': [{'index': index, 'name': name, 'before': before, 'after': after, 'sure': sure}
+                            for (index, name), before, after, sure in changes]}
+
+    def apply_verb_forms(self, changes):
+        """verb_forms の案のうち選んだもの [{index, before, after}] を入れる（その文がまだあるときだけ）
+
+        まとめて直すので、書き換えた時刻（📍）は付けない。入力を変えた行の数を返す（失敗は None）
+        """
+        self.last_error = ''
+        valid = isinstance(changes, list) and all(
+            isinstance(c, dict) and isinstance(c.get('index'), int) and isinstance(c.get('before'), str)
+            and isinstance(c.get('after'), str) and '\n' not in c['after'] for c in changes)
+        if not valid:
+            self.fail('直す文の指定が正しくありません')
+            return None
+        swaps = {}
+        for c in changes:
+            if self.is_row(c['index']) and 'action' in self.df.columns:
+                swaps.setdefault(c['index'], {})[c['before']] = c['after']
+        changed = 0
+        for index, pairs in swaps.items():
+            text = to_text(self.df.at[index, 'action'])
+            new = '\n'.join(pairs.get(line, line) for line in text.split('\n'))
+            if new != text:
+                self.df.at[index, 'action'] = new
+                changed += 1
+        logger.info(f"Unified verb forms (rows: {changed})")
         return changed
 
     def group(self, key, phrases):
@@ -912,8 +965,9 @@ class CaptionTool:
         keys = {s: template_keys(s, self.shared['templates'], FIXED_SECTIONS) for s in sections}
         # 送るのは押したときに書いてあるもの。入れるときは答えが来てから読み直す（待つ間に書いたものも残す）
         written = written_skeleton([(s, keys[s], text) for s, text in self.own_texts(row_index, sections, name).items()])
+        example = SENTENCE_EXAMPLES.get(self.verb_target(), SENTENCE_EXAMPLE)  # 文の例は、多い方の動詞の形
         answer = generate(url, jpeg_of(self.image_dir / name), f"{self.dir_name}_{Path(name).stem}.jpg",
-                          user_prompt(samples, written), system_prompt([(s, keys[s]) for s in sections]))
+                          user_prompt(samples, written), system_prompt([(s, keys[s]) for s in sections], example))
         self.save_qwen_hint(name, answer)
         # 押し直したときは、前に Qwen が入れて、そのあと直していないもの（前の下書き）を消してから入れる
         before = {s: to_text(self.df.at[row_index, s]) for s in sections}
@@ -1185,6 +1239,20 @@ def move_phrases_route():
     if changed is None:
         return jsonify({'success': False, 'message': caption_tool.last_error})
     return jsonify({'success': True, 'changed': changed, 'dictionary': caption_tool.dictionary()})
+
+@app.route('/verb_forms', methods=['POST'])
+def verb_forms_route():
+    """action の文の動詞の形（is doing / does）を数え、多い方にそろえる案（counts・target・changes）"""
+    return jsonify({'success': True, **caption_tool.verb_forms()})
+
+@app.route('/apply_verb_forms', methods=['POST'])
+def apply_verb_forms_route():
+    """verb_forms の案のうち選んだものを入れる（{changes: [{index, before, after}]}）。changed: 入力を変えた行の数"""
+    data = request.get_json() or {}
+    changed = caption_tool.apply_verb_forms(data.get('changes'))
+    if changed is None:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'changed': changed})
 
 @app.route('/group_phrases', methods=['POST'])
 def group_phrases_api():

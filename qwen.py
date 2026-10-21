@@ -19,6 +19,7 @@ from PIL import Image
 from caption_format import parse_line, parse_lines, render_line, with_line
 from marks import auto_marks_of, matches_pattern
 from subjects import OTHERS, base_name
+from verbs import PRESENT, PROGRESSIVE
 from words import AUTO_KEYS
 
 DEFAULT_URL = 'http://127.0.0.1:8189'
@@ -40,7 +41,9 @@ WRITTEN_INTRO = ("Part of the caption for this image is already written. Keep wh
                  "parts by looking at the image:")
 # キーの無い段落に添える書き方の例（else は物ごとにキーで書く。ほかは短い文）
 KEYLESS_EXAMPLES = {OTHERS: '(e.g. dog: brown fur, sitting)'}
-SENTENCE_EXAMPLE = '(e.g. boy is sitting.)'
+# 文の例は、プロジェクトの action の文で多い方の動詞の形に合わせる（形が分からない・同じ数なら進行形）
+SENTENCE_EXAMPLES = {PROGRESSIVE: '(e.g. boy is sitting.)', PRESENT: '(e.g. boy sits.)'}
+SENTENCE_EXAMPLE = SENTENCE_EXAMPLES[PROGRESSIVE]
 # Qwen がたまに「値が無い」の意味で返す語（人のいない画像の looks: nan、action: none、ごくまれに non presented など）。
 # タグが無いものとして入れない（大文字・小文字、前後の括弧と文末の . は is_tag がそろえてから比べる）
 NO_TAGS = {'none', 'nan', 'non presented'}
@@ -48,10 +51,10 @@ NO_TAGS = {'none', 'nan', 'non presented'}
 
 # ---- 送る文面 ----
 
-def skeleton(sections):
+def skeleton(sections, sentence_example=SENTENCE_EXAMPLE):
     """[(段落, 確定タグのキー)] から、値を書かないひな形を作る。キーの無い段落には書き方の例を添える"""
     def block(name, keys):
-        lines = [f'  - {key}:' for key in keys] or [f'  - {KEYLESS_EXAMPLES.get(base_name(name), SENTENCE_EXAMPLE)}']
+        lines = [f'  - {key}:' for key in keys] or [f'  - {KEYLESS_EXAMPLES.get(base_name(name), sentence_example)}']
         return '\n'.join([f'{name}:', *lines])
 
     return '\n\n'.join(block(name, keys) for name, keys in sections)
@@ -72,8 +75,8 @@ def written_skeleton(sections):
     return '\n\n'.join(block(*section) for section in sections) if any(parse_lines(text) for _, _, text in sections) else ''
 
 
-def system_prompt(sections):
-    return f'{INSTRUCTIONS}\n\nFormat:\n{skeleton(sections)}'
+def system_prompt(sections, sentence_example=SENTENCE_EXAMPLE):
+    return f'{INSTRUCTIONS}\n\nFormat:\n{skeleton(sections, sentence_example)}'
 
 
 def user_prompt(samples, written=''):
