@@ -46,6 +46,10 @@ input[type=text], select, textarea {
 
 #bulkText { width: 170px; }
 #bulkSection, #bulkKey { max-width: 120px; }
+/* 一括入力は2段に積み、部品は絞り込みのボタンと同じ高さ（21px）・文字（12px）。帯の高さは絞り込みの2段で決まり、行を選んでも変わらない */
+#bulkForm { flex-direction: column; align-items: flex-start; gap: 1px; }
+.bulk-row { display: flex; align-items: center; gap: 6px; }
+#bulkForm select, #bulkForm input, #bulkForm button { box-sizing: border-box; height: 21px; padding-top: 0; padding-bottom: 0; font-size: 12px; }
 #movePhrase { width: 150px; }
 #moveSection, #moveFrom, #moveTo { max-width: 100px; }
 
@@ -202,8 +206,8 @@ th .side-view { padding: 0 6px; font-size: 12px; line-height: 1.6; color: #555; 
 th .side-view + .side-view { margin-left: 2px; }
 th .side-view.on { background: #1f1f1f; border-color: #1f1f1f; color: #fff; cursor: default; }
 
-td.marks { width: 89px; }  /* ボタン3つ分（24px × 3 + 間 2px × 2 + 左右の余白） */
-.mark-grid { display: grid; grid-template-columns: repeat(3, 24px); grid-template-rows: repeat(8, auto); grid-auto-flow: column; gap: 2px; }
+td.marks { width: 115px; }  /* ボタン4つ分（24px × 4 + 間 2px × 3 + 左右の余白） */
+.mark-grid { display: grid; grid-template-columns: repeat(4, 24px); grid-template-rows: repeat(8, auto); grid-auto-flow: column; gap: 2px; }
 .mark-btn { width: 24px; padding: 0; font-size: 12px; line-height: 1.6; color: #888; border-color: #ccc; border-radius: 3px; }
 .mark-btn.on, .filter-btn.on { color: #fff; font-weight: 700; }
 /* 排他のマークの色（番号ごと。A〜H）。行のボタンも絞り込みのボタンも同じ色 */
@@ -219,15 +223,17 @@ td.marks { width: 89px; }  /* ボタン3つ分（24px × 3 + 間 2px × 2 + 左�
 /* 単語のマーク（行。押せない）: 設定した語句に合う行は色付き */
 .mark-auto { display: block; text-align: center; font-size: 12px; line-height: 1.6; color: #bbb; border: 1px solid #e3e3e3; border-radius: 3px; cursor: default; user-select: none; }
 .mark-auto.on, .filter-btn.on[data-kind="auto"] { background: #00796b; border-color: #00796b; color: #fff; font-weight: 700; }
-/* 絞り込みのボタン（3段目の帯）: 段ごとに名前・☓（その段の印の無い行。camera の ☓ と同じ見た目）・記号。
-   単語の ①〜⑧ は右クリックで語句を選ぶ（設定の無いものは薄く）。行のマークより細い 18px（行を選んで一括入力が並んでも、1440px で1段に収める） */
+/* 絞り込みのボタン（3段目の帯）: 段ごとに2段。上の段は名前・☓（その段の印の無い行。camera の ☓ と同じ見た目）・記号、
+   下の段は記号の真下に ☓（その印の無い行）。単語の ①〜⑯ は右クリックで語句を選ぶ（設定の無いものは薄く）。
+   行のマークより細い 18px（行を選んで一括入力が並んでも、1440px で帯の高さを変えない） */
 .mark-filters { gap: 10px; }
-.filter-group { display: inline-flex; align-items: center; gap: 1px; color: #666; font-size: 12px; }
+.filter-group { display: inline-grid; grid-template-rows: auto auto; grid-auto-flow: column; align-items: center; gap: 1px; color: #666; font-size: 12px; }
+.filter-label { grid-row: span 2; }
 .filter-btn { width: 18px; padding: 0; font-size: 12px; line-height: 1.6; color: #888; border-color: #ccc; border-radius: 3px; }
-.filter-btn.none { color: #999; }
-.filter-btn.on.none { background: #555; border-color: #555; }
+.filter-btn.none, .filter-btn.without { color: #999; }
+.filter-btn.on.none, .filter-btn.on.without[data-kind][data-mark] { background: #555; border-color: #555; }  /* 下の ☓ は記号の色にしない */
 .filter-btn.unset { color: #ccc; }
-/* 単語のマークの設定の欄（帯の ①〜⑧ を右クリックで、その下に開く） */
+/* 単語のマークの設定の欄（帯の ①〜⑯ を右クリックで、その下に開く） */
 .auto-mark-form { position: fixed; z-index: 9; padding: 6px 8px; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
 #autoMarkPhrase { width: 150px; }
 #autoMarkSection, #autoMarkKey { max-width: 100px; }

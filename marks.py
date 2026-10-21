@@ -4,7 +4,7 @@
 - 複数可の列（marks）: 0〜7 の組み合わせ
 - 中では番号で持ち、画面に見せる記号はこの表で決める（記号を差し替えても、保存したデータは変わらない）
 - 表の中の形（文字）: 排他は '' か '0'〜'7'、複数は番号を小さい順にカンマでつないだもの（'0,3,6'）。保存データは数と数の組
-- 単語のマーク（0〜7。中の名前は auto）: 行には持たない。プロジェクトごとの設定（番号ごとに、A, B を除いた段落の名前・キー・語句）で、
+- 単語のマーク（0〜15。中の名前は auto）: 行には持たない。プロジェクトごとの設定（番号ごとに、A, B を除いた段落の名前・キー・語句）で、
   その語句に合う語句のある行に付く（画面とサーバーが入力から決める。合わせ方は matches_pattern）。キーなし（空）は文に合わせる。
   設定は table.json の auto_marks に書く
 """
@@ -13,10 +13,11 @@ import re
 from caption_format import parse_line
 from subjects import base_name
 
-COUNT = 8  # 列ごとのマークの数（番号は 0〜7）
+COUNT = 8  # 排他・複数のマークの数（番号は 0〜7）
+AUTO_COUNT = 16  # 単語のマークの数（番号は 0〜15）
 ONE = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']  # 排他のマークの記号（番号の順）
 MANY = ['★', '●', '▲', '■', '◆', '♥', '♣', '♠']  # 複数のマークの記号（番号の順）
-AUTO = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧']  # 単語のマークの記号（番号の順）
+AUTO = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯']  # 単語のマークの記号（番号の順）
 AUTO_FIELDS = ('section', 'key', 'phrase')
 COLUMNS = ['mark', 'marks']
 # 0.4.4 までの保存データは記号で持っていた。読むときにこの表で番号へ直す（今の記号の表を変えても読めるように、別に固定）
@@ -24,14 +25,14 @@ LEGACY_ONE = ['A', 'B', 'C', 'D']
 LEGACY_MANY = ['★', '●', '▲', '■']
 
 
-def is_number(mark):
-    """マークの番号か（0〜7 の整数。真偽は番号ではない）"""
-    return isinstance(mark, int) and not isinstance(mark, bool) and 0 <= mark < COUNT
+def is_number(mark, count=COUNT):
+    """マークの番号か（0〜count-1 の整数。真偽は番号ではない）"""
+    return isinstance(mark, int) and not isinstance(mark, bool) and 0 <= mark < count
 
 
-def check_number(mark):
-    if not is_number(mark):
-        raise ValueError(f'マークの番号は 0〜{COUNT - 1} です')
+def check_number(mark, count=COUNT):
+    if not is_number(mark, count):
+        raise ValueError(f'マークの番号は 0〜{count - 1} です')
     return mark
 
 
@@ -92,9 +93,9 @@ def auto_mark_of(value):
 
 
 def auto_marks_from_file(value):
-    """保存データの単語のマークの設定（8 個。無い・足りない番号は設定なし）"""
+    """保存データの単語のマークの設定（16 個。無い・足りない番号は設定なし。8 個だったときのものも読める）"""
     items = value if isinstance(value, list) else []
-    return [auto_mark_of(items[i]) if i < len(items) else None for i in range(COUNT)]
+    return [auto_mark_of(items[i]) if i < len(items) else None for i in range(AUTO_COUNT)]
 
 
 def matches_pattern(pattern, phrase):

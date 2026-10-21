@@ -1212,13 +1212,16 @@ def test_deselect_needs_a_long_press(page, imgs):
 
 
 def test_selecting_rows_does_not_shift_the_table(page, imgs):
-    # 行を選ぶと2段目の帯に一括入力が並ぶが、帯は1段のまま（窓の幅 1440px 以上。自動のマーク ①〜⑧ と絞り込みの「自動」を足してから）
+    # 行を選ぶと3段目の帯に一括入力が並ぶが、帯の高さは変わらない（窓の幅 1440px 以上。絞り込みは単語の ①〜⑯ と下の段の ☓ まで、
+    # 一括入力は2段に積む）
     page.set_viewport_size({"width": 1440, "height": 800})
     load_dir(page, imgs)
     before = page.locator("#grid").bounding_box()["y"]
     row(page, "a.png").locator("td.meta").click()
     expect(page.locator("#bulkForm")).to_be_visible()
     assert page.locator("#grid").bounding_box()["y"] == before
+    upper, lower = page.locator("#bulkSection").bounding_box(), page.locator("#bulkText").bounding_box()
+    assert lower["y"] >= upper["y"] + upper["height"]  # 段落・キーの下に、語句と追加・削除
 
 
 def test_hold_button_fills_while_pressed_and_resets_when_released_early(page, imgs):

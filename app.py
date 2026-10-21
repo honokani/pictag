@@ -18,7 +18,7 @@ from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generat
                   parse_caption, pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of, display_names,
                       insert_position, name_for_new, pov_choices, pov_names, template_keys)
-from marks import (AUTO, COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
+from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
                    many_numbers, many_text, marks_to_file, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
@@ -184,7 +184,7 @@ class CaptionTool:
         self.image_dir = None
         self.dir_name = None
         self.df = pd.DataFrame()
-        self.auto_marks = [None] * COUNT  # 自動のマークの設定（番号ごとに {section, key, phrase} か None。プロジェクトごと）
+        self.auto_marks = [None] * AUTO_COUNT  # 自動のマークの設定（番号ごとに {section, key, phrase} か None。プロジェクトごと）
         self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
         self.hints = {}  # 画像名 → hint（画像フォルダの同じ名前の .txt）
         self.qwen_hints = {}  # 画像名 → Qwen の答え（data_work/<フォルダ名>/qwen/ の同じ名前の .txt）
@@ -774,13 +774,13 @@ class CaptionTool:
         return True
 
     def set_auto_mark(self, index, mark):
-        """単語のマーク（番号 0〜7）の設定を {section（A, B を除いた段落の名前）, key（キーなしは空）, phrase（* は何文字でも）} にする
+        """単語のマーク（番号 0〜15）の設定を {section（A, B を除いた段落の名前）, key（キーなしは空）, phrase（* は何文字でも）} にする
 
         None なら外す。行には持たない（画面とサーバーが入力から付ける）。保存で table.json に書く。設定の一覧を返す（失敗は None）
         """
         self.last_error = ''
         try:
-            check_number(index)
+            check_number(index, AUTO_COUNT)
             if mark is not None:
                 if not isinstance(mark, dict):
                     raise ValueError('単語のマークの設定が正しくありません')
@@ -1237,7 +1237,7 @@ def clear_marks():
 
 @app.route('/set_auto_mark', methods=['POST'])
 def set_auto_mark():
-    """単語のマークの設定（{index: 0〜7, mark: {section, key（キーなしは空）, phrase} か null}）。プロジェクトごと（保存で table.json に書く）"""
+    """単語のマークの設定（{index: 0〜15, mark: {section, key（キーなしは空）, phrase} か null}）。プロジェクトごと（保存で table.json に書く）"""
     data = request.get_json() or {}
     marks = caption_tool.set_auto_mark(data.get('index'), data.get('mark'))
     if marks is None:
