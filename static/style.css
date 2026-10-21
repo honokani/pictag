@@ -44,7 +44,8 @@ input[type=text], select, textarea {
     background: #fff;
 }
 
-#bulkText { width: 150px; }
+#bulkText { width: 140px; }
+#resumeButton { padding: 4px; }  /* 📍 は絵文字だけ（1440px で2段目の右端に収める） */
 #bulkSection, #bulkKey { max-width: 120px; }
 /* 一括入力（2段目の帯の右端）は2段に積み、部品は絞り込みのボタンと同じ高さ（21px）・文字（12px）。1440px で2段目のほかの道具と同じ行に収める */
 #bulkForm { flex-direction: column; align-items: flex-start; gap: 1px; }
