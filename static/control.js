@@ -144,6 +144,19 @@ const endSentence = line => line
     .replace(/(?<=\S)\s*,[\s,]*\./g, '.')
     .replace(/(?<=[^\s,.])\s*,[\s,]*$/, '.');
 
+// キーのある行では、語の後に続けた2つ以上のスペースは、カンマと同じ語句の区切り（"smile  big eyes" → "smile, big eyes"）
+const spacesToCommas = text => text.replace(/(?<=[^\s,:]) {2,}(?=[^\s,])/g, ', ');
+
+// 1行: キーのある行だけ、キーの後ろを直す（キーの無い文は、整えるときに空白1つにまとめる）
+function spacesToCommasInLine(line) {
+    if (!parseLine(line).key) return line;
+    const colon = line.indexOf(':');
+    return line.slice(0, colon + 1) + spacesToCommas(line.slice(colon + 1));
+}
+
+// 入力欄の値（{key, value}）: キーの欄は全部、「その他」の欄と1つだけの欄はキーのある行だけ
+const spacesToCommasInField = f => ({...f, value: f.key ? spacesToCommas(f.value) : f.value.split('\n').map(spacesToCommasInLine).join('\n')});
+
 // 「その他」の欄で、値の無いキーの行（mirror:）の次からのキーの無い行を、空行か次のキーの行まで、そのキーの行に空白でつなぐ
 // （else の物ごとの文: mirror: face reflects on mirror. ball reflects on mirror.）
 function foldBareKeys(lines) {
@@ -275,11 +288,11 @@ const spacesAfterWord = before => (before.match(/\S( *)$/) || ['', ''])[1].lengt
 const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
 
 // キーのある行で打っている語句: raw はカンマ（キーのコロン・欄の改行）の後ろからカーソルまで、at は raw の頭の位置
-// 語の後にスペースを2つ以上続けたら、打っていない次の語句として見る（候補はカンマの後ろと同じで、3つ目でもしまわない。
-// 選んだ語句は、続いたスペースと置き換える）
+// 語の後に2つ以上続けたスペースはカンマと同じで、その後ろが打っている語句（何も打っていなければ、カンマの後ろと同じ候補を出す。
+// 3つ目でもしまわない）。選んだ語句は、そのスペースから置き換える
 function phraseQuery(raw, at) {
-    const spaces = spacesAfterWord(raw);
-    if (spaces >= 2) return {query: '', queryStart: at + raw.length - spaces};
+    const spaced = raw.match(/^(.*[^\s,:])( {2,})(.*)$/);
+    if (spaced) return {query: spaced[3], queryStart: at + spaced[1].length};
     const query = raw.trimStart();
     return {query, queryStart: at + raw.length - query.length};
 }
@@ -303,7 +316,7 @@ function contextOf(el) {
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
     const after = value.slice(caret, lineEnd);
-    const base = {end, after, current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+    const base = {end, after, current: parseLine(spacesToCommasInLine(value.slice(lineStart, lineEnd))).phrases,
         cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
@@ -327,13 +340,13 @@ function editorContext(el) {
     const caret = el.selectionStart;
     const end = el.selectionEnd;
     const value = el.value.slice(0, caret) + el.value.slice(end);
-    const fields = state.editor.fields.map(f => ({key: f.dataset.key, value: f === el ? value : f.value}));
+    const fields = state.editor.fields.map(f => spacesToCommasInField({key: f.dataset.key, value: f === el ? value : f.value}));
     const cellPhrases = phrasesByKey(composeEditor(fields, state.editor.keys));
     if (!el.dataset.key) return {...contextOf(el), cellPhrases};
     const before = value.slice(0, caret);
     const lineEndAt = value.indexOf('\n', caret);
     const segment = Math.max(before.lastIndexOf(','), before.lastIndexOf('\n')) + 1;
-    return {end, after: value.slice(caret, lineEndAt < 0 ? value.length : lineEndAt), current: splitPhrases(value.replace(/\n/g, ',')),
+    return {end, after: value.slice(caret, lineEndAt < 0 ? value.length : lineEndAt), current: splitPhrases(spacesToCommas(value).replace(/\n/g, ',')),
         cellPhrases, mode: 'phrase', key: el.dataset.key, ...phraseQuery(before.slice(segment), segment)};
 }
 
@@ -1282,7 +1295,7 @@ function commitEdit() {
     state.editor = null;
     hideSuggestions();
     const row = state.byIndex.get(editor.index);
-    const fields = editor.fields.map(el => ({key: el.dataset.key, value: el.value}));
+    const fields = editor.fields.map(el => spacesToCommasInField({key: el.dataset.key, value: el.value}));
     const text = tidyInput(composeEditor(fields, editor.keys), editor.section);
     const changed = text !== (row.texts[editor.section] || '');
     row.texts[editor.section] = text;
@@ -1406,7 +1419,7 @@ async function bulkEdit(op) {
     const key = $('bulkKey').value;
     if (!rows.length) return setStatus('行を選んでください', 'error');
     if (!phrases) return setStatus('語句を入力してください', 'error');
-    const text = key ? `${key}: ${phrases}` : phrases;
+    const text = key ? `${key}: ${spacesToCommas(phrases)}` : phrases;
     await settled();
     const res = await postJson(op === 'add' ? '/add_phrase' : '/remove_phrase', {rows, section: $('bulkSection').value, text});
     if (!res.success) return setStatus(res.message || '一括入力できませんでした', 'error');
@@ -1789,7 +1802,7 @@ function bulkContext(el) {
     const value = el.value.slice(0, caret) + el.value.slice(end);
     const before = value.slice(0, caret);
     const after = value.slice(caret);
-    const current = key ? splitPhrases(value) : [];
+    const current = key ? splitPhrases(spacesToCommas(value)) : [];
     const base = {end, after, current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
