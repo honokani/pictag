@@ -1,4 +1,6 @@
-"""マーキングの画面操作（Playwright）。排他の A〜H と複数可の ★●▲■◆♥♣♠（ボタンの data-mark は番号）"""
+"""マーキングの画面操作（Playwright）。排他の A〜H、複数可の ★●▲■◆♥♣♠、自動の ①〜⑧（ボタンの data-mark は番号）"""
+import re
+
 import pytest
 
 from helpers import make_images
@@ -10,6 +12,8 @@ pytestmark = pytest.mark.e2e
 
 ONE = "ABCDEFGH"
 MANY = "★●▲■◆♥♣♠"
+AUTO = "①②③④⑤⑥⑦⑧"
+ON = re.compile(r"\bon\b")
 
 
 @pytest.fixture
@@ -36,6 +40,20 @@ def mark(page, name, symbol):
 
 def select(page, name, modifiers=None):
     row(page, name).locator("td.meta").click(modifiers=modifiers or [])
+
+
+def auto(page, name, number):
+    """行の自動のマーク（表示だけ）"""
+    return row(page, name).locator(f'.mark-auto[data-mark="{number}"]')
+
+
+def write(page, name, text, section="girl"):
+    """入力欄の「その他」に書いて確定する（確定タグのキーの行は、そのキーにまとまる）"""
+    cell = row(page, name).locator(f'td.cell[data-section="{section}"]')
+    cell.click()
+    cell.locator('textarea[data-key=""]').fill(text)
+    page.evaluate("document.activeElement.blur()")
+    expect(cell.locator(".val").first).to_be_visible()
 
 
 def test_eight_exclusive_and_eight_multi_marks(page, imgs):
@@ -98,7 +116,7 @@ def test_filter_then_select_visible_and_bulk_add(page, imgs):
     page.select_option("#bulkSection", "picture")
     page.select_option("#bulkKey", "view")
     page.fill("#bulkText", "from above")
-    page.click("text=選択行に追加")
+    page.click('#bulkForm button[value="add"]')
     page.select_option("#filterOne", "")
     for name, expected in [("a.png", 1), ("b.png", 0), ("c.png", 1)]:
         expect(row(page, name).locator('td.cell[data-section="picture"] .ln', has_text="view: from above")).to_have_count(expected)
@@ -142,3 +160,49 @@ def test_marks_survive_save(page, imgs):
     expect(page.locator("#status")).to_have_text("保存しました")
     expect(mark(page, "b.png", "D")).to_have_class("mark-btn on")
     expect(mark(page, "b.png", "◆")).to_have_class("mark-btn on")
+
+
+def test_auto_marks_follow_the_phrase_chosen_by_right_click(page, imgs):
+    # 右の列（①〜⑧）は自動: 帯の ①〜⑧ を右クリックして段落・キー・語句を選ぶと、その語句のある行に付く（行のマークは押しても変わらない）
+    load_dir(page, imgs)
+    write(page, "a.png", "looks: smile")
+    write(page, "c.png", "looks: standing")
+    expect(row(page, "a.png").locator(".mark-auto")).to_have_text(list(AUTO))
+    setting = page.locator('#autoMarks .auto-mark[data-mark="0"]')
+    expect(setting).to_have_class(re.compile(r"\bunset\b"))  # 設定の無いものは薄く
+
+    setting.click(button="right")
+    form = page.locator("#autoMarkForm")
+    expect(form).to_be_visible()
+    page.select_option("#autoMarkSection", "girl")
+    page.select_option("#autoMarkKey", "looks")
+    phrase = page.locator("#autoMarkPhrase")
+    phrase.fill("ｓｍｉｌｅ")  # 英字だけの欄
+    expect(phrase).to_have_value("smile")
+    phrase.fill("")
+    page.wait_for_function("() => state.phrases.some(p => p.phrase === 'smile')")
+    phrase.press_sequentially("smi")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("smile")  # その段落のそのキーの語句
+    phrase.press("Enter")
+    form.locator('button[type="submit"]').click()
+    expect(form).to_be_hidden()
+    expect(setting).to_have_attribute("title", "① girl / looks / smile（右クリックで変える）")
+    expect(auto(page, "a.png", 0)).to_have_class(ON)
+    expect(auto(page, "b.png", 0)).not_to_have_class(ON)
+    expect(page.locator("#saveButton")).to_have_text("保存 *")
+
+    write(page, "b.png", "looks: smile")  # 入力が変われば付き直す
+    expect(auto(page, "b.png", 0)).to_have_class(ON)
+    auto(page, "b.png", 0).click()  # 押しても変わらない
+    expect(auto(page, "b.png", 0)).to_have_class(ON)
+
+    page.select_option("#filterAuto", label="① smile")  # 絞り込み
+    expect(row(page, "c.png")).to_be_hidden()
+    expect(row(page, "a.png")).to_be_visible()
+    page.select_option("#filterAuto", "")
+
+    setting.click(button="right")
+    page.locator("#autoMarkClear").click()  # 外す
+    expect(form).to_be_hidden()
+    expect(auto(page, "a.png", 0)).not_to_have_class(ON)
+    expect(setting).to_have_class(re.compile(r"\bunset\b"))
