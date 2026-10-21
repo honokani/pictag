@@ -6,7 +6,8 @@ import pytest
 import app as pictag
 from helpers import FakeComfy, make_images
 from qwen import (INSTRUCTIONS, clear_drafts, fill_section, keep_word_marks, match_section, parse_caption,
-                  pick_random_samples, pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt)
+                  pick_random_samples, pick_samples, pick_tiered_samples, skeleton, system_prompt, user_prompt,
+                  written_skeleton)
 
 PICTURE = ["place", "characters", "vibes", "view", "extra"]
 SUBJECT = ["looks", "clothes", "body"]
@@ -43,6 +44,36 @@ def test_user_prompt_lists_samples_and_asks_for_this_image():
     assert user_prompt(["girl:\n  - looks: sitting", "girl:\n  - looks: standing"]) == (
         "Example captions of other images in the same set:\n\n"
         "girl:\n  - looks: sitting\n\n---\n\ngirl:\n  - looks: standing\n\n---\n\nWrite the caption for this image.")
+
+
+def test_user_prompt_sends_what_is_written_and_asks_to_fill_in_the_rest():
+    # 書いてあるもの（written_skeleton）があれば頼む文の前に置き、書いてあるものは変えずに、空いている所を埋めてと頼む
+    assert user_prompt(["girl:\n  - looks: sitting"], "girl:\n  - looks: smile\n  - clothes:") == (
+        "Example captions of other images in the same set:\n\n"
+        "girl:\n  - looks: sitting\n\n---\n\n"
+        "Part of the caption for this image is already written. Keep what is written as it is, "
+        "and fill in the empty parts by looking at the image:\n\n"
+        "girl:\n  - looks: smile\n  - clothes:\n\n"
+        "Write the caption for this image.")
+
+
+def test_written_skeleton_puts_what_is_written_into_the_skeleton():
+    # 書いてある語句はそのキーに（同じキーの行はまとめる）、値の無いキーは空のまま。確定タグに無いキーと文は後ろに。
+    # 何も書いていない段落は、キーだけ（キーの無い段落は名前だけ）
+    sections = [("picture", PICTURE, "view: from side, guy POV"), ("action", [], "girl waves."),
+                ("girl", SUBJECT, "pose: kneeling\nlooks: smile\nlooks: looking at viewer"), ("guy", SUBJECT, ""),
+                ("else", [], "")]
+    assert written_skeleton(sections) == (
+        "picture:\n  - place:\n  - characters:\n  - vibes:\n  - view: from side, guy POV\n  - extra:\n\n"
+        "action:\n  - girl waves.\n\n"
+        "girl:\n  - looks: smile, looking at viewer\n  - clothes:\n  - body:\n  - pose: kneeling\n\n"
+        "guy:\n  - looks:\n  - clothes:\n  - body:\n\n"
+        "else:")
+
+
+def test_written_skeleton_is_empty_when_nothing_is_written():
+    # 語句の無い行（view: だけ）は、書いていないのと同じ
+    assert written_skeleton([("picture", PICTURE, "view:\n "), ("action", [], ""), ("girl", SUBJECT, "")]) == ""
 
 
 def test_pick_samples_takes_the_nearest_ten_non_empty_captions_in_table_order():
@@ -196,6 +227,12 @@ def qwen_api(api, comfy, tmp_path, monkeypatch):
     return api
 
 
+def sample_numbers(comfy):
+    """送った見本の looks: poseN の N（並びのまま）。最後の --- の後ろ（その行に書いてあるものと頼む文）は見ない"""
+    prompt = comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
+    return [int(i) for i in re.findall(r"looks: pose(\d+)", prompt.rsplit("\n\n---\n\n", 1)[0])]
+
+
 def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api, comfy, tool):
     assert qwen_api.table()["qwen"] is True
     row = qwen_api.row_index("r10.png")
@@ -238,6 +275,31 @@ def test_pressing_again_replaces_only_the_previous_draft(qwen_api, comfy):
     assert texts["picture"] == "place: beach"  # 新しい答えに無い view は、前の下書きごと消える
 
 
+def test_qwen_fill_sends_what_is_written_but_not_the_previous_draft(qwen_api, comfy):
+    # 何も書いていなければ今までの文面。書いてあれば、それを入れたひな形も送る（前に Qwen が入れて直していないものは送らない）
+    row = qwen_api.row_index("r10.png")
+    qwen_api.qwen_fill(row)
+    assert "already written" not in comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
+    qwen_api.write(row, "looks: standing\nclothes: red dress, hat")  # Qwen の looks はそのまま、clothes だけ直す
+    qwen_api.write(row, "view: guy POV", section="picture")  # Qwen の place・view を消して書く
+    qwen_api.qwen_fill(row)
+    assert ("already written. Keep what is written as it is, and fill in the empty parts by looking at the image:\n\n"
+            "picture:\n  - place:\n  - characters:\n  - vibes:\n  - view: guy POV\n  - extra:\n\n"
+            "action:\n\n"  # 直していない Qwen の文も送らない
+            "girl:\n  - looks:\n  - clothes: red dress, hat\n  - body:\n\n"
+            "guy:\n  - looks:\n  - clothes:\n  - body:\n\n"
+            "Write the caption for this image.") in comfy.prompts[1]["prompt"]["tg"]["inputs"]["prompt"]
+
+
+@pytest.mark.parametrize("mode", pictag.QWEN_MODES)
+def test_every_qwen_button_sends_what_is_written(qwen_api, comfy, mode):
+    # 🤖・🔖・🔄・🎲 のどれでも送る（🔄 は、書いた値も答えで置き換わる）
+    row = qwen_api.row_index("r10.png")
+    qwen_api.write(row, "view: from side, guy POV", section="picture")
+    assert qwen_api.qwen_fill(row, mode=mode)["success"]
+    assert "  - view: from side, guy POV\n" in comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]
+
+
 def test_overwrite_replaces_filled_fields_and_keeps_word_mark_words(qwen_api):
     # 🔄: 答えにあるキーと文は、入力があっても置き換える（答えに無い body は残す。ボタンで選んだ view も答えで置き換わる）。
     # 上書きで外れる単語のマーク（①）の語句は足し直す
@@ -276,7 +338,7 @@ def test_qwen_fill_random_takes_samples_from_the_whole_project(qwen_api, comfy):
     qwen_api.write(qwen_api.row_index("r11.png"), "looks: pose11")
     res = qwen_api.qwen_fill(row, mode="random")
     assert res["success"], res
-    used = sorted(int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"]))
+    used = sorted(sample_numbers(comfy))
     assert used == [0, 1, 2, 3, 4, 6, 7, 8, 9, 11]  # ほかに 10 行なので全部。その行（5）は入らない
 
 
@@ -290,7 +352,7 @@ def test_qwen_fill_mark_takes_rows_with_the_same_marks_first(qwen_api, comfy):
     qwen_api.post("/set_marks", {"rows": [index[3], index[10]], "mark": 0, "on": True})
     res = qwen_api.qwen_fill(index[10], mode="mark")
     assert res["success"], res
-    used = [int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"])]
+    used = sample_numbers(comfy)
     assert len(set(used)) == 10 and 10 not in used
     assert sorted(used[-2:]) == [1, 2] and used[-3] == 3  # A の行が最後、その前に ★ の行
 
@@ -307,7 +369,7 @@ def test_qwen_fill_mark_takes_rows_sharing_word_marks_before_the_others(qwen_api
     qwen_api.post("/set_marks", {"rows": [index[4], index[10]], "mark": 0, "on": True})
     res = qwen_api.qwen_fill(index[10], mode=mode)
     assert res["success"], res
-    used = [int(i) for i in re.findall(r"looks: pose(\d+)", comfy.prompts[0]["prompt"]["tg"]["inputs"]["prompt"])]
+    used = sample_numbers(comfy)
     assert len(set(used)) == 10 and 10 not in used
     assert used[-1] == 3 and sorted(used[-3:-1]) == [1, 2] and used[-4] == 4  # 単語 → 排他 → 複数 の順に頼む文の近く
 

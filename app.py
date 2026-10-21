@@ -16,7 +16,8 @@ from PIL import Image
 from caption_format import parse_line, phrases_of, render_caption, with_line
 from groups import blocked_by, clean_groups
 from qwen import (DEFAULT_URL, SAMPLE_COUNT, clear_drafts, fill_section, generate, jpeg_of, keep_word_marks, match_section,
-                  parse_caption, pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt)
+                  parse_caption, pick_random_samples, pick_samples, pick_tiered_samples, system_prompt, user_prompt,
+                  written_skeleton)
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, CANDIDATE_GROUPS, OTHERS, TARGETED, base_name, characters_of, display_names,
                       insert_position, name_for_new, pov_choices, pov_names, template_keys)
 from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks_of, check_number, check_one, many_from_file,
@@ -866,7 +867,8 @@ class CaptionTool:
         見本は空でないキャプション 10 個（削除済みの行は除く）。mode が near（🤖）なら上にある行から近い順に、
         mark（🔖）なら単語のマークを共有する行 → 排他のマークが同じ行 → 複数のマークを共有する行 → ほかの行の順にランダムに、
         random（🎲）ならその行のほかの全部の行からランダムに。overwrite（🔄）は mark と同じ見本で、答えにあるキーと文を
-        入力があっても置き換える（外れる単語のマークの語句は足し直す）。(画面に渡す1行, 入れた段落) を返す。
+        入力があっても置き換える（外れる単語のマークの語句は足し直す）。どの mode でも、その行に書いてあるもの（前の下書きは
+        除く）を入れたひな形も送る。(画面に渡す1行, 入れた段落) を返す。
         行・見本・画像の問題は ValueError、ComfyUI の問題は OSError（繋がらない・時間切れ）か RuntimeError（実行の失敗）
         """
         if mode not in QWEN_MODES:
@@ -902,13 +904,14 @@ class CaptionTool:
         if not samples:
             raise ValueError(missing)
         keys = {s: template_keys(s, self.shared['templates'], FIXED_SECTIONS) for s in sections}
+        # 送るのは押したときに書いてあるもの。入れるときは答えが来てから読み直す（待つ間に書いたものも残す）
+        written = written_skeleton([(s, keys[s], text) for s, text in self.own_texts(row_index, sections, name).items()])
         answer = generate(url, jpeg_of(self.image_dir / name), f"{self.dir_name}_{Path(name).stem}.jpg",
-                          user_prompt(samples), system_prompt([(s, keys[s]) for s in sections]))
+                          user_prompt(samples, written), system_prompt([(s, keys[s]) for s in sections]))
         self.save_qwen_hint(name, answer)
         # 押し直したときは、前に Qwen が入れて、そのあと直していないもの（前の下書き）を消してから入れる
         before = {s: to_text(self.df.at[row_index, s]) for s in sections}
-        drafts = self.read_qwen_drafts(name)
-        texts = {s: clear_drafts(before[s], drafts.get(s, {})) for s in sections}
+        texts = self.own_texts(row_index, sections, name)
         present = [s for s in sections if phrases_of(texts[s])]  # 答えの guy: は、この行で入力のある guy（1つなら）に当てる
         overwrite = mode == 'overwrite'
         added = {}
@@ -929,6 +932,11 @@ class CaptionTool:
         self.save_qwen_drafts(name, added)
         logger.info(f"Qwen filled {name}: {sorted(added)}")
         return self.row_views([row_index])[0], [s for s in sections if s in added]
+
+    def own_texts(self, row_index, sections, image_name):
+        """その行の入力から、前に Qwen が入れて、そのあと直していないもの（前の下書き）を消したもの {段落: 入力}"""
+        drafts = self.read_qwen_drafts(image_name)
+        return {s: clear_drafts(to_text(self.df.at[row_index, s]), drafts.get(s, {})) for s in sections}
 
     def qwen_drafts_file(self, image_name):
         """Qwen が欄に入れたもの（前の下書き）の置き場: data_work/<フォルダ名>/qwen/<画像名>.json"""
