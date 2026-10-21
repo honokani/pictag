@@ -34,7 +34,7 @@ qwen 版は `uv run python app.py --qwen` で起動します（ComfyUI を先に
 ```
 data_out/<フォルダ名>/captions/<画像名>.caption   # 学習用キャプション（拡張子を除いた画像名 + .caption。改行は LF）
 data_out/<フォルダ名>/captions_dead/<画像名>.caption  # 元フォルダから消えた画像のキャプション
-data_out/<フォルダ名>/table.json                  # 画像 × 段落の入力
+data_out/<フォルダ名>/table.json                  # 画像 × 段落の入力（マーク・行ごとの書き換えた時刻も）
 data_out/<フォルダ名>/tgt_path.txt                # 画像ディレクトリの絶対パス
 data_work/<フォルダ名>/                           # サムネイル
 data_work/<フォルダ名>/qwen/<画像名>.txt           # Qwen の答え（qwen 版の 🤖。右端の列の hint_by_qwen で見る）

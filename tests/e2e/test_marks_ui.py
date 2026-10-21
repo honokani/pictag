@@ -211,7 +211,7 @@ def test_auto_marks_follow_the_phrase_chosen_by_right_click(page, imgs):
 
     write(page, "b.png", "looks: smile")  # 入力が変われば付き直す
     expect(auto(page, "b.png", 0)).to_have_class(ON)
-    auto(page, "b.png", 0).click()  # 押しても変わらない
+    auto(page, "b.png", 0).click()  # 付いている行で押しても変わらない
     expect(auto(page, "b.png", 0)).to_have_class(ON)
 
     setting.click()  # 左クリックは絞り込み
@@ -224,6 +224,27 @@ def test_auto_marks_follow_the_phrase_chosen_by_right_click(page, imgs):
     expect(form).to_be_hidden()
     expect(auto(page, "a.png", 0)).not_to_have_class(ON)
     expect(setting).to_have_class(re.compile(r"\bunset\b"))
+
+
+def test_pressing_a_row_word_mark_puts_its_phrase(page, imgs):
+    # 行の ① を押すと、① の語句がその行に入って ① が付く。マウスを載せると設定（段落 / キー / 語句）だけが見える。
+    # 語句を決めていない番号は何も出さず、押すと案内だけ
+    load_dir(page, imgs)
+    page.locator('#autoMarks .auto-mark[data-mark="0"]').click(button="right")
+    page.select_option("#autoMarkSection", "girl")
+    page.select_option("#autoMarkKey", "looks")
+    page.locator("#autoMarkPhrase").fill("smile")
+    page.locator('#autoMarkForm button[type="submit"]').click()
+    expect(page.locator("#autoMarkForm")).to_be_hidden()
+    expect(auto(page, "a.png", 0)).to_have_attribute("title", "girl / looks / smile")
+    auto(page, "a.png", 0).click()
+    expect(auto(page, "a.png", 0)).to_have_class(ON)
+    expect(row(page, "a.png").locator('td.cell[data-section="girl"] .ln:not(.empty)')).to_have_text(["looks: smile"])
+    expect(page.locator("#saveButton")).to_have_text("保存 *")
+    expect(auto(page, "a.png", 1)).not_to_have_attribute("title", re.compile("."))
+    auto(page, "a.png", 1).click()
+    expect(page.locator("#status")).to_contain_text("右クリック")
+    expect(auto(page, "a.png", 1)).not_to_have_class(ON)
 
 
 def test_word_marks_match_sentences_of_action_without_keys(page, imgs):

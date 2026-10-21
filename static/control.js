@@ -590,14 +590,18 @@ const autoMarksOf = row => state.autoMarks.flatMap((m, i) => (m && state.section
 
 const keyLabel = key => key || '（キーなし）';
 
-// 単語のマークの説明（帯のボタンと行のマークの title）
+// 単語のマークの設定（段落 / キー / 語句）
+const autoMarkSetting = m => `${m.section} / ${keyLabel(m.key)} / ${m.phrase}`;
+
+// 単語のマークの説明（帯のボタンの title）
 function autoMarkTitle(i) {
     const label = state.markChoices.auto[i];
     const m = state.autoMarks[i];
-    return m ? `${label} ${m.section} / ${keyLabel(m.key)} / ${m.phrase}（右クリックで変える）` : `${label}（右クリックで、段落・キー・語句を選ぶ）`;
+    return m ? `${label} ${autoMarkSetting(m)}（右クリックで変える）` : `${label}（右クリックで、段落・キー・語句を選ぶ）`;
 }
 
-// マークの欄: 縦長の 4 列 × 8 行。左から排他（A〜H のどれか1つ）、複数（★●▲■◆♥♣♠）、単語（①〜⑧ と ⑨〜⑯。押せない）
+// マークの欄: 縦長の 4 列 × 8 行。左から排他（A〜H のどれか1つ）、複数（★●▲■◆♥♣♠）、単語（①〜⑧ と ⑨〜⑯。
+// 入力から付く。押すとその語句を入れ、マウスを載せると設定だけ見える。語句を決めていない番号は何も出さない）
 // ボタンは番号を持ち、記号を見せる
 function marksHtml(row) {
     const button = (kind, mark, label, on) =>
@@ -605,8 +609,9 @@ function marksHtml(row) {
     const one = state.markChoices.one.map((label, i) => button('one', i, label, row.mark === i)).join('');
     const many = state.markChoices.many.map((label, i) => button('many', i, label, row.marks.includes(i))).join('');
     const on = autoMarksOf(row);
+    const setting = i => (state.autoMarks[i] ? ` title="${escapeHtml(autoMarkSetting(state.autoMarks[i]))}"` : '');
     const auto = state.markChoices.auto.map((label, i) =>
-        `<span class="mark-auto${on.includes(i) ? ' on' : ''}" data-mark="${i}" title="${escapeHtml(autoMarkTitle(i))}">${escapeHtml(label)}</span>`).join('');
+        `<span class="mark-auto${on.includes(i) ? ' on' : ''}" data-mark="${i}"${setting(i)}>${escapeHtml(label)}</span>`).join('');
     return `<td class="marks"><div class="mark-grid">${one}${many}${auto}</div></td>`;
 }
 
@@ -770,6 +775,30 @@ const belowHead = tr => tr.getBoundingClientRect().top - headBottom();
 function showRowBelowHead(index, gap) {
     const tr = rowElement(index);
     if (tr) $('imagesView').scrollTop += belowHead(tr) - gap;
+}
+
+// 最後に書き換えた行（書き換えた時刻がいちばん新しい行。記録が無ければ undefined）
+const lastEditedRow = () => state.rows.reduce((last, r) => (r.edited_at && (!last || r.edited_at > last.edited_at) ? r : last), undefined);
+
+// 📍（2段目の右端）を描き直す: 書き換えた行が無ければ押せない。説明に行先の画像の名前
+function paintResumeButton() {
+    const row = lastEditedRow();
+    $('resumeButton').disabled = !row;
+    $('resumeButton').title = row ? `続きへ: 最後に書き換えた行（${row['サムネイル']}）を見せる`
+        : '続きへ: 書き換えた行はまだありません（書き換えると、ここから戻れます）';
+}
+
+// 📍: 最後に書き換えた行を、列の見出しのすぐ下に見せる。絞り込みなどで隠れていれば、絞り込みは変えずに知らせるだけ
+function resume() {
+    commitEdit();
+    const row = lastEditedRow();
+    if (!row) return;
+    const tr = rowElement(row.index);
+    if (!tr || tr.getBoundingClientRect().height === 0) {
+        setStatus(`${row['サムネイル']}（最後に書き換えた行）は、絞り込みか「削除済み画像を表示」で隠れています`, 'warn');
+        return;
+    }
+    showRowBelowHead(row.index, 0);
 }
 
 // hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
@@ -1012,6 +1041,7 @@ function renderTable() {
     $('markTools').hidden = !state.loaded || state.view !== 'images';
     setDirty(state.dirty);
     updateSelectionInfo();
+    paintResumeButton();
 }
 
 // 行だけ描き直す（グループが変わったときの ⚠ の付け直し）
@@ -1024,6 +1054,7 @@ function rerenderRows() {
 function replaceRow(row) {
     state.byIndex.set(row.index, row);
     state.rows = state.rows.map(r => (r.index === row.index ? row : r));
+    paintResumeButton();
     const tr = rowElement(row.index);
     if (!tr) return;
     tr.outerHTML = rowHtml(row);
@@ -1237,6 +1268,8 @@ async function sendText(row, section, text) {
     row.caption = res.caption;
     row.tokens = res.tokens;
     row.characters = res.characters;
+    row.edited_at = res.edited_at;
+    paintResumeButton();
     const tr = rowElement(row.index);
     if (tr) {
         tr.querySelector('td.meta').innerHTML = metaHtml(row);
@@ -1618,6 +1651,28 @@ function clickMark(button) {
     return button.dataset.kind === 'one' ? markOne(rows, mark) : markMany(rows, mark);
 }
 
+// 行の ①〜⑯: その番号の語句を行に入れる（選択中の行の中で押すと選択中の全行）。* を含む語句は、合う語句のうち件数が最も多いもの
+// （サーバーが決める）。付いている行と、同じグループの別の語句がある行には入れない（付いている行だけなら何もしない）
+async function putWordMark(span) {
+    const i = Number(span.dataset.mark);
+    const label = state.markChoices.auto[i];
+    if (!state.autoMarks[i]) return setStatus(`${label} は語句が決まっていません（帯の ${label} を右クリックで決めます）`, 'warn');
+    const rows = targetRows(Number(span.closest('tr').dataset.index));
+    if (rows.every(r => autoMarksOf(state.byIndex.get(r)).includes(i))) return;
+    commitEdit();
+    await settled();
+    const res = await postJson('/add_word_mark', {rows, index: i});
+    if (!res.success) return setStatus(res.message, 'error');
+    res.rows.forEach(replaceRow);
+    const put = rows.length - res.skipped;
+    if (!put) return setStatus(`${label}: 入れられる行がありませんでした（付いているか、同じグループの語句があります）`, 'warn');
+    setDirty(true);
+    refreshWords();
+    const done = `${put} 行に「${res.phrase}」を入れました`;
+    setStatus(res.skipped ? `${done}（${res.skipped} 行は、付いているか同じグループの語句があるので入れていません）` : done,
+        res.skipped ? 'warn' : 'ok');
+}
+
 // キーボード（入力欄の外で）: Ctrl+A で表示中をすべて選択（マークのショートカットは無い。マークが増えて数字キーでは足りない）
 function handleMarkKey(event) {
     const typing = event.target instanceof Element && event.target.closest('input, textarea, select');
@@ -1799,6 +1854,7 @@ function wire() {
     $('projectSelect').addEventListener('change', guarded(openProject));
     $('saveButton').addEventListener('click', guarded(save));
     $('removeDeadButton').addEventListener('click', guarded(removeDead));
+    $('resumeButton').addEventListener('click', resume);
     $('freezeButton').addEventListener('click', guarded(freezeDictionary));
     $('showDead').addEventListener('change', toggleDead);
     $('sectionForm').addEventListener('submit', event => {
@@ -1905,6 +1961,11 @@ function wire() {
         const markButton = event.target.closest('.mark-btn');
         if (markButton) {
             guarded(clickMark)(markButton);
+            return;
+        }
+        const wordMark = event.target.closest('.mark-auto');
+        if (wordMark) {
+            guarded(putWordMark)(wordMark);
             return;
         }
         const qwenButton = event.target.closest('.qwen-btn');
