@@ -59,6 +59,7 @@ def test_save_writes_readable_json(api, imgs, base_dir):
     api.save()
 
     table = json.loads((base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8"))
+    assert table["rows"][0].pop("edited_at")  # 書き換えた行には時刻（中身は tests/test_edit_record.py）
     assert table == {"sections": ["picture", "action", "girl", "guy"],
                      "rows": [{"image": "a.png", "is_dead": False, "texts": {"girl": "looks: standing"}},
                               {"image": "b.png", "is_dead": False, "texts": {}}],

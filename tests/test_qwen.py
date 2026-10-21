@@ -200,6 +200,7 @@ def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api
     assert texts["action"] == "girl waves."
     assert texts["girl"] == "looks: sitting\nclothes: red dress"  # girl A → girl。値のあった looks は変えない
     assert res["filled"] == ["picture", "action", "girl"]
+    assert res["row"]["edited_at"]  # Qwen の下書きも、その行の書き換えとして数える（📍）
     assert res["row"]["qwen_hint"] == ANSWER  # 表に無い段落（stick figure）も、答えにはそのまま残る
 
     inputs = comfy.prompts[0]["prompt"]["tg"]["inputs"]

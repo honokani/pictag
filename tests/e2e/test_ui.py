@@ -1137,6 +1137,27 @@ def test_folding_a_column_keeps_the_first_whole_row_where_it_was(page, tmp_path)
         assert abs(below_head(page, "r3.png") - 30) <= 2, expected
 
 
+def test_pin_shows_the_row_written_last_right_below_the_head(page, tmp_path):
+    # 2段目の右端の 📍（続きへ）: 最後に書き換えた行を、列の見出しのすぐ下に見せる。記録が無いうちは押せない。
+    # その行が絞り込みで隠れていれば、絞り込みは変えずに知らせるだけ
+    page.set_viewport_size({"width": 1440, "height": 800})
+    load_dir(page, tall_rows(tmp_path, 200))
+    pin = page.locator("#tools #resumeButton")
+    expect(pin).to_have_text("📍")
+    expect(pin).to_be_disabled()
+    expect(page.locator("#removeDeadButton")).to_have_text("削除済みを消す")  # 📍 の場所を空けるため短く
+    write(page, "r5.png", "looks: smile")
+    write(page, "r2.png", "looks: sitting")
+    page.evaluate("() => { $('imagesView').scrollTop = 0; }")
+    expect(pin).to_have_attribute("title", re.compile("r2.png"))
+    pin.click()
+    assert abs(below_head(page, "r2.png")) <= 1
+    page.locator('#markFilters .filter-btn:not(.without)[data-kind="one"][data-mark="0"]').click()  # A の行だけ（無い）
+    pin.click()
+    expect(page.locator("#status")).to_contain_text("r2.png")
+    expect(page.locator("#status")).to_contain_text("隠れて")
+
+
 def test_opening_a_folded_cell_keeps_that_row_where_it_was(page, tmp_path):
     # 畳んだ列の欄をクリックすると、列が開いて編集が始まる。クリックした行を、押す前と同じ位置に見せる
     page.set_viewport_size({"width": 1800, "height": 900})
@@ -1225,6 +1246,8 @@ def test_selecting_rows_does_not_shift_the_table(page, imgs):
     assert lower["y"] >= upper["y"] + upper["height"]  # 段落・キーの下に、語句と追加・削除
     move = page.locator("#moveForm").bounding_box()
     assert upper["y"] < move["y"] + move["height"]  # 下の段に落ちない
+    pin = page.locator("#resumeButton").bounding_box()  # 右端の 📍 も同じ行
+    assert pin["y"] < move["y"] + move["height"] and pin["x"] > lower["x"] + lower["width"]
 
 
 def test_deselect_sits_by_select_visible_and_mark_clears_on_the_filter_bar(page, imgs):

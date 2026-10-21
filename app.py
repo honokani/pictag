@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 from collections import Counter
+from datetime import datetime, timedelta
 from functools import reduce
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, send_file
@@ -36,7 +37,7 @@ app = Flask(__name__)
 APP_DIR = Path(__file__).resolve().parent
 
 # 表の固定列（mark / marks はマーキング。キャプションには書き出さない）。それ以外の列は段落（大kind）で、値は入力の文字列
-FIXED_COLUMNS = ['サムネイル', 'is_dead', 'mark', 'marks']
+FIXED_COLUMNS = ['サムネイル', 'is_dead', 'mark', 'marks', 'edited_at']  # edited_at: 最後に書き換えた時刻（📍。無ければ空）
 TABLE_FILE = 'table.json'  # data_out/<フォルダ名>/ 直下。画像 × 段落の入力
 SHARED_FILE = 'shared.json'  # data_work/ 直下。共用辞書（freeze した語句・単語と確定タグ）
 SDXL_DUMP = 'df_isflaged.dump'  # SDXL 版の表。これだけがあるフォルダは SDXL 版のプロジェクト
@@ -102,6 +103,7 @@ def table_to_json(df, auto_marks):
         'sections': sections,
         'rows': [{'image': r['サムネイル'], 'is_dead': to_flag(r['is_dead']),
                   **marks_to_file(to_text(r['mark']), to_text(r['marks'])),
+                  **({'edited_at': r['edited_at']} if to_text(r['edited_at']) else {}),
                   'texts': {s: r[s] for s in sections if to_text(r[s])}}
                  for r in df.to_dict('records')],
         'auto_marks': auto_marks,
@@ -111,6 +113,7 @@ def table_from_json(data):
     sections = [check_section_name(s) for s in data['sections']]
     rows = [{'サムネイル': r['image'], 'is_dead': bool(r['is_dead']),
              'mark': one_from_file(r.get('mark')), 'marks': many_from_file(r.get('marks', '')),
+             'edited_at': to_text(r.get('edited_at', '')),
              **{s: to_text(r['texts'].get(s, '')) for s in sections}}
             for r in data['rows']]
     return pd.DataFrame(rows, columns=FIXED_COLUMNS + sections)
@@ -523,6 +526,7 @@ class CaptionTool:
                 'is_dead': is_dead,
                 'mark': one_text(one_number(to_text(existing_row.get('mark', '')))),
                 'marks': many_text(many_numbers(to_text(existing_row.get('marks', '')))),
+                'edited_at': to_text(existing_row.get('edited_at', '')),
                 **{s: to_text(existing_row.get(s, '')) for s in sections},
             })
 
@@ -686,11 +690,24 @@ class CaptionTool:
         return type(row_index) is int and row_index in self.df.index
 
     def update_text(self, row_index, section, text):
-        """入力を書き換える（表にある行・段落に、文字列だけ書く）"""
+        """入力を書き換える（表にある行・段落に、文字列だけ書く）。中身が変われば、その行の書き換えた時刻を付ける"""
         if section not in section_names(self.df) or not self.is_row(row_index) or not isinstance(text, str):
             return False
-        self.df.at[row_index, section] = normalize_newlines(text)
+        text = normalize_newlines(text)
+        if text != to_text(self.df.at[row_index, section]):
+            self.df.at[row_index, section] = text
+            self.mark_edited(row_index)
         return True
+
+    def mark_edited(self, row_index):
+        """行の「最後に書き換えた時刻」を今にする（📍 続きへと、書き漏らし探しに使う。保存で table.json に書く）
+
+        後で書いた行ほど大きくする（時計の刻みが粗くて前の記録と同じか前なら、前の記録の 1ms 後）
+        """
+        latest = max((to_text(t) for t in self.df['edited_at']), default='')
+        now = datetime.now()
+        stamp = max(now, datetime.fromisoformat(latest) + timedelta(milliseconds=1)) if latest else now
+        self.df.at[row_index, 'edited_at'] = stamp.isoformat(timespec='milliseconds')
 
     def edit_rows(self, rows, section, text, edit):
         """複数行の段落に、入力1行分（キー: 語句, 語句）の語句をまとめて足す・消す"""
@@ -819,7 +836,7 @@ class CaptionTool:
                 'texts': {s: to_text(record[s]) for s in sections}, 'characters': characters,
                 'hint': self.hints.get(record['サムネイル'], ''), 'qwen_hint': self.qwen_hints.get(record['サムネイル'], ''),
                 'mark': one_number(to_text(record['mark'])), 'marks': many_numbers(to_text(record['marks'])),
-                'caption': caption, 'tokens': token_counter.count(caption)}
+                'edited_at': to_text(record['edited_at']), 'caption': caption, 'tokens': token_counter.count(caption)}
 
     def row_views(self, indexes):
         sections = section_names(self.df)
@@ -1193,21 +1210,27 @@ def qwen_fill():
 
 @app.route('/update_text', methods=['POST'])
 def update_text():
-    """入力の更新（{row_index, section, text}）。更新後の characters・キャプション・トークン数を返す"""
+    """入力の更新（{row_index, section, text}）。更新後の characters・キャプション・トークン数・書き換えた時刻を返す"""
     data = request.get_json() or {}
     row_index = data.get('row_index')
     if not caption_tool.update_text(row_index, data.get('section'), data.get('text')):
         return jsonify({'success': False})
     row = caption_tool.row_views([row_index])[0]
-    return jsonify({'success': True, 'characters': row['characters'], 'caption': row['caption'], 'tokens': row['tokens']})
+    return jsonify({'success': True, 'characters': row['characters'], 'caption': row['caption'], 'tokens': row['tokens'],
+                    'edited_at': row['edited_at']})
 
 @app.route('/set_choice', methods=['POST'])
 def set_choice_on_rows():
-    """ボタンでの選択（{rows, section, key, phrase, group, on}）。group の語句は1つだけ残る"""
+    """ボタンでの選択（{rows, section, key, phrase, group, on}）。group の語句は1つだけ残る
+
+    1行だけに押したときは、その行の書き換えとして時刻を付ける（選んだ複数行へは、一括入力と同じくまとめての作業なので付けない）
+    """
     data = request.get_json() or {}
     rows = data.get('rows')
     if not caption_tool.choose(rows, data.get('section'), data.get('key'), data.get('phrase'), data.get('group'), data.get('on')):
         return jsonify({'success': False, 'message': caption_tool.last_error})
+    if len(dict.fromkeys(rows)) == 1:
+        caption_tool.mark_edited(rows[0])
     return jsonify({'success': True, 'rows': caption_tool.row_views(rows)})
 
 @app.route('/set_mark', methods=['POST'])

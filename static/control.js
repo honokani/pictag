@@ -772,6 +772,30 @@ function showRowBelowHead(index, gap) {
     if (tr) $('imagesView').scrollTop += belowHead(tr) - gap;
 }
 
+// 最後に書き換えた行（書き換えた時刻がいちばん新しい行。記録が無ければ undefined）
+const lastEditedRow = () => state.rows.reduce((last, r) => (r.edited_at && (!last || r.edited_at > last.edited_at) ? r : last), undefined);
+
+// 📍（2段目の右端）を描き直す: 書き換えた行が無ければ押せない。説明に行先の画像の名前
+function paintResumeButton() {
+    const row = lastEditedRow();
+    $('resumeButton').disabled = !row;
+    $('resumeButton').title = row ? `続きへ: 最後に書き換えた行（${row['サムネイル']}）を見せる`
+        : '続きへ: 書き換えた行はまだありません（書き換えると、ここから戻れます）';
+}
+
+// 📍: 最後に書き換えた行を、列の見出しのすぐ下に見せる。絞り込みなどで隠れていれば、絞り込みは変えずに知らせるだけ
+function resume() {
+    commitEdit();
+    const row = lastEditedRow();
+    if (!row) return;
+    const tr = rowElement(row.index);
+    if (!tr || tr.getBoundingClientRect().height === 0) {
+        setStatus(`${row['サムネイル']}（最後に書き換えた行）は、絞り込みか「削除済み画像を表示」で隠れています`, 'warn');
+        return;
+    }
+    showRowBelowHead(row.index, 0);
+}
+
 // hint の列の中身を切り替える（見出しの hint / preview）。編集中の欄は先に確定し、表を描き直す
 // hint と preview は行ごとに高さが違うので、見えていた最初の行（上が切れていない行）を、押す前と同じ位置に見せ直す
 function switchSideView(view) {
@@ -1012,6 +1036,7 @@ function renderTable() {
     $('markTools').hidden = !state.loaded || state.view !== 'images';
     setDirty(state.dirty);
     updateSelectionInfo();
+    paintResumeButton();
 }
 
 // 行だけ描き直す（グループが変わったときの ⚠ の付け直し）
@@ -1024,6 +1049,7 @@ function rerenderRows() {
 function replaceRow(row) {
     state.byIndex.set(row.index, row);
     state.rows = state.rows.map(r => (r.index === row.index ? row : r));
+    paintResumeButton();
     const tr = rowElement(row.index);
     if (!tr) return;
     tr.outerHTML = rowHtml(row);
@@ -1237,6 +1263,8 @@ async function sendText(row, section, text) {
     row.caption = res.caption;
     row.tokens = res.tokens;
     row.characters = res.characters;
+    row.edited_at = res.edited_at;
+    paintResumeButton();
     const tr = rowElement(row.index);
     if (tr) {
         tr.querySelector('td.meta').innerHTML = metaHtml(row);
@@ -1799,6 +1827,7 @@ function wire() {
     $('projectSelect').addEventListener('change', guarded(openProject));
     $('saveButton').addEventListener('click', guarded(save));
     $('removeDeadButton').addEventListener('click', guarded(removeDead));
+    $('resumeButton').addEventListener('click', resume);
     $('freezeButton').addEventListener('click', guarded(freezeDictionary));
     $('showDead').addEventListener('change', toggleDead);
     $('sectionForm').addEventListener('submit', event => {
