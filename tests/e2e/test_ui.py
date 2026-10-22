@@ -491,6 +491,61 @@ def test_bulk_keyless_text_suggests_sentences_by_the_whole_line(page, imgs):
     assert bulk.input_value() == "girl is talking"
 
 
+def test_enter_after_a_period_breaks_the_line(page, imgs):
+    # 「.」で終えた所（文を書き終えた所）では、文の候補が出ていても Enter は改行（書いた文と同じ文も候補に出る）。
+    # 候補を選ぶのは、↑↓ で選んでから Enter か、Tab
+    load_dir(page, imgs)
+    write(page, "a.png", "she is standing.", section="action")
+    write(page, "c.png", "she is standing on the beach.", section="action")
+    wait_for_phrase(page, "she is standing on the beach.")
+
+    editor = open_editor(page, "b.png", section="action")
+    active = page.locator("#suggestions:visible li.active")
+    editor.press_sequentially("she is standing.")
+    expect(active).to_contain_text("she is standing.")
+    editor.press("Enter")
+    assert editor.input_value() == "she is standing.\n"
+
+    editor.fill("")
+    editor.press_sequentially("she is on the beach.")  # 長い文が一番上でも、置き換えない
+    expect(active).to_contain_text("she is standing on the beach.")
+    editor.press("Enter")
+    assert editor.input_value() == "she is on the beach.\n"
+
+    editor.fill("")
+    editor.press_sequentially("she is standing.")
+    editor.press("ArrowDown")
+    expect(active).to_contain_text("she is standing on the beach.")
+    editor.press("Enter")
+    assert editor.input_value() == "she is standing on the beach."
+
+    editor.fill("")
+    editor.press_sequentially("she is on the beach.")
+    editor.press("Tab")
+    assert editor.input_value() == "she is standing on the beach."
+
+
+def test_bulk_enter_does_not_add(page, imgs):
+    # 一括入力では Enter で行に足さない（追加・削除はボタンだけ。候補が出ていれば Enter で選ぶ）。「.」で終えた所では候補を出さない
+    load_dir(page, imgs)
+    write(page, "a.png", "she is standing.", section="action")
+    wait_for_phrase(page, "she is standing.")
+    row(page, "b.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "action")
+    page.evaluate("() => { window.bulkSubmits = 0; "
+                  "document.getElementById('bulkForm').addEventListener('submit', () => window.bulkSubmits++); }")
+    bulk = page.locator("#bulkText")
+    bulk.press_sequentially("she is standing")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("she is standing.")
+    bulk.press_sequentially(".")
+    expect(page.locator("#suggestions")).to_be_hidden()
+    bulk.press("Enter")
+    assert page.evaluate("window.bulkSubmits") == 0
+    assert bulk.input_value() == "she is standing."
+    page.click('#bulkForm button[value="add"]')
+    expect(filled(page, "b.png", "action")).to_have_text(["she is standing."])
+
+
 def write_spread(page):
     """action に spread（2回）と、ほかの単語（1回ずつ）を入れる"""
     write(page, "a.png", "girl spread arms", section="action")
