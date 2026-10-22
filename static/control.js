@@ -94,6 +94,7 @@ function setDirty(dirty) {
     state.dirty = dirty;
     $('saveButton').textContent = dirty ? '保存 *' : '保存';
     $('saveButton').disabled = !state.loaded;
+    $('renameProjectButton').disabled = !state.loaded;
 }
 
 function autosize(el) {
@@ -732,7 +733,7 @@ function fitHints(root) {
 }
 
 // 畳んだもの（kind: hints は hint の画像の名前、sections は段落の列）を、プロジェクトごとにブラウザに覚える
-const foldedKey = kind => `pictag:folded-${kind}:${state.projectName}`;
+const foldedKey = (kind, name = state.projectName) => `pictag:folded-${kind}:${name}`;
 
 function loadFolded(kind) {
     try {
@@ -751,7 +752,7 @@ function saveFolded(kind, names) {
 }
 
 // hint の列に出すもの（hint / preview）も、プロジェクトごとにブラウザに覚える
-const sideViewKey = () => `pictag:side-view:${state.projectName}`;
+const sideViewKey = (name = state.projectName) => `pictag:side-view:${name}`;
 
 function loadSideView() {
     try {
@@ -770,7 +771,7 @@ function saveSideView() {
 }
 
 // サムネイルを広げているかも、プロジェクトごとにブラウザに覚える
-const thumbZoomKey = () => `pictag:thumb-zoom:${state.projectName}`;
+const thumbZoomKey = (name = state.projectName) => `pictag:thumb-zoom:${name}`;
 
 function loadThumbZoom() {
     try {
@@ -785,6 +786,22 @@ function saveThumbZoom() {
         localStorage.setItem(thumbZoomKey(), state.thumbZoomed ? 'on' : 'off');
     } catch {
         // 覚えられなくても、広げる・戻すはできる
+    }
+}
+
+// プロジェクトごとにブラウザに覚えたもの（畳んだもの・hint の列に出すもの・サムネイルの大きさ）を、改名した名前へ移す
+function moveRemembered(from, to) {
+    const keys = name => [foldedKey('hints', name), foldedKey('sections', name), sideViewKey(name), thumbZoomKey(name)];
+    const targets = keys(to);
+    try {
+        keys(from).forEach((key, i) => {
+            const value = localStorage.getItem(key);
+            if (value === null) return;
+            localStorage.setItem(targets[i], value);
+            localStorage.removeItem(key);
+        });
+    } catch {
+        // 覚えられなくても改名はできる（畳んだものなどは初めの形に戻る）
     }
 }
 
@@ -1573,6 +1590,29 @@ async function browseDirectory() {
     }
 }
 
+// 改名…: 今の名前を入れた窓を開く。Qwen が書いている間と、保存していない変更があるときは止める
+function openRenameDialog() {
+    commitEdit();
+    if (state.qwenBusy.size) return setStatus('Qwen が書き終わってから改名してください', 'error');
+    if (state.dirty) return setStatus('保存してから改名してください', 'error');
+    $('renameName').value = state.projectName;
+    $('renameDialog').returnValue = '';
+    $('renameDialog').showModal();
+    $('renameName').select();
+}
+
+// プロジェクトの名前（画像フォルダ・data_out・data_work のフォルダ名）を変えて開き直す。ブラウザに覚えたものも新しい名前へ移す
+async function renameProject() {
+    const from = state.projectName;
+    await settled();
+    const res = await postJson('/rename_project', {name: $('renameName').value});
+    if (!res.success) return setStatus(res.message, 'error');
+    moveRemembered(from, res.project_name);
+    $('imageDir').value = res.image_dir;
+    await opened(res.project_name);
+    setStatus(`「${from}」を「${res.project_name}」に改名しました`, 'ok');
+}
+
 async function save() {
     if (!state.loaded) return;
     commitEdit();
@@ -1986,6 +2026,10 @@ function openImage(name) {
 
 function wire() {
     $('loadButton').addEventListener('click', guarded(() => loadDirectory()));
+    $('renameProjectButton').addEventListener('click', openRenameDialog);
+    $('renameDialog').addEventListener('close', () => {
+        if ($('renameDialog').returnValue === 'rename') guarded(renameProject)();
+    });
     $('browseButton').addEventListener('click', guarded(browseDirectory));
     $('imageDir').addEventListener('keydown', event => {
         if (event.key === 'Enter') guarded(loadDirectory)();

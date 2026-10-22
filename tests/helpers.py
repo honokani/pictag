@@ -130,6 +130,9 @@ class Api:
     def open_project(self, name):
         return self.post("/load_existing_project", {"project_name": name})
 
+    def rename_project(self, name):
+        return self.post("/rename_project", {"name": name})
+
     def write(self, row_index, text, section=SECTION):
         return self.post("/update_text", {"row_index": row_index, "section": section, "text": text})
 

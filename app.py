@@ -83,6 +83,18 @@ def same_path(a, b):
     """同じディレクトリを指すか（Windows の大文字小文字・区切り文字の違いは無視）"""
     return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
 
+# フォルダの名前に使えない文字（Windows）
+BAD_NAME_CHARS = '<>:"/\\|?*'
+
+def check_project_name(name):
+    """プロジェクトの新しい名前（画像フォルダ・data_out・data_work のフォルダ名になる）を検証する（前後の空白は除く）"""
+    name = name.strip() if isinstance(name, str) else ''
+    if not name:
+        raise ValueError('新しい名前を入力してください')
+    if name in ('.', '..') or name.endswith('.') or any(c in BAD_NAME_CHARS or ord(c) < 32 for c in name):
+        raise ValueError(f'「{name}」はフォルダの名前に使えません（\\ / : * ? " < > | と、最後の「.」は使えません）')
+    return name
+
 def write_json(path, data):
     """JSON を書く（書きかけで壊れないよう、一時ファイルに書いてから置き換える）"""
     tmp = path.with_name(path.name + '.tmp')
@@ -284,6 +296,41 @@ class CaptionTool:
 
         logger.info(f"Directories created: {self.data_out_target}, {self.data_work_target}")
         logger.info(f"Caption directories: {self.captions_dir}, {self.captions_dead_dir}")
+
+    def rename_project(self, name):
+        """プロジェクトの名前を変える: 画像フォルダ・data_out・data_work のフォルダ名を変えて開き直す（入力は保存済みのものを読む）。
+        tgt_path.txt は、開き直すときに新しい画像フォルダへ書き直す（元の場所はもう無いので）。途中で改名できなければ、元の名前に戻す"""
+        self.last_error = ''
+        if self.image_dir is None:
+            return self.fail('プロジェクトを開いてから改名してください')
+        try:
+            name = check_project_name(name)
+        except ValueError as e:
+            return self.fail(str(e))
+        old = self.dir_name
+        if name == old:
+            return self.fail('今と同じ名前です')
+        # 画像フォルダを先に（エクスプローラーで開いているなど、いちばん改名できないことが多い）
+        moves = [(src, src.with_name(name)) for src in (self.image_dir, self.data_out_target, self.data_work_target)]
+        taken = [dst for src, dst in moves if dst.exists() and not same_path(src, dst)]  # 大文字小文字だけの違いは同じフォルダ
+        if taken:
+            return self.fail(f'「{taken[0]}」が既にあるので改名できません')
+        done = []
+        try:
+            for src, dst in moves:
+                src.rename(dst)
+                done.append((src, dst))
+        except OSError as e:
+            for src, dst in reversed(done):
+                dst.rename(src)
+            return self.fail(f'改名できませんでした（元の名前に戻しました）: {e}')
+        logger.info(f"Renamed project: {old} -> {name}")
+        try:
+            self.setup_directories(moves[0][1])
+            self.load_data()
+        except Exception as e:
+            return self.fail(f'改名しましたが、開き直せませんでした（既存プロジェクトから開いてください）: {e}')
+        return True
 
     def load_data(self):
         """既存データを読み込み"""
@@ -1148,6 +1195,15 @@ def load_existing_project():
     except Exception as e:
         logger.error(f"Failed to load existing project: {e}")
         return jsonify({'success': False, 'message': str(e)})
+
+@app.route('/rename_project', methods=['POST'])
+def rename_project():
+    """プロジェクトの改名API（{name}）。image_dir: 改名した画像フォルダ、project_name: 新しい名前"""
+    data = request.get_json() or {}
+    if not caption_tool.rename_project(data.get('name')):
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'message': '', 'image_dir': str(caption_tool.image_dir),
+                    'project_name': caption_tool.dir_name})
 
 @app.route('/load_directory', methods=['POST'])
 def load_directory():
