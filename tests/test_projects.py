@@ -111,7 +111,8 @@ def test_rename_project_renames_its_folders_and_reopens(api, tool, client, base_
     saved_with_tag(api, imgs)
     res = api.rename_project("renamed")
     renamed = (imgs.parent / "renamed").resolve()
-    assert res == {"success": True, "message": "", "image_dir": str(renamed), "project_name": "renamed"}
+    assert res == {"success": True, "message": "", "image_dir": str(renamed), "project_name": "renamed",
+                   "renamed": [], "rename_failed": []}
     assert folders_of(base_dir, imgs, "proj") == [False, False, False]
     assert folders_of(base_dir, imgs, "renamed") == [True, True, True]
     assert (renamed / "a.png").is_file()
