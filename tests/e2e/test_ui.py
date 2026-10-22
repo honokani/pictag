@@ -941,6 +941,45 @@ def test_folded_columns_are_remembered_per_project(page, imgs, tmp_path):
     expect(fold_button(page, "guy")).to_have_text("◀")
 
 
+def test_rename_button_renames_the_project_and_its_folders(page, imgs, tool):
+    # ヘッダの「読み込み」と「保存」の間の 改名…: 画像フォルダ・data_out・data_work の名前を変えて開き直す。
+    # 保存していない変更があれば止める。畳んだ列など、プロジェクトごとにブラウザに覚えたものは新しい名前へ移す
+    page.goto(page.base_url)
+    button = page.locator("#renameProjectButton")
+    expect(button).to_be_disabled()  # 開くまでは押せない
+    ids = page.locator("header button").evaluate_all("buttons => buttons.map(b => b.id)")
+    assert ids.index("loadButton") + 1 == ids.index("renameProjectButton") == ids.index("saveButton") - 1
+
+    load_dir(page, imgs)
+    fold_button(page, "guy").click()
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    write(page, "a.png", "looks: smile")
+    button.click()
+    expect(page.locator("#status")).to_have_text("保存してから改名してください")
+    expect(page.locator("#renameDialog")).to_be_hidden()
+    page.click("#saveButton")
+    expect(page.locator("#saveButton")).to_have_text("保存")
+
+    button.click()
+    name = page.locator("#renameName")
+    expect(name).to_have_value("proj")  # 今の名前が入っている
+    name.fill("other")
+    name.press("Escape")  # やめる
+    expect(page.locator("#renameDialog")).to_be_hidden()
+    button.click()
+    expect(name).to_have_value("proj")
+    name.fill("renamed")
+    name.press("Enter")
+    renamed = (imgs.parent / "renamed").resolve()
+    expect(page.locator("#status")).to_have_text("「proj」を「renamed」に改名しました")
+    expect(page.locator("#projectSelect")).to_have_value("renamed")
+    expect(page.locator("#imageDir")).to_have_value(str(renamed))
+    assert renamed.is_dir() and not imgs.exists() and not (imgs.parent / "other").exists()
+    assert (tool.data_out_dir / "renamed").is_dir() and (tool.data_work_dir / "renamed").is_dir()
+    expect(filled(page, "a.png")).to_have_text(["looks: smile"])
+    expect(fold_button(page, "guy")).to_have_text("▶")  # 畳んだ列も新しい名前で覚えている
+
+
 def test_folding_picture_keeps_the_thumbnail_size(page, imgs):
     # サムネイルは picture の欄の高さに合わせるが、畳んだ picture には合わせない（畳む前の大きさのまま）
     load_dir(page, imgs)

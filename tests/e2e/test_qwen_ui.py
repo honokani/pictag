@@ -155,3 +155,18 @@ def test_without_the_qwen_option_there_is_no_robot(page, project):
     expect(page.locator("#gridHead th", has_text="🤖")).to_have_count(0)
     expect(page.locator("td.qwen")).to_have_count(0)
     expect(page.locator("#gridHead .side-view")).to_have_count(0)  # 右端の列は preview の文字だけ（今と同じ）
+
+
+def test_rename_waits_until_qwen_has_written(page, project, qwen_mode):
+    # Qwen が書いている間は改名しない（答えを data_work/<名前>/qwen/ に書くため）
+    held = []
+    page.route("**/qwen_fill", lambda route: held.append(route))  # 答えが返るまでを止めておく
+    open_project(page)
+    robot(page, ASK).click()
+    expect(page.locator("#status")).to_have_text(f"{ASK} を Qwen が書いています…")
+    page.click("#renameProjectButton")
+    expect(page.locator("#status")).to_have_text("Qwen が書き終わってから改名してください")
+    expect(page.locator("#renameDialog")).to_be_hidden()
+    held[0].continue_()
+    girl = row(page, ASK).locator('td.cell[data-section="girl"] .ln:not(.empty)')
+    expect(girl).to_have_text(["looks: standing", "clothes: red dress"])
