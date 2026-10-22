@@ -94,6 +94,7 @@ function setDirty(dirty) {
     state.dirty = dirty;
     $('saveButton').textContent = dirty ? '保存 *' : '保存';
     $('saveButton').disabled = !state.loaded;
+    $('renameProjectButton').disabled = !state.loaded;
 }
 
 function autosize(el) {
@@ -529,7 +530,10 @@ function accept(item) {
     el.dispatchEvent(new Event('input'));
 }
 
-// 候補が出ているときのキー操作。Enter は打ちかけがあるか ↑↓ で選んだときだけ確定（改行を邪魔しない）
+// 打ちかけがある（「.」で終えた所は、文を書き終えたと見て打ちかけにしない）
+const typing = ctx => Boolean(ctx.query) && !ctx.query.endsWith('.');
+
+// 候補が出ているときのキー操作。Enter は打ちかけがあるか ↑↓ で選んだときだけ確定（改行を邪魔しない。「.」の後の Enter は改行）
 function handleSuggestKey(event) {
     const s = state.suggest;
     if (!s || s.el !== event.target) return false;
@@ -540,7 +544,7 @@ function handleSuggestKey(event) {
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         moveActive(event.key === 'ArrowDown' ? 1 : -1);
-    } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (s.ctx.query || s.moved))) {
+    } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (typing(s.ctx) || s.moved))) {
         accept(s.items[s.active]);
     } else if (event.key === 'Escape') {
         hideSuggestions();
@@ -729,7 +733,7 @@ function fitHints(root) {
 }
 
 // 畳んだもの（kind: hints は hint の画像の名前、sections は段落の列）を、プロジェクトごとにブラウザに覚える
-const foldedKey = kind => `pictag:folded-${kind}:${state.projectName}`;
+const foldedKey = (kind, name = state.projectName) => `pictag:folded-${kind}:${name}`;
 
 function loadFolded(kind) {
     try {
@@ -748,7 +752,7 @@ function saveFolded(kind, names) {
 }
 
 // hint の列に出すもの（hint / preview）も、プロジェクトごとにブラウザに覚える
-const sideViewKey = () => `pictag:side-view:${state.projectName}`;
+const sideViewKey = (name = state.projectName) => `pictag:side-view:${name}`;
 
 function loadSideView() {
     try {
@@ -767,7 +771,7 @@ function saveSideView() {
 }
 
 // サムネイルを広げているかも、プロジェクトごとにブラウザに覚える
-const thumbZoomKey = () => `pictag:thumb-zoom:${state.projectName}`;
+const thumbZoomKey = (name = state.projectName) => `pictag:thumb-zoom:${name}`;
 
 function loadThumbZoom() {
     try {
@@ -782,6 +786,22 @@ function saveThumbZoom() {
         localStorage.setItem(thumbZoomKey(), state.thumbZoomed ? 'on' : 'off');
     } catch {
         // 覚えられなくても、広げる・戻すはできる
+    }
+}
+
+// プロジェクトごとにブラウザに覚えたもの（畳んだもの・hint の列に出すもの・サムネイルの大きさ）を、改名した名前へ移す
+function moveRemembered(from, to) {
+    const keys = name => [foldedKey('hints', name), foldedKey('sections', name), sideViewKey(name), thumbZoomKey(name)];
+    const targets = keys(to);
+    try {
+        keys(from).forEach((key, i) => {
+            const value = localStorage.getItem(key);
+            if (value === null) return;
+            localStorage.setItem(targets[i], value);
+            localStorage.removeItem(key);
+        });
+    } catch {
+        // 覚えられなくても改名はできる（畳んだものなどは初めの形に戻る）
     }
 }
 
@@ -1570,6 +1590,29 @@ async function browseDirectory() {
     }
 }
 
+// 改名…: 今の名前を入れた窓を開く。Qwen が書いている間と、保存していない変更があるときは止める
+function openRenameDialog() {
+    commitEdit();
+    if (state.qwenBusy.size) return setStatus('Qwen が書き終わってから改名してください', 'error');
+    if (state.dirty) return setStatus('保存してから改名してください', 'error');
+    $('renameName').value = state.projectName;
+    $('renameDialog').returnValue = '';
+    $('renameDialog').showModal();
+    $('renameName').select();
+}
+
+// プロジェクトの名前（画像フォルダ・data_out・data_work のフォルダ名）を変えて開き直す。ブラウザに覚えたものも新しい名前へ移す
+async function renameProject() {
+    const from = state.projectName;
+    await settled();
+    const res = await postJson('/rename_project', {name: $('renameName').value});
+    if (!res.success) return setStatus(res.message, 'error');
+    moveRemembered(from, res.project_name);
+    $('imageDir').value = res.image_dir;
+    await opened(res.project_name);
+    setStatus(`「${from}」を「${res.project_name}」に改名しました`, 'ok');
+}
+
 async function save() {
     if (!state.loaded) return;
     commitEdit();
@@ -1983,6 +2026,10 @@ function openImage(name) {
 
 function wire() {
     $('loadButton').addEventListener('click', guarded(() => loadDirectory()));
+    $('renameProjectButton').addEventListener('click', openRenameDialog);
+    $('renameDialog').addEventListener('close', () => {
+        if ($('renameDialog').returnValue === 'rename') guarded(renameProject)();
+    });
     $('browseButton').addEventListener('click', guarded(browseDirectory));
     $('imageDir').addEventListener('keydown', event => {
         if (event.key === 'Enter') guarded(loadDirectory)();
@@ -2007,13 +2054,20 @@ function wire() {
         guarded(bulkEdit)(event.submitter ? event.submitter.value : 'add');
     });
     withWhitespaceMarks($('bulkText'));
-    $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value, bulkContext));
+    // 一括入力: 「.」で終えた所（文を書き終えた所）では候補を出さない。Enter では行に足さない（追加・削除はボタンだけ。候補が出ていれば Enter で選ぶ）
+    $('bulkText').addEventListener('input', () => {
+        const el = $('bulkText');
+        if (el.value.slice(0, el.selectionStart).endsWith('.')) hideSuggestions();
+        else showSuggestions(el, $('bulkSection').value, bulkContext);
+    });
     $('bulkSection').addEventListener('change', () => {
         fillBulkKeys();
         hideSuggestions();
     });
     $('bulkKey').addEventListener('change', hideSuggestions);
-    $('bulkText').addEventListener('keydown', handleSuggestKey);
+    $('bulkText').addEventListener('keydown', event => {
+        if (!handleSuggestKey(event) && event.key === 'Enter') event.preventDefault();
+    });
     $('bulkText').addEventListener('blur', hideSuggestions);
     // キャプションや辞書に入る欄は英字だけ。欄の input より先に直す（候補・高さ・印は直した文字で描く）。IME の変換中は待ち、確定したら直す
     document.addEventListener('input', event => {

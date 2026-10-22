@@ -24,6 +24,7 @@
             </label>
             <button id="browseButton" type="button" title="このPCでフォルダを選んで読み込む">参照…</button>
             <button id="loadButton" type="button">読み込み</button>
+            <button id="renameProjectButton" type="button" disabled title="プロジェクトの名前（画像フォルダ・data_out・data_work のフォルダ名）を変える">改名…</button>
             <span class="group"><span id="statusTime"></span><span id="status" role="status"></span></span>
         </div>
         <button id="saveButton" type="button" class="primary" disabled title="Ctrl+S">保存</button>
@@ -158,6 +159,18 @@
         <p id="verbSummary"></p>
         <div id="verbLists"></div>
         <p class="verb-actions"><button type="button" id="verbApply">入れる</button></p>
+    </dialog>
+
+    <!-- 改名…: 新しい名前が画像フォルダ・data_out・data_work のフォルダ名になる。Enter か 改名 で決め、Esc か やめる でやめる -->
+    <dialog id="renameDialog" aria-label="プロジェクトの改名">
+        <form method="dialog" class="rename-form">
+            <label for="renameName">新しい名前（画像フォルダ・data_out・data_work のフォルダ名を変えます）</label>
+            <input id="renameName" type="text" autocomplete="off" spellcheck="false">
+            <p class="rename-actions">
+                <button type="submit" value="rename" class="primary">改名</button>
+                <button type="submit" value="cancel">やめる</button>
+            </p>
+        </form>
     </dialog>
 
     <script src="/static/control.js"></script>

@@ -491,6 +491,61 @@ def test_bulk_keyless_text_suggests_sentences_by_the_whole_line(page, imgs):
     assert bulk.input_value() == "girl is talking"
 
 
+def test_enter_after_a_period_breaks_the_line(page, imgs):
+    # 「.」で終えた所（文を書き終えた所）では、文の候補が出ていても Enter は改行（書いた文と同じ文も候補に出る）。
+    # 候補を選ぶのは、↑↓ で選んでから Enter か、Tab
+    load_dir(page, imgs)
+    write(page, "a.png", "she is standing.", section="action")
+    write(page, "c.png", "she is standing on the beach.", section="action")
+    wait_for_phrase(page, "she is standing on the beach.")
+
+    editor = open_editor(page, "b.png", section="action")
+    active = page.locator("#suggestions:visible li.active")
+    editor.press_sequentially("she is standing.")
+    expect(active).to_contain_text("she is standing.")
+    editor.press("Enter")
+    assert editor.input_value() == "she is standing.\n"
+
+    editor.fill("")
+    editor.press_sequentially("she is on the beach.")  # 長い文が一番上でも、置き換えない
+    expect(active).to_contain_text("she is standing on the beach.")
+    editor.press("Enter")
+    assert editor.input_value() == "she is on the beach.\n"
+
+    editor.fill("")
+    editor.press_sequentially("she is standing.")
+    editor.press("ArrowDown")
+    expect(active).to_contain_text("she is standing on the beach.")
+    editor.press("Enter")
+    assert editor.input_value() == "she is standing on the beach."
+
+    editor.fill("")
+    editor.press_sequentially("she is on the beach.")
+    editor.press("Tab")
+    assert editor.input_value() == "she is standing on the beach."
+
+
+def test_bulk_enter_does_not_add(page, imgs):
+    # 一括入力では Enter で行に足さない（追加・削除はボタンだけ。候補が出ていれば Enter で選ぶ）。「.」で終えた所では候補を出さない
+    load_dir(page, imgs)
+    write(page, "a.png", "she is standing.", section="action")
+    wait_for_phrase(page, "she is standing.")
+    row(page, "b.png").locator("td.meta").click()
+    page.select_option("#bulkSection", "action")
+    page.evaluate("() => { window.bulkSubmits = 0; "
+                  "document.getElementById('bulkForm').addEventListener('submit', () => window.bulkSubmits++); }")
+    bulk = page.locator("#bulkText")
+    bulk.press_sequentially("she is standing")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("she is standing.")
+    bulk.press_sequentially(".")
+    expect(page.locator("#suggestions")).to_be_hidden()
+    bulk.press("Enter")
+    assert page.evaluate("window.bulkSubmits") == 0
+    assert bulk.input_value() == "she is standing."
+    page.click('#bulkForm button[value="add"]')
+    expect(filled(page, "b.png", "action")).to_have_text(["she is standing."])
+
+
 def write_spread(page):
     """action に spread（2回）と、ほかの単語（1回ずつ）を入れる"""
     write(page, "a.png", "girl spread arms", section="action")
@@ -884,6 +939,45 @@ def test_folded_columns_are_remembered_per_project(page, imgs, tmp_path):
     expect(fold_button(page, "guy")).to_have_text("▶")
     load_dir(page, make_images(tmp_path / "imgs" / "other", {"x.png": (100, 100)}))  # ほかのプロジェクトは開いたまま
     expect(fold_button(page, "guy")).to_have_text("◀")
+
+
+def test_rename_button_renames_the_project_and_its_folders(page, imgs, tool):
+    # ヘッダの「読み込み」と「保存」の間の 改名…: 画像フォルダ・data_out・data_work の名前を変えて開き直す。
+    # 保存していない変更があれば止める。畳んだ列など、プロジェクトごとにブラウザに覚えたものは新しい名前へ移す
+    page.goto(page.base_url)
+    button = page.locator("#renameProjectButton")
+    expect(button).to_be_disabled()  # 開くまでは押せない
+    ids = page.locator("header button").evaluate_all("buttons => buttons.map(b => b.id)")
+    assert ids.index("loadButton") + 1 == ids.index("renameProjectButton") == ids.index("saveButton") - 1
+
+    load_dir(page, imgs)
+    fold_button(page, "guy").click()
+    expect(fold_button(page, "guy")).to_have_text("▶")
+    write(page, "a.png", "looks: smile")
+    button.click()
+    expect(page.locator("#status")).to_have_text("保存してから改名してください")
+    expect(page.locator("#renameDialog")).to_be_hidden()
+    page.click("#saveButton")
+    expect(page.locator("#saveButton")).to_have_text("保存")
+
+    button.click()
+    name = page.locator("#renameName")
+    expect(name).to_have_value("proj")  # 今の名前が入っている
+    name.fill("other")
+    name.press("Escape")  # やめる
+    expect(page.locator("#renameDialog")).to_be_hidden()
+    button.click()
+    expect(name).to_have_value("proj")
+    name.fill("renamed")
+    name.press("Enter")
+    renamed = (imgs.parent / "renamed").resolve()
+    expect(page.locator("#status")).to_have_text("「proj」を「renamed」に改名しました")
+    expect(page.locator("#projectSelect")).to_have_value("renamed")
+    expect(page.locator("#imageDir")).to_have_value(str(renamed))
+    assert renamed.is_dir() and not imgs.exists() and not (imgs.parent / "other").exists()
+    assert (tool.data_out_dir / "renamed").is_dir() and (tool.data_work_dir / "renamed").is_dir()
+    expect(filled(page, "a.png")).to_have_text(["looks: smile"])
+    expect(fold_button(page, "guy")).to_have_text("▶")  # 畳んだ列も新しい名前で覚えている
 
 
 def test_folding_picture_keeps_the_thumbnail_size(page, imgs):
