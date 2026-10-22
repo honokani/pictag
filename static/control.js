@@ -144,6 +144,19 @@ const endSentence = line => line
     .replace(/(?<=\S)\s*,[\s,]*\./g, '.')
     .replace(/(?<=[^\s,.])\s*,[\s,]*$/, '.');
 
+// キーのある行では、語の後に続けた2つ以上のスペースは、カンマと同じ語句の区切り（"smile  big eyes" → "smile, big eyes"）
+const spacesToCommas = text => text.replace(/(?<=[^\s,:]) {2,}(?=[^\s,])/g, ', ');
+
+// 1行: キーのある行だけ、キーの後ろを直す（キーの無い文は、整えるときに空白1つにまとめる）
+function spacesToCommasInLine(line) {
+    if (!parseLine(line).key) return line;
+    const colon = line.indexOf(':');
+    return line.slice(0, colon + 1) + spacesToCommas(line.slice(colon + 1));
+}
+
+// 入力欄の値（{key, value}）: キーの欄は全部、「その他」の欄と1つだけの欄はキーのある行だけ
+const spacesToCommasInField = f => ({...f, value: f.key ? spacesToCommas(f.value) : f.value.split('\n').map(spacesToCommasInLine).join('\n')});
+
 // 「その他」の欄で、値の無いキーの行（mirror:）の次からのキーの無い行を、空行か次のキーの行まで、そのキーの行に空白でつなぐ
 // （else の物ごとの文: mirror: face reflects on mirror. ball reflects on mirror.）
 function foldBareKeys(lines) {
@@ -274,12 +287,15 @@ const spacesAfterWord = before => (before.match(/\S( *)$/) || ['', ''])[1].lengt
 // キーなしの文で、語の後にスペースを2つ続けた（打たなくても単語の候補を出す合図。3つ目でしまう）
 const calledBySpaces = ctx => !ctx.query && ctx.spaces === 2;
 
+// キーなしの文の途中で、文の候補を探す文字: 行頭（at）から打った所までの text（空白とカンマは区切りの空白1つに。girl, i → girl i）
+const sentenceQuery = (text, at) => ({sentence: text.replace(/[\s,]+/g, ' '), sentenceStart: at});
+
 // キーのある行で打っている語句: raw はカンマ（キーのコロン・欄の改行）の後ろからカーソルまで、at は raw の頭の位置
-// 語の後にスペースを2つ以上続けたら、打っていない次の語句として見る（候補はカンマの後ろと同じで、3つ目でもしまわない。
-// 選んだ語句は、続いたスペースと置き換える）
+// 語の後に2つ以上続けたスペースはカンマと同じで、その後ろが打っている語句（何も打っていなければ、カンマの後ろと同じ候補を出す。
+// 3つ目でもしまわない）。選んだ語句は、そのスペースから置き換える
 function phraseQuery(raw, at) {
-    const spaces = spacesAfterWord(raw);
-    if (spaces >= 2) return {query: '', queryStart: at + raw.length - spaces};
+    const spaced = raw.match(/^(.*[^\s,:])( {2,})(.*)$/);
+    if (spaced) return {query: spaced[3], queryStart: at + spaced[1].length};
     const query = raw.trimStart();
     return {query, queryStart: at + raw.length - query.length};
 }
@@ -292,7 +308,8 @@ const phraseBefore = (value, at) => (/[,:]/.test(value[at - 1] || '') ? ' ' : /\
 const phraseAfter = after => (!after.trim() ? ', ' : /^\s*,/.test(after) ? '' : /^\s/.test(after) ? ',' : ', ');
 
 // 入力欄のカーソル位置の文脈
-// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数）/ start = 行頭（キー・語句・文・単語）
+// mode: phrase = キーのある行の語句 / word = キーなしの文の途中の単語（spaces は語の後ろに続くスペースの数。sentence は文の候補を探す文字）/
+// start = 行頭（キー・語句・文・単語）
 // 範囲を選んでいるときは、選んだ文字を候補で置き換えるので、無いものとして見る（end は置き換える範囲の終わり）
 function contextOf(el) {
     const caret = el.selectionStart;
@@ -303,7 +320,7 @@ function contextOf(el) {
     const lineEnd = lineEndAt < 0 ? value.length : lineEndAt;
     const before = value.slice(lineStart, caret);
     const after = value.slice(caret, lineEnd);
-    const base = {end, after, current: parseLine(value.slice(lineStart, lineEnd)).phrases,
+    const base = {end, after, current: parseLine(spacesToCommasInLine(value.slice(lineStart, lineEnd))).phrases,
         cellPhrases: phrasesByKey(value)};
     const colon = before.indexOf(':');
     const keyPart = colon >= 0 ? before.slice(0, colon).replace(/^\s*-*\s*/, '').trim() : '';
@@ -316,7 +333,7 @@ function contextOf(el) {
     const lastBreak = Math.max(rest.lastIndexOf(' '), rest.lastIndexOf(','), rest.lastIndexOf('\t'));
     if (lastBreak >= 0) {
         return {...base, mode: 'word', key: null, query: rest.slice(lastBreak + 1), queryStart: lineStart + prefix + lastBreak + 1,
-            spaces: spacesAfterWord(rest)};
+            spaces: spacesAfterWord(rest), ...sentenceQuery(rest, lineStart + prefix)};
     }
     return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
 }
@@ -327,13 +344,13 @@ function editorContext(el) {
     const caret = el.selectionStart;
     const end = el.selectionEnd;
     const value = el.value.slice(0, caret) + el.value.slice(end);
-    const fields = state.editor.fields.map(f => ({key: f.dataset.key, value: f === el ? value : f.value}));
+    const fields = state.editor.fields.map(f => spacesToCommasInField({key: f.dataset.key, value: f === el ? value : f.value}));
     const cellPhrases = phrasesByKey(composeEditor(fields, state.editor.keys));
     if (!el.dataset.key) return {...contextOf(el), cellPhrases};
     const before = value.slice(0, caret);
     const lineEndAt = value.indexOf('\n', caret);
     const segment = Math.max(before.lastIndexOf(','), before.lastIndexOf('\n')) + 1;
-    return {end, after: value.slice(caret, lineEndAt < 0 ? value.length : lineEndAt), current: splitPhrases(value.replace(/\n/g, ',')),
+    return {end, after: value.slice(caret, lineEndAt < 0 ? value.length : lineEndAt), current: splitPhrases(spacesToCommas(value).replace(/\n/g, ',')),
         cellPhrases, mode: 'phrase', key: el.dataset.key, ...phraseQuery(before.slice(segment), segment)};
 }
 
@@ -368,6 +385,19 @@ function phraseCandidates(section, ctx) {
 function wordCandidates(section, ctx) {
     if (!(ctx.query || calledBySpaces(ctx))) return [];
     return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
+}
+
+// キーなしの文の途中の文: 行頭から打った所まで（sentence）であいまい検索する（単語を1文字以上打ったとき。後ろに語が続く所では出さない）。
+// 選ぶと、行の頭から打った所までを置き換える
+function sentenceCandidates(section, ctx) {
+    if (!ctx.query || ctx.after.trim()) return [];
+    return keepBest(state.phrases.filter(p => !p.key).map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase,
+        count: p.count, bonus: wordBonus(p, section), query: ctx.sentence, from: ctx.sentenceStart})));
+}
+
+// キーなしの文の途中: 単語と、行頭から打った所までに合う文（合う度合いの順に混ぜる）
+function inSentenceCandidates(section, ctx) {
+    return [...wordCandidates(section, ctx), ...sentenceCandidates(section, ctx)];
 }
 
 // 行頭: キー、キー付きの語句（同じ種類の段落のもの。その欄の同じキーにもう入っているものは出さない）、キーなしの文、単語（1文字以上打ったときだけ）
@@ -407,12 +437,13 @@ function movingCandidates(section, ctx) {
         }));
 }
 
-const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: wordCandidates, start: lineStartCandidates, keyless: keylessCandidates,
+const CANDIDATE_SOURCES = {phrase: phraseCandidates, word: inSentenceCandidates, start: lineStartCandidates, keyless: keylessCandidates,
     moving: movingCandidates};
 
+// 打った文字で探す（文の途中の文の候補は、行頭から打った所までで）
 function candidates(section, ctx) {
     return CANDIDATE_SOURCES[ctx.mode](section, ctx)
-        .map(item => ({...item, score: fuzzyScore(ctx.query, item.match)}))
+        .map(item => ({...item, score: fuzzyScore(item.query ?? ctx.query, item.match)}))
         .filter(item => item.score !== null)
         .sort((a, b) => (b.score + b.bonus) - (a.score + a.bonus))
         .slice(0, 20);
@@ -492,8 +523,8 @@ function accept(item) {
             word: () => item.word + wordSeparator(ctx.after),
             line: () => item.phrase,
         }[item.kind]();
-        // 候補を出すために2つ続けたスペースは、1つにまとめる。範囲を選んでいれば、選んだ文字も置き換える
-        el.setRangeText(text, calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart, ctx.end, 'end');
+        // 候補を出すために2つ続けたスペースは、1つにまとめる。範囲を選んでいれば、選んだ文字も置き換える（文の途中で選んだ文は、行の頭から）
+        el.setRangeText(text, item.from ?? (calledBySpaces(ctx) ? ctx.queryStart - 1 : ctx.queryStart), ctx.end, 'end');
     }
     el.dispatchEvent(new Event('input'));
 }
@@ -1282,7 +1313,7 @@ function commitEdit() {
     state.editor = null;
     hideSuggestions();
     const row = state.byIndex.get(editor.index);
-    const fields = editor.fields.map(el => ({key: el.dataset.key, value: el.value}));
+    const fields = editor.fields.map(el => spacesToCommasInField({key: el.dataset.key, value: el.value}));
     const text = tidyInput(composeEditor(fields, editor.keys), editor.section);
     const changed = text !== (row.texts[editor.section] || '');
     row.texts[editor.section] = text;
@@ -1406,7 +1437,7 @@ async function bulkEdit(op) {
     const key = $('bulkKey').value;
     if (!rows.length) return setStatus('行を選んでください', 'error');
     if (!phrases) return setStatus('語句を入力してください', 'error');
-    const text = key ? `${key}: ${phrases}` : phrases;
+    const text = key ? `${key}: ${spacesToCommas(phrases)}` : phrases;
     await settled();
     const res = await postJson(op === 'add' ? '/add_phrase' : '/remove_phrase', {rows, section: $('bulkSection').value, text});
     if (!res.success) return setStatus(res.message || '一括入力できませんでした', 'error');
@@ -1789,7 +1820,7 @@ function bulkContext(el) {
     const value = el.value.slice(0, caret) + el.value.slice(end);
     const before = value.slice(0, caret);
     const after = value.slice(caret);
-    const current = key ? splitPhrases(value) : [];
+    const current = key ? splitPhrases(spacesToCommas(value)) : [];
     const base = {end, after, current, cellPhrases: key ? {[key]: current} : {}};
     if (key) {
         const segment = before.lastIndexOf(',') + 1;
@@ -1797,7 +1828,9 @@ function bulkContext(el) {
     }
     const lastBreak = Math.max(before.lastIndexOf(' '), before.lastIndexOf(','));
     if (lastBreak >= 0) {
-        return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1, spaces: spacesAfterWord(before)};
+        const lead = before.length - before.trimStart().length;
+        return {...base, mode: 'word', key: null, query: before.slice(lastBreak + 1), queryStart: lastBreak + 1, spaces: spacesAfterWord(before),
+            ...sentenceQuery(before.slice(lead), lead)};
     }
     const query = before.trimStart();
     return {...base, mode: 'keyless', key: null, query, queryStart: before.length - query.length};
