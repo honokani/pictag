@@ -529,7 +529,10 @@ function accept(item) {
     el.dispatchEvent(new Event('input'));
 }
 
-// 候補が出ているときのキー操作。Enter は打ちかけがあるか ↑↓ で選んだときだけ確定（改行を邪魔しない）
+// 打ちかけがある（「.」で終えた所は、文を書き終えたと見て打ちかけにしない）
+const typing = ctx => Boolean(ctx.query) && !ctx.query.endsWith('.');
+
+// 候補が出ているときのキー操作。Enter は打ちかけがあるか ↑↓ で選んだときだけ確定（改行を邪魔しない。「.」の後の Enter は改行）
 function handleSuggestKey(event) {
     const s = state.suggest;
     if (!s || s.el !== event.target) return false;
@@ -540,7 +543,7 @@ function handleSuggestKey(event) {
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         moveActive(event.key === 'ArrowDown' ? 1 : -1);
-    } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (s.ctx.query || s.moved))) {
+    } else if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && (typing(s.ctx) || s.moved))) {
         accept(s.items[s.active]);
     } else if (event.key === 'Escape') {
         hideSuggestions();
@@ -2007,13 +2010,20 @@ function wire() {
         guarded(bulkEdit)(event.submitter ? event.submitter.value : 'add');
     });
     withWhitespaceMarks($('bulkText'));
-    $('bulkText').addEventListener('input', () => showSuggestions($('bulkText'), $('bulkSection').value, bulkContext));
+    // 一括入力: 「.」で終えた所（文を書き終えた所）では候補を出さない。Enter では行に足さない（追加・削除はボタンだけ。候補が出ていれば Enter で選ぶ）
+    $('bulkText').addEventListener('input', () => {
+        const el = $('bulkText');
+        if (el.value.slice(0, el.selectionStart).endsWith('.')) hideSuggestions();
+        else showSuggestions(el, $('bulkSection').value, bulkContext);
+    });
     $('bulkSection').addEventListener('change', () => {
         fillBulkKeys();
         hideSuggestions();
     });
     $('bulkKey').addEventListener('change', hideSuggestions);
-    $('bulkText').addEventListener('keydown', handleSuggestKey);
+    $('bulkText').addEventListener('keydown', event => {
+        if (!handleSuggestKey(event) && event.key === 'Enter') event.preventDefault();
+    });
     $('bulkText').addEventListener('blur', hideSuggestions);
     // キャプションや辞書に入る欄は英字だけ。欄の input より先に直す（候補・高さ・印は直した文字で描く）。IME の変換中は待ち、確定したら直す
     document.addEventListener('input', event => {
