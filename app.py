@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import random
+import shutil
 import subprocess
 import sys
 import threading
@@ -152,6 +153,26 @@ def carried_row(name, is_dead, row, sections):
             'edited_at': to_text(row.get('edited_at', '')),
             **{s: to_text(row.get(s, '')) for s in sections}}
 
+def separated_names(alive, taken):
+    """拡張子だけ違う画像（大文字小文字の違いも同じと見る。キャプション・hint・Qwen の答えは拡張子を除いた名前なので重なる）を
+    分ける新しい名前: 名前順で先の1つはそのまま、ほかは名前に拡張子を足す（a.png → a_png.png。その名前も使っていれば a_png_2.png …）。
+    taken: 画像のほかに使っている名前（表の行・サムネイル）。{元の名前: 新しい名前}"""
+    used = {Path(n).stem.casefold() for n in [*alive, *taken]}
+    kept, renamed = set(), {}
+    for name in sorted(alive):
+        path = Path(name)
+        if path.stem.casefold() not in kept:
+            kept.add(path.stem.casefold())
+            continue
+        base = stem = f"{path.stem}_{path.suffix[1:]}"
+        number = 1
+        while stem.casefold() in used:
+            number += 1
+            stem = f"{base}_{number}"
+        used.add(stem.casefold())
+        renamed[name] = f"{stem}{path.suffix}"
+    return renamed
+
 def read_auto_marks(path):
     """保存済みの単語のマークの設定（表が無い・設定が無い（0.4.4 まで）なら、どれも設定なし）"""
     data = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
@@ -225,6 +246,8 @@ class CaptionTool:
         self.saved_cache = {}  # 他プロジェクトの表: パス → (mtime, 段落, 語句の使用回数, 単語の使用回数)
         self.hints = {}  # 画像名 → hint（画像フォルダの同じ名前の .txt）
         self.qwen_hints = {}  # 画像名 → Qwen の答え（data_work/<フォルダ名>/qwen/ の同じ名前の .txt）
+        self.renamed_images = {}  # 直近の読み込みで名前を変えた画像（拡張子だけ違う画像）: 元の名前 → 新しい名前
+        self.rename_failed = []  # 直近の読み込みで名前を変えられなかった画像（'画像名: 理由'）
         self.shared = read_shared(self.data_work_dir / SHARED_FILE)
         self.last_error = ''  # 直近の失敗理由（API が画面へ返す）
 
@@ -350,6 +373,10 @@ class CaptionTool:
         # hint（読むだけ。保存やキャプションには使わない）と、前に Qwen が書いた答え
         self.hints = read_hints(self.image_dir, self.df['サムネイル'].tolist())
         self.qwen_hints = read_hints(self.data_work_target / QWEN_DIR, self.df['サムネイル'].tolist())
+
+        # 名前を変えた画像は、すぐ表とキャプションに残す（残さないと、次に読み込んだとき元の名前の行が削除済みになる）
+        if self.renamed_images:
+            self.save_data()
 
         logger.info(f"DataFrame created: {len(self.df)} rows, {len(self.df.columns)} columns")
 
@@ -598,6 +625,33 @@ class CaptionTool:
         """語句をグループから外す（語句が1つになったグループは消える）"""
         return self.update_shared(lambda shared: ungroup_phrases(shared, pairs_of(pairs)))
 
+    def separate_same_stems(self, alive, taken):
+        """拡張子だけ違う画像の名前を変える（separated_names）: 画像とサムネイルの名前を変え、hint（画像と同じ名前の .txt）は
+        新しい名前にも写す。Qwen の答えと下書きは、どちらの画像のものか分からないので写さない。改名できなかった画像はそのまま。
+        ({元の名前: 新しい名前}, ['画像名: 理由'])"""
+        renamed, failed = {}, []
+        for old, new in separated_names(alive, taken).items():
+            moved = []
+            try:
+                for src, dst in [(self.image_dir / old, self.image_dir / new), (self.thumbnail_file(old), self.thumbnail_file(new))]:
+                    if src.exists():
+                        src.rename(dst)
+                        moved.append((src, dst))
+            except OSError as e:
+                for src, dst in reversed(moved):
+                    dst.rename(src)
+                failed.append(f'{old}: {e}')
+                continue
+            renamed[old] = new
+            logger.info(f"Renamed an image that differs only in extension: {old} -> {new}")
+            hint, copied = (self.image_dir / f"{Path(name).stem}{HINT_EXT}" for name in (old, new))
+            if hint.is_file() and not copied.exists():
+                try:
+                    shutil.copyfile(hint, copied)
+                except OSError as e:
+                    failed.append(f'{old} の hint: {e}')
+        return renamed, failed
+
     def manage_dead_alive_status(self):
         """表を作り直す: 元フォルダにある画像は生きている行、表やサムネイルにだけ残る画像は削除済みの行
         （入力・マーク・書き換えた時刻は前の行から引き継ぐ）。そのあとキャプションの txt を、生きている行は captions、
@@ -615,6 +669,14 @@ class CaptionTool:
         for record in self.df.to_dict('records') if has_table else []:
             if isinstance(record['サムネイル'], str):
                 existing.setdefault(record['サムネイル'], record)
+        # 拡張子だけ違う画像は、名前順で先の1つのほかの名前を変える（前の行・サムネイルも新しい名前へ）
+        self.renamed_images, self.rename_failed = self.separate_same_stems(alive, set(existing) | thumbnails)
+        for old, new in self.renamed_images.items():
+            alive = (alive - {old}) | {new}
+            if old in thumbnails:
+                thumbnails = (thumbnails - {old}) | {new}
+            if old in existing:
+                existing[new] = existing.pop(old)
         # 段落: 保存済みの表があればその段落を保つ（外した人物などの段落を戻さない）。固定の段落は必ず先頭に置く
         # 新規プロジェクトは既定の段落（DEFAULT_SECTIONS）から始める
         sections = with_fixed_sections(section_names(self.df)) if has_table else list(DEFAULT_SECTIONS)
@@ -1137,6 +1199,10 @@ caption_tool = CaptionTool()
 def index():
     return render_template('index.html')
 
+def load_report():
+    """読み込みで、拡張子だけ違う画像の名前を変えたもの（renamed: [[元の名前, 新しい名前]]）と、変えられなかったもの（rename_failed）"""
+    return {'renamed': [list(pair) for pair in caption_tool.renamed_images.items()], 'rename_failed': caption_tool.rename_failed}
+
 @app.route('/get_existing_projects')
 def get_existing_projects():
     """既存プロジェクト一覧取得"""
@@ -1190,7 +1256,8 @@ def load_existing_project():
         return jsonify({
             'success': True,
             'message': 'Project loaded successfully',
-            'image_dir': image_dir
+            'image_dir': image_dir,
+            **load_report()
         })
     except Exception as e:
         logger.error(f"Failed to load existing project: {e}")
@@ -1203,7 +1270,7 @@ def rename_project():
     if not caption_tool.rename_project(data.get('name')):
         return jsonify({'success': False, 'message': caption_tool.last_error})
     return jsonify({'success': True, 'message': '', 'image_dir': str(caption_tool.image_dir),
-                    'project_name': caption_tool.dir_name})
+                    'project_name': caption_tool.dir_name, **load_report()})
 
 @app.route('/load_directory', methods=['POST'])
 def load_directory():
@@ -1214,7 +1281,7 @@ def load_directory():
     try:
         caption_tool.setup_directories(image_dir)
         caption_tool.load_data()
-        return jsonify({'success': True, 'message': 'Directory loaded successfully'})
+        return jsonify({'success': True, 'message': 'Directory loaded successfully', **load_report()})
     except Exception as e:
         logger.error(f"Failed to load directory: {e}")
         return jsonify({'success': False, 'message': str(e)})
@@ -1532,7 +1599,7 @@ def save_data():
     try:
         caption_tool.save_data()
         caption_tool.load_data()
-        return jsonify({'success': True, 'message': 'Data saved successfully'})
+        return jsonify({'success': True, 'message': 'Data saved successfully', **load_report()})
     except Exception as e:
         logger.error(f"Failed to save data: {e}")
         return jsonify({'success': False, 'message': str(e)})

@@ -805,6 +805,14 @@ function moveRemembered(from, to) {
     }
 }
 
+// 読み込みで名前を変えた画像（拡張子だけ違う画像。renamed: [[元の名前, 新しい名前]]）の、畳んだ hint を新しい名前へ移す
+function carryFoldedHints(renamed = []) {
+    if (!renamed.length) return;
+    const names = new Map(renamed);
+    state.foldedHints = new Set([...state.foldedHints].map(name => names.get(name) ?? name));
+    saveFolded('hints', state.foldedHints);
+}
+
 function toggleHint(button) {
     const tr = button.closest('tr');
     const name = tr.dataset.name;
@@ -1529,9 +1537,16 @@ async function refreshProjects() {
 
 const confirmDiscard = () => !state.dirty || window.confirm('保存していない変更があります。破棄して続けますか？');
 
-async function opened(name) {
+// 読み込み（保存の読み直しも）で、拡張子だけ違う画像の名前を変えたこと（と、変えられなかった画像）
+const renamedNote = ({renamed = [], rename_failed: failed = []} = {}) =>
+    (renamed.length ? `。拡張子だけ違う画像の名前を変えて保存しました: ${renamed.map(([from, to]) => `${from} → ${to}`).join('、')}` : '')
+    + (failed.length ? `。名前を変えられませんでした: ${failed.join('、')}` : '');
+
+// report: 読み込みの応答（名前を変えた画像）
+async function opened(name, report = {}) {
     state.projectName = name;
     state.foldedHints = loadFolded('hints');
+    carryFoldedHints(report.renamed);
     state.foldedSections = loadFolded('sections');
     state.sideView = loadSideView();
     state.thumbZoomed = loadThumbZoom();
@@ -1540,7 +1555,8 @@ async function opened(name) {
     state.dirty = false;
     await refreshTable();
     await refreshProjects();
-    setStatus(`「${name}」を開きました（${state.rows.length} 枚）`, 'ok');
+    const note = renamedNote(report);
+    setStatus(`「${name}」を開きました（${state.rows.length} 枚）${note}`, note ? 'warn' : 'ok');
 }
 
 async function openProject() {
@@ -1558,7 +1574,7 @@ async function openProject() {
         return setStatus(res.message, 'error');
     }
     $('imageDir').value = res.image_dir;
-    await opened(name);
+    await opened(name, res);
 }
 
 // confirmed: 未保存の変更を破棄してよいか、もう確かめた（参照…から）
@@ -1570,7 +1586,7 @@ async function loadDirectory(confirmed = false) {
     await settled();
     const res = await postJson('/load_directory', {image_dir: dir});
     if (!res.success) return setStatus(res.message, 'error');
-    await opened(dir.replace(/["']/g, '').replace(/[\\/]+$/, '').split(/[\\/]/).pop());
+    await opened(dir.replace(/["']/g, '').replace(/[\\/]+$/, '').split(/[\\/]/).pop(), res);
 }
 
 // 参照…: このPCでフォルダを選ぶ窓をアプリ側で開き、選んだらそのまま読み込む
@@ -1609,8 +1625,9 @@ async function renameProject() {
     if (!res.success) return setStatus(res.message, 'error');
     moveRemembered(from, res.project_name);
     $('imageDir').value = res.image_dir;
-    await opened(res.project_name);
-    setStatus(`「${from}」を「${res.project_name}」に改名しました`, 'ok');
+    await opened(res.project_name, res);
+    const note = renamedNote(res);
+    setStatus(`「${from}」を「${res.project_name}」に改名しました${note}`, note ? 'warn' : 'ok');
 }
 
 async function save() {
@@ -1620,9 +1637,11 @@ async function save() {
     const res = await postJson('/save_data');
     if (!res.success) return setStatus(res.message, 'error');
     state.dirty = false;
+    carryFoldedHints(res.renamed);
     await refreshTable();
     await refreshProjects();
-    setStatus('保存しました', 'ok');
+    const note = renamedNote(res);
+    setStatus(`保存しました${note}`, note ? 'warn' : 'ok');
 }
 
 async function removeDead() {
