@@ -1,8 +1,10 @@
-"""action の文の動詞の形（進行形 is doing / 現在形 does）を数え、多い方にそろえる
+"""action の文の動詞の形（進行形 is doing / 現在形 does）を動詞ごとに数え、それぞれ多い方にそろえる
 
 - 進行形: 「girl is sitting.」「girl and guy are hugging.」（is / are の後ろの -ing。is なら単数、are なら複数）
 - 現在形: 「girl sits.」「girl and guy hug.」（主語のすぐ後ろの動詞）。s の無い「girl sit」も現在形として数え、直すときは s を付ける
 - 主語は段落の名前（girl・girl A・guy …）と、その複数形（girls）、代名詞（he・she・it・they・both）。and やカンマでつないでもよい
+- and でつないだ動詞（girl is sitting and smiling.）も1つずつ数え、1つずつ直す（girl sits and is smiling.）。
+  受け身（is being carried）は、後ろの動詞（carry）として数える
 - 綴りの変化（sitting → sit、lying → lie、has など）は lemminflect（英語の辞書）で引く
 - 機械では迷う文（and の後ろの離れた動詞・is going to・辞書に無い動詞・体の部分の語）は、直す案を「迷う」として出す
 """
@@ -29,12 +31,21 @@ CHAIN = re.compile(rf'\band\s+(?:({ADVERB})\s+)?({WORD})\b', re.IGNORECASE)  # a
 END = re.compile(r'[,;.!?]')  # 文の区切り
 
 
+class Verb(NamedTuple):
+    """文の中の動詞1つ（and でつないだ動詞も1つずつ）"""
+    lemma: str
+    word: tuple      # 動詞の語の (始め, 終わり)
+    lead: int        # 進行形にするとき is / are を入れる所（副詞があればその前）
+    aux: tuple = ()  # 自分の is / are の (始め, lead)（進行形の先頭の動詞だけ）
+
+
 class Clause(NamedTuple):
     """形の分かる文（主語と動詞）1つ"""
-    form: str        # PROGRESSIVE / PRESENT
-    sure: bool       # 機械で直してよいか（False は迷う）
-    flip: tuple      # もう一方の形にする置き換え ((始め, 終わり, 文字), …)
-    fix: tuple = ()  # 形はそのままで、主語に合わせる置き換え（girl sit → girl sits）
+    form: str            # PROGRESSIVE / PRESENT
+    sure: bool           # 機械で直してよいか（False は迷う）
+    plural: bool         # 主語が複数か（is / are と、s の有無）
+    verbs: tuple         # 動詞（先頭から）
+    passive: tuple = ()  # 受け身（is being carried）を現在形にする置き換え (始め, 終わり, 文字)
 
 
 @lru_cache(maxsize=None)
@@ -94,59 +105,58 @@ def is_plural(subject, names):
     return PRONOUNS.get(word, word not in names)
 
 
+def chained(c, lemma):
+    """and でつないだ動詞（CHAIN の一致 c）"""
+    return Verb(lemma, c.span(2), c.start(1) if c.group(1) else c.start(2))
+
+
 def progressive_clause(line, m, stop):
     """is / are + -ing の文。is going to・辞書に無い動詞・離れた and は迷う"""
-    aux, adv, verb = m.group(1), m.group(2), m.group(3)
-    plural = aux.lower() == 'are'
-    if verb.lower() == 'being':  # 受け身（is being carried → is carried）
+    adv, verb = m.group(2), m.group(3)
+    plural = m.group(1).lower() == 'are'
+    lead = m.start(2) if adv else m.start(3)
+
+    def head(lemma):
+        return Verb(lemma, m.span(3), lead, (m.start(1), lead))
+
+    if verb.lower() == 'being':  # 受け身（is being carried → is carried）。後ろの動詞（carry）として数える
         end = m.end(3) + len(line[m.end(3):]) - len(line[m.end(3):].lstrip())
-        return Clause(PROGRESSIVE, True, ((m.start(3), end, ''),))
+        done = re.match(WORD, line[end:], re.IGNORECASE)
+        return Clause(PROGRESSIVE, True, plural, (head((done and lemma_of(done[0], oov=True)) or 'be'),),
+                      (m.start(3), end, ''))
     lemma, sure = (lemma_of(verb), True) if is_gerund(verb) else (lemma_of(verb, oov=True), False)
     if lemma is None:
         return None
     sure = sure and not (lemma == 'go' and re.match(r'\s+to\b', line[m.end():]))  # is going to（これからすること）
-
-    def present(lem):
-        return lem if plural else inflect(lem, 'VBZ')
-
-    edits, last = [(m.start(1), m.end(3), ' '.join(filter(None, [adv, present(lemma)])))], m.end()
+    verbs, last = [head(lemma)], m.end()
     for c in CHAIN.finditer(line, m.end(), stop):
         if is_gerund(c.group(2)):
             sure = sure and not line[last:c.start()].strip()  # 動詞のすぐ後ろの and だけ確か
-            edits.append((c.start(2), c.end(2), present(lemma_of(c.group(2)))))
+            verbs.append(chained(c, lemma_of(c.group(2))))
             last = c.end()
-    return Clause(PROGRESSIVE, sure, tuple(edits))
+    return Clause(PROGRESSIVE, sure, plural, tuple(verbs))
 
 
 def present_clause(line, m, stop, names):
-    """主語 + 現在形の文。s の付け方が主語と合わなければ fix で直す。体の部分の語・離れた and は迷う"""
+    """主語 + 現在形の文。体の部分の語・離れた and は迷う"""
     w1, w2 = m['w1'], m['w2']
     if found := present_verb(w1):
-        adv, (start, end) = None, m.span('w1')
+        word = m.span('w1')
     elif w2 and is_adverb(w1) and (found := present_verb(w2)):
-        adv, (start, end) = w1, m.span('w2')
+        word = m.span('w2')
     else:
         return None
     lemma, with_s = found
-    plural = is_plural(m['subj'], names)
-    sure = line[start:end].lower() not in BODY_PARTS
-
-    def right(lem):  # 主語に合う現在形
-        return lem if plural else inflect(lem, 'VBZ')
-
-    flip = [(m.start('w1'), end, ' '.join(filter(None, ['are' if plural else 'is', adv, inflect(lemma, 'VBG')])))]
-    fix = [(start, end, right(lemma))] if line[start:end].lower() != right(lemma) else []
-    last = end
-    for c in CHAIN.finditer(line, end, stop):
-        chained = present_verb(c.group(2))
-        if chained is None or chained[1] != with_s:
+    sure = line[slice(*word)].lower() not in BODY_PARTS
+    verbs, last = [Verb(lemma, word, m.start('w1'))], word[1]
+    for c in CHAIN.finditer(line, word[1], stop):
+        verb = present_verb(c.group(2))
+        if verb is None or verb[1] != with_s:
             continue
         sure = sure and not line[last:c.start()].strip()
-        flip.append((c.start(2), c.end(2), inflect(chained[0], 'VBG')))
-        if c.group(2).lower() != right(chained[0]):
-            fix.append((c.start(2), c.end(2), right(chained[0])))
+        verbs.append(chained(c, verb[0]))
         last = c.end()
-    return Clause(PRESENT, sure, tuple(flip), tuple(fix))
+    return Clause(PRESENT, sure, is_plural(m['subj'], names), tuple(verbs))
 
 
 def clauses(line, subjects):
@@ -165,14 +175,52 @@ def clauses(line, subjects):
     return [c for c in map(clause, range(len(heads))) if c]
 
 
-def convert(line, subjects, target):
-    """line の文の動詞を target の形にした (文, 確か)。変える所が無ければ None"""
-    picked = [(c.flip if c.form != target else c.fix, c.sure) for c in clauses(line, subjects)]
-    edits = [edit for flip, _ in picked for edit in flip]
+def edits_of(line, clause, target_of):
+    """clause の動詞を、それぞれ target_of(原形) の形（None は今の形のまま）にする置き換え [(始め, 終わり, 文字, 原形)]
+
+    原形は、形か s を変えた動詞のもの（前の動詞の形が変わって is / are を足すだけのものは None）
+    """
+    if clause.passive:
+        verb = clause.verbs[0]
+        return [(*clause.passive, verb.lemma)] if target_of(verb.lemma) == PRESENT else []
+    edits, shared = [], False  # shared: 前の動詞が進行形（続く -ing は、その is / are を分け合う）
+    for verb in clause.verbs:
+        form = target_of(verb.lemma) or clause.form
+        if form == PROGRESSIVE:
+            if not shared and not verb.aux:
+                edits.append((verb.lead, verb.lead, 'are ' if clause.plural else 'is ', None))
+            if clause.form == PRESENT:
+                edits.append((*verb.word, inflect(verb.lemma, 'VBG'), verb.lemma))
+        else:
+            present = verb.lemma if clause.plural else inflect(verb.lemma, 'VBZ')  # 主語に合う現在形
+            if verb.aux:
+                edits.append((*verb.aux, '', None))
+            if line[slice(*verb.word)].lower() != present:
+                edits.append((*verb.word, present, verb.lemma))
+        shared = form == PROGRESSIVE
+    return edits
+
+
+def rewrite(line, found, target_of):
+    """line（found はその clauses）の動詞を、それぞれ target_of(原形) の形にした (文, 確か, 形か s を変えた動詞の原形)
+
+    変える所が無ければ None
+    """
+    picked = [(edits_of(line, c, target_of), c.sure) for c in found]
+    edits = [edit for each, _ in picked for edit in each]
     if not edits:
         return None
-    text = reduce(lambda s, e: s[:e[0]] + e[2] + s[e[1]:], sorted(edits, reverse=True), line)
-    return text, all(sure for flip, sure in picked if flip)
+    text = reduce(lambda s, e: s[:e[0]] + e[2] + s[e[1]:], sorted(edits, key=lambda e: e[:2], reverse=True), line)
+    return text, all(sure for each, sure in picked if each), tuple(dict.fromkeys(e[3] for e in edits if e[3]))
+
+
+def convert(line, subjects, target):
+    """line の文の動詞を target の形にした (文, 確か)。target は形か、原形からその形を返す関数（None は今の形のまま）
+
+    変える所が無ければ None
+    """
+    found = rewrite(line, clauses(line, subjects), target if callable(target) else lambda _: target)
+    return found and found[:2]
 
 
 def count_forms(lines, subjects):
@@ -187,12 +235,17 @@ def majority(counts):
 
 
 def survey(lines, subjects, target=None):
-    """[(行の印, 文)] の形を数え、target（無ければ多い方）にそろえる案を作る: ({形: 数}, そろえる形, [(行の印, 前, 後, 確か)])
+    """[(行の印, 文)] の動詞を動詞ごとに数え、それぞれ多い方の形にそろえる案を作る:
+    ({原形: {形: 数}}, {原形: そろえる形}, [(行の印, 前, 後, 確か, (形か s を変える動詞の原形, …))])
 
-    同じ数で target が無ければ、そろえる形は None で案は無い（画面がどちらにするか聞いて、target を渡し直す）
+    同じ数の動詞は target の形にする。target が無ければ、その動詞のそろえる形は None で、案は無い
+    （画面がどちらにするか聞いて、target を渡し直す）
     """
-    counts = count_forms([line for _, line in lines], subjects)
-    target = target or majority(counts)
-    changes = [] if target is None else [(key, line, *converted) for key, line in lines
-                                         if (converted := convert(line, subjects, target))]
-    return {PROGRESSIVE: counts[PROGRESSIVE], PRESENT: counts[PRESENT]}, target, changes
+    found = [(key, line, clauses(line, subjects)) for key, line in lines]
+    tally = Counter((verb.lemma, c.form) for *_, cs in found for c in cs for verb in c.verbs)
+    counts = {lemma: {PROGRESSIVE: tally[lemma, PROGRESSIVE], PRESENT: tally[lemma, PRESENT]} for lemma, _ in tally}
+    targets = {lemma: majority(n) or target for lemma, n in counts.items()}
+    if None in targets.values():
+        return counts, targets, []
+    return counts, targets, [(key, line, *changed) for key, line, cs in found
+                             if (changed := rewrite(line, cs, targets.get))]
