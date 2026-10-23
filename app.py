@@ -561,19 +561,24 @@ class CaptionTool:
         return majority(count_forms([line for _, line in self.action_lines()], self.verb_subjects()))
 
     def verb_forms(self, target=None):
-        """action の文の動詞の形（is doing / does）を数え、target（無ければ多い方）にそろえる案 {counts, target, changes}
+        """action の文の動詞の形（is doing / does）を動詞ごとに数え、それぞれ多い方にそろえる案 {counts, verbs, changes}
 
-        削除済みの行は除く。同じ数で target が無ければ案は無い（画面がどちらにするか聞く）。
-        changes: [{index, name, before, after, sure}]（文ごと。sure が False は、機械では迷う文）。target が違えば None
+        削除済みの行は除く。同じ数の動詞は target の形にする（無ければ案は無い。画面がどちらにするか聞く）。
+        counts: 形ごとの数（全部の動詞）。verbs: [{verb, progressive, present, target}]（直す文のある動詞と、
+        同じ数でまだ形の決まらない動詞。ABC 順）。changes: [{index, name, before, after, sure, verbs}]（文ごと。
+        sure が False は、機械では迷う文。verbs はその文で変わる動詞）。target が違えば None
         """
         self.last_error = ''
         if target not in (None, PROGRESSIVE, PRESENT):
             self.fail(f'そろえる形が正しくありません: {target}')
             return None
-        counts, target, changes = survey(self.action_lines(), self.verb_subjects(), target)
-        return {'counts': counts, 'target': target,
-                'changes': [{'index': index, 'name': name, 'before': before, 'after': after, 'sure': sure}
-                            for (index, name), before, after, sure in changes]}
+        counts, targets, changes = survey(self.action_lines(), self.verb_subjects(), target)
+        changed = {verb for *_, verbs in changes for verb in verbs}
+        return {'counts': {form: sum(n[form] for n in counts.values()) for form in (PROGRESSIVE, PRESENT)},
+                'verbs': [{'verb': verb, **counts[verb], 'target': targets[verb]} for verb in sorted(counts)
+                          if targets[verb] is None or verb in changed],
+                'changes': [{'index': index, 'name': name, 'before': before, 'after': after, 'sure': sure,
+                             'verbs': list(verbs)} for (index, name), before, after, sure, verbs in changes]}
 
     def apply_verb_forms(self, changes):
         """verb_forms の案のうち選んだもの [{index, before, after}] を入れる（その文がまだあるときだけ）
@@ -1408,7 +1413,7 @@ def move_phrases_route():
 
 @app.route('/verb_forms', methods=['POST'])
 def verb_forms_route():
-    """action の文の動詞の形（is doing / does）を数え、そろえる案（{target?}。無ければ多い方。counts・target・changes）"""
+    """action の文の動詞の形（is doing / does）を動詞ごとに数え、そろえる案（{target?}: 同じ数の動詞の形。counts・verbs・changes）"""
     data = request.get_json() or {}
     forms = caption_tool.verb_forms(data.get('target'))
     if forms is None:

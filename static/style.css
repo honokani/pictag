@@ -310,9 +310,11 @@ dialog img { display: block; max-width: 88vw; max-height: 80vh; margin: 0 auto; 
 #verbSummary { margin: 0 0 6px; font-weight: 600; }
 #verbLists { max-height: 64vh; overflow-y: auto; }
 #verbLists h4 { margin: 8px 0 2px; font-size: 13px; }
-.verb-list { list-style: none; margin: 0; padding: 0; }
+.verb-word { display: inline-block; min-width: 5em; }  /* 件数の行の動詞（数をそろえて並べる） */
+.verb-list { list-style: none; margin: 0; padding: 0 0 0 1em; }  /* その動詞の文（件数の行の下に字下げ） */
 .verb-list li { padding: 2px 0; }
 .verb-name { color: #888; font-size: 12px; }
+.verb-mark { color: #b26a00; font-size: 12px; }  /* 迷う文の印 */
 .verb-actions { margin: 8px 0 0; text-align: right; }
 .rename-form { display: grid; gap: 6px; }
 #renameName { width: min(28em, 80vw); }

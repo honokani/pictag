@@ -598,7 +598,7 @@ function sectionHeadHtml(s) {
         : `<span class="section-name" title="ダブルクリックで改名">${name}</span>` +
           `<button type="button" class="remove-section" title="この段落を表から外す" aria-label="${name} を外す">×</button>`;
     const verbs = s === 'action'
-        ? '<button type="button" class="verb-forms" title="文の動詞の形（is doing / does）を、多い方にそろえる（一覧で確かめてから入れる）" ' +
+        ? '<button type="button" class="verb-forms" title="文の動詞の形（is doing / does）を、動詞ごとに多い方にそろえる（一覧で確かめてから入れる）" ' +
           'aria-label="動詞の形をそろえる">⇄</button>'
         : '';
     return `<th data-section="${name}"><div class="section-head">${label}${verbs}` +
@@ -1974,31 +1974,41 @@ async function movePhrases() {
 // ---- 動詞の形をそろえる（action の見出しの ⇄） ----
 
 const VERB_FORM_NAMES = {progressive: 'is doing の形（girl is sitting.）', present: 'does の形（girl sits.）'};
+const VERB_FORMS = {progressive: 'is doing', present: 'does'};
 
-function verbSummary({counts, target, changes}) {
-    const counted = `is doing の形 ${counts.progressive} 文・does の形 ${counts.present} 文`;
+function verbSummary({counts, verbs, changes}) {
     if (!counts.progressive && !counts.present) return 'action に、形の分かる文がありません';
-    if (!target) return `${counted}。同じ数です。どちらにそろえますか？`;
-    if (!changes.length) return `${counted}。${VERB_FORM_NAMES[target]}にそろっています`;
-    const tie = counts.progressive === counts.present;
-    return `${counted}${tie ? '。同じ数なので、' : ' → '}${VERB_FORM_NAMES[target]}にそろえます`;
+    if (verbs.some(verb => !verb.target)) return '同じ数の動詞があります。どちらにそろえますか？';
+    if (!changes.length) return 'どの動詞も、1つの形にそろっています';
+    return '動詞ごとに、多い方の形にそろえます';
 }
 
-// 同じ数のとき: どちらにそろえるかのボタン（押すと、その形にそろえる案を出し直す）
+// 同じ数の動詞があるとき: どちらにそろえるかのボタン（押すと、同じ数の動詞をその形にした案を出し直す）
 function verbChoiceHtml() {
     return '<p class="verb-choice">' + Object.entries(VERB_FORM_NAMES).map(([target, name]) =>
         `<button type="button" data-target="${target}">${name}</button>`).join(' ') + '</p>';
 }
 
-// 案の一覧: 直す文（初めからチェック）と、迷う文（入れるならチェック）
-function verbListHtml(changes, sure) {
-    const items = changes.map((change, i) => [change, i]).filter(([change]) => change.sure === sure);
-    if (!items.length) return '';
-    const title = sure ? `直す文（${items.length}）` : `迷う文（${items.length}。入れるならチェック）`;
-    return `<h4>${title}</h4><ul class="verb-list ${sure ? 'verb-sure' : 'verb-unsure'}">` + items.map(([change, i]) =>
-        `<li><label><input type="checkbox" data-i="${i}"${sure ? ' checked' : ''}> ` +
-        `<span class="verb-name">${escapeHtml(change.name)}</span> ${escapeHtml(change.before)} → ` +
-        `<b>${escapeHtml(change.after)}</b></label></li>`).join('') + '</ul>';
+// 動詞の件数の行: 原形・形ごとの数・そろえる形（同じ数で選んだ形には「同じ数」と添える。まだ決まらなければ出さない）
+function verbHeadHtml({verb, progressive, present, target}) {
+    const to = target ? ` → ${VERB_FORMS[target]}${progressive === present ? '（同じ数）' : ''}` : '';
+    return `<h4 class="verb-head"><span class="verb-word">${escapeHtml(verb)}</span> ` +
+        `is doing ${progressive}・does ${present}${to}</h4>`;
+}
+
+// 動詞ごとに、件数の行とその文（直す文はチェック入りで先に、迷う文はチェック無しで後に）。
+// 2つの動詞が変わる文は両方の動詞に出る（data-i が同じで、チェックは共通）
+function verbGroupsHtml(verbs, changes) {
+    return verbs.map(verb => {
+        const items = changes.map((change, i) => [change, i]).filter(([change]) => change.verbs.includes(verb.verb))
+            .sort(([a], [b]) => b.sure - a.sure);
+        return `<section class="verb-group">${verbHeadHtml(verb)}<ul class="verb-list">` + items.map(([change, i]) =>
+            `<li class="${change.sure ? 'verb-sure' : 'verb-unsure'}"><label>` +
+            `<input type="checkbox" data-i="${i}"${change.sure ? ' checked' : ''}> ` +
+            (change.sure ? '' : '<span class="verb-mark">迷う</span> ') +
+            `<span class="verb-name">${escapeHtml(change.name)}</span> ${escapeHtml(change.before)} → ` +
+            `<b>${escapeHtml(change.after)}</b></label></li>`).join('') + '</ul></section>';
+    }).join('');
 }
 
 async function openVerbForms() {
@@ -2007,23 +2017,24 @@ async function openVerbForms() {
     if (await showVerbForms({})) $('verbDialog').showModal();
 }
 
-// 案を窓に出す（{target} を渡すと、その形にそろえる案）。同じ数で形が決まらなければ、どちらにするか聞く。出せなければ false
+// 案を窓に出す（{target} を渡すと、同じ数の動詞をその形に）。同じ数の動詞の形が決まらなければ、どちらにするか聞く。出せなければ false
 async function showVerbForms(payload) {
     const res = await postJson('/verb_forms', payload);
     if (!res.success) {
         setStatus(res.message, 'error');
         return false;
     }
-    const ask = !res.target && res.counts.progressive > 0;  // 同じ数（どちらも 0 なら聞かない）
+    const ask = res.verbs.some(verb => !verb.target);  // 同じ数の動詞がある（案はまだ無い）
     state.verbChanges = res.changes;
     $('verbSummary').textContent = verbSummary(res);
-    $('verbLists').innerHTML = ask ? verbChoiceHtml() : verbListHtml(res.changes, true) + verbListHtml(res.changes, false);
+    $('verbLists').innerHTML = verbGroupsHtml(res.verbs, res.changes) + (ask ? verbChoiceHtml() : '');
     $('verbApply').disabled = !res.changes.length;
     return true;
 }
 
 async function applyVerbForms() {
-    const picked = [...$('verbLists').querySelectorAll('input:checked')].map(box => state.verbChanges[Number(box.dataset.i)]);
+    const checked = new Set([...$('verbLists').querySelectorAll('input:checked')].map(box => Number(box.dataset.i)));
+    const picked = [...checked].map(i => state.verbChanges[i]);
     $('verbDialog').close();
     if (!picked.length) return;
     const res = await postJson('/apply_verb_forms', {changes: picked.map(({index, before, after}) => ({index, before, after}))});
@@ -2061,6 +2072,10 @@ function wire() {
     $('verbLists').addEventListener('click', event => {
         const choice = event.target.closest('.verb-choice button');
         if (choice) guarded(showVerbForms)({target: choice.dataset.target});
+    });
+    $('verbLists').addEventListener('change', event => {  // 2つの動詞に出る文は、どちらのチェックも同じに
+        const box = event.target.closest('input[data-i]');
+        if (box) $('verbLists').querySelectorAll(`input[data-i="${box.dataset.i}"]`).forEach(other => { other.checked = box.checked; });
     });
     $('freezeButton').addEventListener('click', guarded(freezeDictionary));
     $('showDead').addEventListener('change', toggleDead);
