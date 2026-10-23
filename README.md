@@ -10,7 +10,7 @@
 - view のボタン（🎥 向き・高さ・ショットの大きさ、👀 POV）
 - 右端の列に hint（画像と同じ名前の .txt）か、書き出す文面の preview を出す
 - 行ごとのトークン数と上限（507）
-- action の文の動詞の形（is doing / does）を、一覧で確かめてから多い方にそろえる
+- action の文の動詞の形（is doing / does）を、一覧で確かめてから動詞ごとに多い方にそろえる
 - qwen 版（`--qwen`）では、Qwen（ComfyUI）に空の欄を下書きさせられる
 
 画面の操作と細かい動きは [docs/usage.md](docs/usage.md) にあります。
@@ -74,7 +74,7 @@ subjects.py        # 人物などの段落の自動命名、characters、view �
 marks.py           # マーキング
 tokens.py          # トークン数（Qwen3-VL のトークナイザー）
 qwen.py            # qwen 版の 🤖: Qwen（ComfyUI の TextGenerate）に送る文面、答えの分け方、空の欄への入れ方
-verbs.py           # action の文の動詞の形（is doing / does）を数え、多い方にそろえる（綴りは lemminflect）
+verbs.py           # action の文の動詞の形（is doing / does）を動詞ごとに数え、それぞれ多い方にそろえる（綴りは lemminflect）
 public_samples.py  # 公開の見本（映画の有名なシーン 10 場面）。Qwen の見本が足りないときに補う。テストの入力例にも使う
 templates/         # index.html
 static/            # control.js（画面制御）、dictionary.js（共用辞書の画面）、style.css

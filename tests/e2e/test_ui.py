@@ -980,6 +980,25 @@ def test_rename_button_renames_the_project_and_its_folders(page, imgs, tool):
     expect(fold_button(page, "guy")).to_have_text("▶")  # 畳んだ列も新しい名前で覚えている
 
 
+def test_loading_tells_which_images_got_their_extension_in_the_name(page, imgs):
+    # 拡張子だけ違う画像は、読み込むときに名前を変えて保存し、帯で知らせる。畳んだ hint も新しい名前へ移す
+    page.goto(page.base_url)
+    page.evaluate("() => localStorage.setItem('pictag:folded-hints:proj', JSON.stringify(['a.png']))")
+    make_images(imgs, {"a.jpg": (100, 100)})
+    load_dir(page, imgs)
+    status = page.locator("#status")
+    expect(status).to_have_text("「proj」を開きました（4 枚）。拡張子だけ違う画像の名前を変えて保存しました: a.png → a_png.png")
+    expect(status).to_have_class("warn")
+    expect(row(page, "a_png.png")).to_be_visible()
+    expect(row(page, "a.png")).to_have_count(0)
+    assert page.evaluate("() => JSON.parse(localStorage.getItem('pictag:folded-hints:proj'))") == ["a_png.png"]
+
+    make_images(imgs, {"b.jpg": (100, 100)})  # 開いている間に増えたものは、保存（読み直す）で分ける
+    page.click("#saveButton")
+    expect(status).to_have_text("保存しました。拡張子だけ違う画像の名前を変えて保存しました: b.png → b_png.png")
+    expect(row(page, "b_png.png")).to_be_visible()
+
+
 def test_folding_picture_keeps_the_thumbnail_size(page, imgs):
     # サムネイルは picture の欄の高さに合わせるが、畳んだ picture には合わせない（畳む前の大きさのまま）
     load_dir(page, imgs)
