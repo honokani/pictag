@@ -281,3 +281,38 @@ def test_move_phrases_of_a_section_to_another_key(page, movies):
     expect(line_of(page, "roman_holiday.png", "looks", "guy")).to_have_text("looks: sitting")  # ほかの段落は変えない
     expect(page.locator("#saveButton")).to_have_text("保存 *")
     expect(phrase).to_have_value("")
+
+
+def test_replace_phrases_of_a_section_when_moving_to_the_same_key(page, movies):
+    # 「キーを移す」で移す先に同じキーを選ぶと、置換後の語句の欄が出てボタンが「置換」になる。置換後の語句は今ある語句でもよい
+    open_movies(page)
+    page.wait_for_function("() => state.phrases.some(p => p.phrase === 'smile')")  # 辞書は表のあとに読む
+    page.select_option("#moveSection", "girl")
+    page.select_option("#moveFrom", "looks")
+    to_phrase, button = page.locator("#moveNew"), page.locator("#moveForm button")
+    expect(page.locator("#moveTo")).not_to_have_value("looks")  # 同じキーは、選ぶまでは選ばない
+    expect(to_phrase).to_be_hidden()
+    expect(button).to_have_text("移す")
+    page.locator("#movePhrase").fill("eyes closed")
+    page.select_option("#moveTo", "looks")
+    expect(to_phrase).to_be_visible()
+    expect(button).to_have_text("置換")
+    to_phrase.fill("ｓｍｉ")  # 英字だけの欄。候補はその段落のそのキーの語句
+    expect(to_phrase).to_have_value("smi")
+    expect(page.locator("#suggestions:visible li.active")).to_contain_text("smile")
+    to_phrase.press("Enter")  # 候補を選ぶ（行末に付く「, 」は送るときに外す）
+    to_phrase.press("Enter")  # 置換
+    expect(page.locator("#status")).to_have_text(
+        "girl の looks の eyes closed を smile に置き換えました（開いているプロジェクトの 1 行。保存はまだです）")
+    expect(line_of(page, "titanic.png", "looks")).to_have_text("looks: standing, smile")  # 今ある smile にまとめる
+    expect(line_of(page, "roman_holiday.png", "looks")).to_have_text("looks: sitting, smile")
+    expect(page.locator("#saveButton")).to_have_text("保存 *")
+    expect(page.locator("#movePhrase")).to_have_value("")
+    expect(to_phrase).to_have_value("")
+    expect(page.locator("#moveTo")).to_have_value("looks")  # 続けて置換できる
+    page.select_option("#moveTo", "body")
+    expect(to_phrase).to_be_hidden()
+    expect(button).to_have_text("移す")
+    page.select_option("#moveFrom", "body")  # 移す元を選び直して同じキーになるときは、別のキーにする
+    expect(page.locator("#moveTo")).not_to_have_value("body")
+    expect(to_phrase).to_be_hidden()

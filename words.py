@@ -2,11 +2,13 @@
 
 - 使用中の語句は全プロジェクトの入力から作る。新しい語句は使った時点で入り、どの画像からも消えたら消える
 - 共用辞書（data_work/shared.json）は freeze や登録で語句を入れたもの。使われなくなっても残る。
-  確定タグ（段落ごとのキーの並び）と「1つだけ」のグループ（groups.py）も持つ。削除・改名は「キー: 語句」単位（どの段落のものも）
+  確定タグ（段落ごとのキーの並び）と「1つだけ」のグループ（groups.py）も持つ。削除・改名は「キー: 語句」単位（どの段落のものも）。
+  キーを移す・置換は段落（A, B も）単位
 - キーなしの文（action など）は、文のほかに単語（girl / spread / girl's ...）も辞書に入れる
 """
 import re
 from collections import Counter
+from functools import reduce
 
 from caption_format import parse_line, phrases_of, with_line
 from groups import normalize_groups
@@ -128,6 +130,16 @@ def move_registered(shared, belongs, src, dst, phrases):
     return {**shared, 'phrases': list({phrase_id(p): p for p in map(move, shared['phrases'])}.values())}
 
 
+def replace_registered(shared, belongs, key, olds, new):
+    """共用辞書の、belongs(段落) が真の段落の「key: 語句」（olds）を「key: new」にする（重なれば1つに）。グループはそのまま"""
+    replacing = set(olds)
+
+    def replace(p):
+        return {**p, 'phrase': new} if belongs(p['section']) and p['key'] == key and p['phrase'] in replacing else p
+
+    return {**shared, 'phrases': list({phrase_id(p): p for p in map(replace, shared['phrases'])}.values())}
+
+
 def check_phrase(key, phrase):
     """語句の前後の空白を除いて検証する（カンマ・改行は語句の区切り。キーなしの文の「:」はキーと読まれる）"""
     phrase = phrase.strip() if isinstance(phrase, str) else ''
@@ -206,6 +218,11 @@ def rename_phrase(text, key, old, new):
         return render_input_line(k, list(dict.fromkeys(new if p == old else p for p in phrases)))
 
     return '\n'.join(map(edit, text.splitlines()))
+
+
+def replace_phrases(text, key, olds, new):
+    """入力の key の行の語句 olds を new 1つにする（同じ行に new があれば1つに）"""
+    return reduce(lambda acc, old: rename_phrase(acc, key, old, new), olds, text)
 
 
 def move_phrases(text, src, dst, phrases, keys):
