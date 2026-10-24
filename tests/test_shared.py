@@ -159,6 +159,53 @@ def test_move_phrases_rejects_the_same_key_unknown_phrases_or_bad_names(api, tmp
     assert girl_texts(api)["titanic.png"].startswith("looks: standing, eyes closed, smile\n")
 
 
+# ---- キーの中で置き換える（キーを移すで、移す先が移す元と同じキー） ----
+
+def test_replace_phrases_in_sections_of_the_same_name_and_in_shared(api, tmp_path):
+    # A, B を除いた名前が同じ段落（dog A・dog B）の全行と、共用辞書のその段落の語句を置き換える。ほかの段落（girl）は変えない
+    rows = load_scenes(api, movies(tmp_path), ["titanic.png", "lady_and_tramp.png"])
+    api.write(rows["titanic.png"], "looks: lying, smile")
+    api.post("/register_entries", {"phrases": [{"key": "looks", "phrase": "lying"}]})
+
+    res = api.post("/replace_phrases", {"section": "dog", "key": "looks", "phrases": ["lying"], "to_phrase": "lying down"})
+    assert res["success"] and res["changed"] == 1, res
+    texts = {r["サムネイル"]: r["texts"] for r in api.rows()}
+    assert texts["lady_and_tramp.png"]["dog A"] == "looks: lying down\nbody: tan fur, long ears"
+    assert texts["lady_and_tramp.png"]["dog B"] == "looks: lying down\nbody: gray/scruffy fur"
+    assert texts["titanic.png"]["girl"] == "looks: lying, smile"
+    assert entry(api, "looks", "lying down") == {"dog A": (1, True), "dog B": (1, True)}
+    assert entry(api, "looks", "lying") == {"girl": (1, True)}
+
+
+def test_replace_phrases_can_merge_them_into_a_phrase_already_there(api, tmp_path):
+    # 置換後の語句は今ある語句でもよく、その語句にまとめる（前の語句に置換後の語句が入っていてもよい）
+    rows = load_scenes(api, movies(tmp_path), ["titanic.png", "roman_holiday.png"])
+    api.write(rows["titanic.png"], "looks: grin, standing, smiling")
+    api.post("/register_entries", {"phrases": [{"key": "looks", "phrase": "grin"}]})
+
+    res = api.post("/replace_phrases", {"section": "girl", "key": "looks", "phrases": ["grin", "smile", "smiling"],
+                                        "to_phrase": "smile"})
+    assert res["success"] and res["changed"] == 1, res
+    assert girl_texts(api)["titanic.png"] == "looks: smile, standing"
+    assert girl_texts(api)["roman_holiday.png"].startswith("looks: sitting, smile\n")
+    assert entry(api, "looks", "grin") == {}
+    assert entry(api, "looks", "smile") == {"girl": (2, True)}
+
+
+def test_replace_phrases_rejects_the_same_phrase_unknown_phrases_or_bad_names(api, tmp_path):
+    load_scenes(api, movies(tmp_path), ["titanic.png"])
+    for payload in [{"section": "girl", "key": "looks", "phrases": ["smile"], "to_phrase": "smile"},  # 今と同じ
+                    {"section": "girl", "key": "looks", "phrases": ["flying"], "to_phrase": "smile"},  # どこにも無い
+                    {"section": "cat", "key": "looks", "phrases": ["smile"], "to_phrase": "grin"},  # 無い段落
+                    {"section": "girl", "key": "", "phrases": ["smile"], "to_phrase": "grin"},  # キーが無い
+                    {"section": "girl", "key": "looks", "phrases": [], "to_phrase": "grin"},  # 語句が無い
+                    {"section": "girl", "key": "looks", "phrases": ["smile"], "to_phrase": " "},  # 置換後の語句が無い
+                    {"section": "girl", "key": "looks", "phrases": ["smile"], "to_phrase": "grin, smirk"}]:  # 置換後は1つ
+        res = api.post("/replace_phrases", payload)
+        assert not res["success"] and res["message"], payload
+    assert girl_texts(api)["titanic.png"].startswith("looks: standing, eyes closed, smile\n")
+
+
 # ---- 「1つだけ」のグループ ----
 
 def test_group_registers_its_phrases_and_is_listed(api, tmp_path, base_dir):

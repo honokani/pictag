@@ -38,14 +38,16 @@
         <label class="group"><input id="showDead" type="checkbox" checked> 削除済み画像を表示</label>
         <button id="removeDeadButton" type="button" title="元フォルダから消えた画像の行を、表から完全に消す（あわせて保存）">削除済みを消す</button>
         <button id="freezeButton" type="button" title="今使っている語句・単語を共用辞書に入れます（使われなくなっても候補に残ります）">共用辞書に入れる</button>
-        <!-- キーを移す: 段落（girl A・girl B も）のキーの語句を、ほかのキーへ（開いているプロジェクトの全行と共用辞書） -->
-        <form id="moveForm" class="group" title="段落（A, B も）のキーの語句を、ほかのキーへ移します（開いているプロジェクトの全行と共用辞書。保存はまだ）">
+        <!-- キーを移す: 段落（girl A・girl B も）のキーの語句を、ほかのキーへ（開いているプロジェクトの全行と共用辞書）。移す先が同じキーなら置換 -->
+        <form id="moveForm" class="group" title="段落（A, B も）のキーの語句を、ほかのキーへ移します。移す先に同じキーを選ぶと、ほかの語句に置き換えます（開いているプロジェクトの全行と共用辞書。保存はまだ）">
             <select id="moveSection" aria-label="移す段落"></select>
             <select id="moveFrom" aria-label="移す元のキー"></select>
             <input id="movePhrase" type="text" placeholder="語句" autocomplete="off" aria-label="移す語句">
             →
             <select id="moveTo" aria-label="移す先のキー"></select>
-            <button type="submit">移す</button>
+            <!-- 置換後の語句: 移す先が同じキーのときだけ出す（空白の印の包みごと） -->
+            <span id="moveNewField" hidden><input id="moveNew" type="text" placeholder="置換後の語句" autocomplete="off" aria-label="置換後の語句"></span>
+            <button id="moveButton" type="submit">移す</button>
         </form>
         <!-- 一括入力: 行を選んでいる間だけ見せる（選んでいないときも場所は取っておき、帯の高さを変えない）。2段に積む -->
         <form id="bulkForm" class="group bulk idle">

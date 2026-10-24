@@ -29,8 +29,8 @@ from tokens import TOKEN_LIMIT, TokenCounter
 from verbs import PRESENT, PROGRESSIVE, convert, count_forms, majority, survey
 from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
                    empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
-                   register_words, remove_phrase, rename_phrase, rename_registered, set_choice, ungroup_phrases,
-                   unregister_phrases, unregister_words, word_entries)
+                   register_words, remove_phrase, rename_phrase, rename_registered, replace_phrases, replace_registered,
+                   set_choice, ungroup_phrases, unregister_phrases, unregister_words, word_entries)
 
 # ログ設定
 logging.basicConfig(level=logging.INFO)
@@ -542,6 +542,45 @@ class CaptionTool:
         if changed:
             self.df[sections] = after
         logger.info(f"Moved phrases: {base}: {src} -> {dst} {phrases} (rows: {changed})")
+        return changed
+
+    def replace_phrases(self, section, key, phrases, new):
+        """段落 section（A, B を除いた名前が同じ段落すべて）のキー key の語句 phrases を、語句 new 1つにする（今ある語句でもよい）
+
+        開いているプロジェクトの全行（削除済みも）と、共用辞書のその段落の語句を置き換える。入力を変えた行の数を返す（失敗は None）
+        """
+        self.last_error = ''
+        try:
+            base = check_section_name(section)
+            key = check_key(key)
+            if not key:
+                raise ValueError('置き換えるキーを選んでください')
+            if not isinstance(phrases, list) or not phrases:
+                raise ValueError('置き換える語句を入力してください')
+            if not isinstance(new, str) or not new.strip():
+                raise ValueError('置換後の語句を入力してください')
+            new = check_phrase(key, new)
+            phrases = [p for p in dict.fromkeys(check_phrase(key, p) for p in phrases) if p != new]
+            if not phrases:
+                raise ValueError('置換後の語句が今と同じです')
+        except ValueError as e:
+            self.fail(str(e))
+            return None
+        belongs = lambda s: base_name(s) == base
+        registered = any(belongs(p['section']) and p['key'] == key and p['phrase'] in phrases for p in self.shared['phrases'])
+        sections = [s for s in section_names(self.df) if belongs(s)] if 'サムネイル' in self.df.columns else []
+        before = self.df[sections].map(to_text)
+        after = before.map(lambda text: replace_phrases(text, key, phrases, new))
+        changed = int((before != after).any(axis=1).sum())
+        if not registered and not changed:
+            self.fail(f'{base} の {key} に「{phrases[0]}」はありません（開いているプロジェクトにも共用辞書にも）')
+            return None
+        if registered:
+            self.shared = replace_registered(self.shared, belongs, key, phrases, new)
+            self.save_shared()
+        if changed:
+            self.df[sections] = after
+        logger.info(f"Replaced phrases: {base}: {key}: {phrases} -> {new} (rows: {changed})")
         return changed
 
     def verb_subjects(self):
@@ -1410,6 +1449,17 @@ def move_phrases_route():
     if changed is None:
         return jsonify({'success': False, 'message': caption_tool.last_error})
     return jsonify({'success': True, 'changed': changed, 'dictionary': caption_tool.dictionary()})
+
+
+@app.route('/replace_phrases', methods=['POST'])
+def replace_phrases_route():
+    """キーの中で置き換える（キーを移すで、移す先が同じキー。{section, key, phrases, to_phrase}）。changed: 入力を変えた行の数"""
+    data = request.get_json() or {}
+    changed = caption_tool.replace_phrases(data.get('section'), data.get('key'), data.get('phrases'), data.get('to_phrase'))
+    if changed is None:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    return jsonify({'success': True, 'changed': changed, 'dictionary': caption_tool.dictionary()})
+
 
 @app.route('/verb_forms', methods=['POST'])
 def verb_forms_route():

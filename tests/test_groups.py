@@ -3,7 +3,8 @@ import pytest
 
 from groups import blocked_by, group_of, normalize_groups
 from words import (check_phrase, empty_shared, group_phrases, move_phrases, move_registered, register_phrases, register_words,
-                   rename_phrase, rename_registered, ungroup_phrases, unregister_phrases, unregister_words)
+                   rename_phrase, rename_registered, replace_phrases, replace_registered, ungroup_phrases, unregister_phrases,
+                   unregister_words)
 
 POSTURES = ["standing", "sitting", "lying"]
 SUBJECT_KEYS = ["looks", "clothes", "body"]
@@ -111,6 +112,23 @@ def test_rename_phrase_in_input_lines_of_the_key_only():
     text = "looks: standnig, smile\nclothes: standnig\nlooks: standing, standnig"
     assert rename_phrase(text, "looks", "standnig", "standing") == (
         "looks: standing, smile\nclothes: standnig\nlooks: standing")
+
+
+def test_replace_phrases_in_input_lines_of_the_key_only():
+    text = "looks: dark hair, smile\nbody: dark hair\ndark hair"  # 別のキーとキーなしの文の語句は変えない
+    assert replace_phrases(text, "looks", ["dark hair"], "black hair") == "looks: black hair, smile\nbody: dark hair\ndark hair"
+    assert replace_phrases("looks: a, b, c", "looks", ["c", "a"], "x") == "looks: x, b"  # 1つにまとめる（前の方の位置に）
+    assert replace_phrases("looks: grin, smile", "looks", ["grin"], "smile") == "looks: smile"  # 今ある語句にもまとめられる
+
+
+def test_replace_registered_in_the_chosen_sections_only_and_keeps_groups():
+    shared = register_phrases(empty_shared(), [("girl", "looks", "grin"), ("girl", "looks", "smile"),
+                                               ("guy", "looks", "grin")])
+    shared = group_phrases(shared, "looks", ["grin", "frown"])
+    out = replace_registered(shared, lambda section: section == "girl", "looks", ["grin"], "smile")
+    assert out["phrases"] == [{"section": "girl", "key": "looks", "phrase": "smile"},  # 重なれば1つに
+                              {"section": "guy", "key": "looks", "phrase": "grin"}]
+    assert out["groups"] == [{"key": "looks", "phrases": ["grin", "frown"]}]  # グループは段落をまたぐので変えない
 
 
 def test_group_phrases_extends_the_group_a_phrase_is_in():

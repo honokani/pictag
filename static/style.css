@@ -51,7 +51,7 @@ input[type=text], select, textarea {
 #bulkForm { flex-direction: column; align-items: flex-start; gap: 1px; }
 .bulk-row { display: flex; align-items: center; gap: 6px; }
 #bulkForm select, #bulkForm input, #bulkForm button { box-sizing: border-box; height: 21px; padding-top: 0; padding-bottom: 0; font-size: 12px; }
-#movePhrase { width: 150px; }
+#movePhrase, #moveNew { width: 150px; }
 #moveSection, #moveFrom, #moveTo { max-width: 100px; }
 
 button {
