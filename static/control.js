@@ -1190,7 +1190,7 @@ async function refreshTable() {
 // ---- 英字だけ（キャプションや辞書に入る欄。全角は半角に、日本語などは消す） ----
 
 // キャプションや辞書に入る欄（表の入力欄・一括入力・キーを移す・単語のマークの語句・段落を追加・共用辞書の足す語句と改名）
-const ENGLISH_FIELDS = 'td.cell textarea, #bulkText, #movePhrase, #autoMarkPhrase, #sectionName, #dictAddText, .rename-input';
+const ENGLISH_FIELDS = 'td.cell textarea, #bulkText, #movePhrase, #moveNew, #autoMarkPhrase, #sectionName, #dictAddText, .rename-input';
 // 英字の記号にそろえる文字（全角の英数字・記号・空白は NFKD で半角になる）
 const ENGLISH_MARKS = {'、': ',', '。': '.', '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '\t': ' '};
 
@@ -1944,11 +1944,23 @@ function fillMoveSections() {
     fillMoveKeys();
 }
 
-// 移す先は移す元を除く
-function fillMoveKeys() {
+// 移す先は、移す元と同じキーも選べる（同じキーなら置換）。段落・移す元を選び直して同じキーになるときは、別のキーにする
+function fillMoveKeys(reselected = false) {
     const keys = sectionKeys($('moveSection').value);
     fillOptions($('moveFrom'), keys);
-    fillOptions($('moveTo'), keys.filter(k => k !== $('moveFrom').value));
+    const [from, to] = [$('moveFrom').value, $('moveTo').value];
+    const keep = keys.includes(to) && !(reselected && to === from);
+    fillOptions($('moveTo'), keys, keep ? to : keys.find(k => k !== from) ?? from);
+    showReplace();
+}
+
+// 移す先が移す元と同じキー（置換）
+const replacingMove = () => Boolean($('moveFrom').value) && $('moveTo').value === $('moveFrom').value;
+
+// 置換なら、置換後の語句の欄を出し、ボタンを「置換」にする
+function showReplace() {
+    $('moveNewField').hidden = !replacingMove();
+    $('moveButton').textContent = replacingMove() ? '置換' : '移す';
 }
 
 const moveContext = el => keyPhraseContext(el, $('moveFrom').value);
@@ -1969,6 +1981,28 @@ async function movePhrases() {
     applyDictionary(res.dictionary);
     const where = res.changed ? `開いているプロジェクトの ${res.changed} 行。保存はまだです` : '共用辞書だけ';
     setStatus(`${section} の ${from} の ${phrases.join('・')} を ${to} に移しました（${where}）`, 'ok');
+}
+
+// 置換: その段落（A, B も）のキーの語句を、置換後の語句 1つにする（今ある語句でもよい）。候補を選ぶと行末に付く「, 」は外して送る
+async function replacePhrases() {
+    const [section, key] = [$('moveSection').value, $('moveFrom').value];
+    const phrases = splitPhrases($('movePhrase').value);
+    const to = $('moveNew').value.replace(/[\s,]+$/, '').trim();
+    commitEdit();
+    await settled();
+    const res = await postJson('/replace_phrases', {section, key, phrases, to_phrase: to});
+    if (!res.success) return setStatus(res.message, 'error');
+    for (const el of [$('movePhrase'), $('moveNew')]) {
+        el.value = '';
+        paintWhitespace(el);
+    }
+    if (res.changed) {
+        setDirty(true);
+        await refreshTable();
+    }
+    applyDictionary(res.dictionary);
+    const where = res.changed ? `開いているプロジェクトの ${res.changed} 行。保存はまだです` : '共用辞書だけ';
+    setStatus(`${section} の ${key} の ${phrases.join('・')} を ${to} に置き換えました（${where}）`, 'ok');
 }
 
 // ---- 動詞の形をそろえる（action の見出しの ⇄） ----
@@ -2114,20 +2148,24 @@ function wire() {
     }, true);
     $('moveForm').addEventListener('submit', event => {
         event.preventDefault();
-        guarded(movePhrases)();
+        guarded(replacingMove() ? replacePhrases : movePhrases)();
     });
-    withWhitespaceMarks($('movePhrase'));
-    $('movePhrase').addEventListener('input', () => showSuggestions($('movePhrase'), $('moveSection').value, moveContext));
-    $('movePhrase').addEventListener('keydown', handleSuggestKey);
-    $('movePhrase').addEventListener('blur', hideSuggestions);
+    // 移す語句と置換後の語句の欄: 候補はどちらも、その段落のそのキーの語句
+    for (const el of [$('movePhrase'), $('moveNew')]) {
+        withWhitespaceMarks(el);
+        el.addEventListener('input', () => showSuggestions(el, $('moveSection').value, moveContext));
+        el.addEventListener('keydown', handleSuggestKey);
+        el.addEventListener('blur', hideSuggestions);
+    }
     $('moveSection').addEventListener('change', () => {
-        fillMoveKeys();
+        fillMoveKeys(true);
         hideSuggestions();
     });
     $('moveFrom').addEventListener('change', () => {
-        fillMoveKeys();
+        fillMoveKeys(true);
         hideSuggestions();
     });
+    $('moveTo').addEventListener('change', showReplace);
 
     // 絞り込みのボタン: 押すとその印の行だけ（☓ はその印の無い行だけ）、もう一度押すと外す
     // （設定の無い単語の ①〜⑯ と、その下の ☓ は、絞り込まずに案内だけ）
