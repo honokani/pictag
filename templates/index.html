@@ -94,16 +94,10 @@
 
     <!-- 共用辞書の画面（タブで切り替え）。語句は「キー: 語句」で1行（段落をまたいでまとめる） -->
     <section id="dictTools" class="bar tools" hidden>
-        <span class="group">絞り込み
-            <input id="dictFilter" type="text" placeholder="語句（例: stand）" autocomplete="off" aria-label="語句で絞り込み">
-            <select id="dictKey" aria-label="キーで絞り込み"></select>
-            <!-- キーと kind の絞り込みは、選んだものを出すか、それ以外を出すか（「すべて」のときは使えない） -->
-            <select id="dictKeyMode" aria-label="キーの絞り込み方">
-                <option value="in">対象を表示</option>
-                <option value="out">以外を表示</option>
-            </select>
-            <select id="dictKind" aria-label="kind で絞り込み"></select>
-            <select id="dictKindMode" aria-label="kind の絞り込み方">
+        <!-- 検索: 空白で区切った語の全部が、語句・キー（.looks）・kind（._face など）のどれかにあいまいに合う行（以外を表示なら合わない行） -->
+        <span class="group">
+            <input id="dictFilter" type="text" placeholder="検索（例: .looks stand）" autocomplete="off" aria-label="語句・キー・kind で検索">
+            <select id="dictFilterMode" aria-label="検索に合う行を出すか、合わない行を出すか">
                 <option value="in">対象を表示</option>
                 <option value="out">以外を表示</option>
             </select>

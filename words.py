@@ -156,8 +156,9 @@ def replace_registered(shared, belongs, key, olds, new):
 
 
 def check_phrase(key, phrase):
-    """語句の前後の空白を除いて検証する（カンマ・改行は語句の区切り。キーなしの文の「:」はキーと読まれる）"""
-    phrase = phrase.strip() if isinstance(phrase, str) else ''
+    """語句の前後の空白と頭の「.」を除いて検証する（「.」で始まるのは kind の名前。カンマ・改行は語句の区切り。
+    キーなしの文の「:」はキーと読まれる）"""
+    phrase = re.sub(r'^\.+\s*', '', phrase.strip()) if isinstance(phrase, str) else ''
     if not phrase:
         raise ValueError('語句を入力してください')
     if '\n' in phrase or '\r' in phrase:

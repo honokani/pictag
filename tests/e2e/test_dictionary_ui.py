@@ -65,15 +65,17 @@ def hold(page, button):
 
 
 def group_postures(page):
-    """共用辞書の画面で looks の standing と sitting に kind（1つだけ）を付与して、画像の画面へ戻る"""
+    """共用辞書の画面で looks の standing と sitting に kind .posture（前後の決まりなし・1つだけ）を付与して、画像の画面へ戻る"""
     show_dictionary(page)
-    page.select_option("#dictKey", "looks")
+    page.fill("#dictFilter", ".looks")
     dict_row(page, "looks", "standing").locator(".dict-phrase").click()
     dict_row(page, "looks", "sitting").locator(".dict-phrase").click(modifiers=["Control"])
     page.click("#dictGroupButton")
-    page.click('#groupDialog button[value="ok"]')  # 名前は付けない（番号）。1つだけ
-    expect(dict_row(page, "looks", "standing").locator(".group-badge")).to_have_text("K1")
-    expect(dict_row(page, "looks", "sitting").locator(".group-badge")).to_have_text("K1")
+    page.fill("#groupName", "posture")
+    page.check('#groupDialog input[name="groupAffix"][value=""]')
+    page.click('#groupDialog button[value="ok"]')
+    expect(dict_row(page, "looks", "standing").locator(".group-badge")).to_have_text(".posture")
+    expect(dict_row(page, "looks", "sitting").locator(".group-badge")).to_have_text(".posture")
     show_images(page)
 
 
@@ -103,7 +105,7 @@ def test_filter_by_text_key_and_shared(page, movies):
     expect(page.locator("#dictBody tr")).to_have_count(1)
 
     page.fill("#dictFilter", "")
-    page.select_option("#dictKey", "vibes")
+    page.fill("#dictFilter", ".vibes")
     expect(page.locator("#dictBody .dict-phrase")).to_have_text(["carefree", "cheerful", "dreamy", "romantic", "windy"])
     page.select_option("#dictShared", "in")
     expect(page.locator("#dictBody tr")).to_have_count(0)
@@ -236,7 +238,7 @@ def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
     lalaland.evaluate("el => el.blur()")
     conflict = cell(page, "lalaland.png").locator(".ln.conflict")
     expect(conflict).to_have_text("looks: standing, sitting, dancing")
-    expect(conflict).to_have_attribute("title", "kind K1（1つだけ）: sitting / standing")  # 一覧の並び（abc 順）
+    expect(conflict).to_have_attribute("title", "kind .posture（1つだけ）: sitting / standing")  # 一覧の並び（abc 順）
     expect(page.locator("#gridBody .ln.conflict")).to_have_count(1)
 
 
@@ -251,19 +253,23 @@ def test_face_rows_come_right_after_looks_rows(page, movies):
     assert keys.index("face") == keys.index("looks") + 1 and keys.index("clothes") == keys.index("face") + 1
 
 
-def test_naming_a_group_with_a_postfix_takes_in_phrases_that_end_with_it(page, movies):
-    # kind を付与すると名前の窓が出る（やめると付与しない）。postfix の「 face」なら印は「_ face」で、
-    # 「 face」で終わる語句（crying face）もいつも仲間。印をダブルクリックすると名前を変えられる（空なら番号）
+def test_naming_a_kind_with_a_postfix_takes_in_phrases_that_end_with_it(page, movies):
+    # kind を付与すると窓が出る（やめると付与しない。名前は必ず要る）。postfix の「 face」なら印は「._ face」で、
+    # 「 face」で終わる語句（crying face）もいつも仲間。印をダブルクリックすると名前などを変えられる（名前は外せない）
     for name, text in [("titanic.png", "face: smiling face, crying face"), ("roman_holiday.png", "face: surprised face")]:
         movies.write(movies.row_index(name), text)
     movies.save()
     open_movies(page)
     show_dictionary(page)
-    page.select_option("#dictKey", "face")
+    page.fill("#dictFilter", ".face")
     dict_row(page, "face", "smiling face").locator(".dict-phrase").click()
     dict_row(page, "face", "surprised face").locator(".dict-phrase").click(modifiers=["Control"])
     page.click("#dictGroupButton")
     page.click('#groupDialog button[value="cancel"]')
+    expect(page.locator("#dictBody .group-badge")).to_have_count(0)
+    page.click("#dictGroupButton")
+    page.click('#groupDialog button[value="ok"]')  # 名前が空
+    expect(page.locator("#status")).to_have_text("kind の名前を入れてください")
     expect(page.locator("#dictBody .group-badge")).to_have_count(0)
 
     page.click("#dictGroupButton")
@@ -271,18 +277,19 @@ def test_naming_a_group_with_a_postfix_takes_in_phrases_that_end_with_it(page, m
     page.fill("#groupName", " face")
     page.click('#groupDialog button[value="ok"]')
     for text in ["smiling face", "surprised face", "crying face"]:
-        expect(dict_row(page, "face", text).locator(".group-badge")).to_have_text("_ face")
+        expect(dict_row(page, "face", text).locator(".group-badge")).to_have_text("._ face")
 
     show_images(page)
     expect(cell(page, "titanic.png").locator(".ln.conflict")).to_have_attribute(
-        "title", "kind _ face（「 face」で終わる語句も。1つだけ）: smiling face / surprised face")
+        "title", "kind ._ face（「 face」で終わる語句も。1つだけ）: smiling face / surprised face")
 
     show_dictionary(page)
     dict_row(page, "face", "crying face").locator(".group-badge").dblclick()
     expect(page.locator("#groupName")).to_have_value(" face")
-    page.fill("#groupName", "")
+    page.fill("#groupName", "expression")
+    page.check('#groupDialog input[name="groupAffix"][value=""]')
     page.click('#groupDialog button[value="ok"]')
-    expect(dict_row(page, "face", "smiling face").locator(".group-badge")).to_have_text("K1")
+    expect(dict_row(page, "face", "smiling face").locator(".group-badge")).to_have_text(".expression")
     expect(dict_row(page, "face", "crying face").locator(".group-badge")).to_have_count(0)  # 決まりが無くなれば仲間でない
 
 
@@ -308,7 +315,7 @@ def test_click_selects_one_row_and_ctrl_or_shift_select_more(page, movies):
     # 選んである行をふつうにクリックしても選択はそのままで、最後に選んだ行（右に画像を出す行）がその行になる
     open_movies(page)
     show_dictionary(page)
-    page.select_option("#dictKey", "looks")
+    page.fill("#dictFilter", ".looks")
     rows = page.locator("#dictBody tr")
     expect(rows.nth(2)).to_be_visible()
     selected = page.locator("#dictBody tr.selected")
@@ -328,13 +335,13 @@ def test_click_selects_one_row_and_ctrl_or_shift_select_more(page, movies):
     expect(selected).to_have_count(2)
 
 
-def test_dictionary_rows_sort_and_filter_by_key_and_kind(page, movies):
+def test_dictionary_rows_sort_and_search_tags_and_kinds_together(page, movies):
     # キー・kind・語句の見出しの ▲▼ で並べ替える（同じものをもう一度押すと元の並び。kind の無い行は後ろ）。
-    # キーと kind の絞り込みは「対象を表示 / 以外を表示」を選べる（「すべて」のときは使えない）
+    # 検索の欄は、空白で区切った語の全部が、語句・キー（.looks）・kind（.posture）のどれかにあいまいに合う行（以外を表示なら合わない行）
     open_movies(page)
     group_postures(page)
     show_dictionary(page)
-    page.select_option("#dictKey", "")  # group_postures で looks にしたのを、すべてのキーに戻す
+    page.fill("#dictFilter", "")
     texts = lambda: page.locator("#dictBody tr").evaluate_all("rows => rows.map(r => r.dataset.text)")
     default = texts()
     page.click('#dictGrid button.sort[data-sort="text"][data-dir="-1"]')
@@ -346,15 +353,11 @@ def test_dictionary_rows_sort_and_filter_by_key_and_kind(page, movies):
     assert texts()[:2] == ["sitting", "standing"]  # kind のある行が先（その中は元の並び）
     page.click('#dictGrid button.sort[data-sort="kind"][data-dir="1"]')
 
-    expect(page.locator("#dictKeyMode")).to_be_disabled()
-    page.select_option("#dictKey", "looks")
-    page.select_option("#dictKeyMode", "out")
-    expect(page.locator('#dictBody tr[data-key="looks"]')).to_have_count(0)
-    expect(page.locator("#dictBody tr").first).to_be_visible()
-    page.select_option("#dictKeyMode", "in")
-    page.select_option("#dictKind", label="K1")
-    expect(page.locator("#dictBody tr")).to_have_count(2)
-    page.select_option("#dictKindMode", "out")
+    page.fill("#dictFilter", ".looks stan")
+    expect(page.locator("#dictBody .dict-phrase")).to_have_text(["standing"])
+    page.fill("#dictFilter", ".posture")
+    expect(page.locator("#dictBody .dict-phrase")).to_have_text(["sitting", "standing"])
+    page.select_option("#dictFilterMode", "out")
     expect(page.locator("#dictBody tr .group-badge")).to_have_count(0)
     expect(page.locator("#dictBody tr").first).to_be_visible()
 
@@ -365,14 +368,14 @@ def test_a_kind_from_one_phrase_that_is_not_exclusive_marks_no_conflict(page, mo
     movies.save()
     open_movies(page)
     show_dictionary(page)
-    page.select_option("#dictKey", "body")
+    page.fill("#dictFilter", ".body")
     dict_row(page, "body", "red/long hair").locator(".dict-phrase").click()
     page.click("#dictGroupButton")
     expect(page.locator("#groupExclusive")).to_be_checked()  # 初めは 1つだけ
     page.fill("#groupName", "hair")
     page.uncheck("#groupExclusive")
     page.click('#groupDialog button[value="ok"]')
-    expect(dict_row(page, "body", "wavy hair").locator(".group-badge")).to_have_text("_hair")
+    expect(dict_row(page, "body", "wavy hair").locator(".group-badge")).to_have_text("._hair")
     show_images(page)
     expect(cell(page, "titanic.png").locator(".ln.conflict")).to_have_count(0)
 
