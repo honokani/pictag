@@ -1034,17 +1034,24 @@ function choicesHtml(row) {
         `<div class="choice-row pov"><span class="choice-label">👀</span>${pov}</div></div>`;
 }
 
-// picture の列幅: 🎥 の行の最後のボタン（close-up）の右端 + 10px。ボタンは固定なので、表が見えているときに1回だけ測る
+// picture の列幅: 🎥 の行を1行に並べた幅（最後のボタンの右端 + 10px）の 66%。🎥 のボタンは2段に折り返し、空けた幅は action に足す（--action-extra）
+// 1行の幅は、行の中身（🎥 と組）の幅と間を足して出す（折り返していても同じ）。ボタンは固定なので、表が見えているときに1回だけ測る
 const PICTURE_SPARE = 10;
+const PICTURE_SHARE = 0.66;
 
 function fitPictureColumn() {
     if ($('grid').style.getPropertyValue('--picture-width')) return;
-    const last = [...$('gridBody').querySelectorAll('td.cell[data-section="picture"] .choice-row.camera .choice')].pop();
-    const td = last && last.closest('td');
+    const row = $('gridBody').querySelector('td.cell[data-section="picture"] .choice-row.camera');
+    const td = row && row.closest('td');
     if (!td || td.getBoundingClientRect().width === 0) return;
-    const right = last.getBoundingClientRect().right - td.getBoundingClientRect().left;
+    const items = [...row.children].map(el => el.getBoundingClientRect().width);
+    const line = items.reduce((sum, w) => sum + w, 0) + parseFloat(getComputedStyle(row).columnGap) * (items.length - 1);
+    const left = row.getBoundingClientRect().left - td.getBoundingClientRect().left;
     const border = parseFloat(getComputedStyle(td).borderRightWidth) || 0;
-    $('grid').style.setProperty('--picture-width', `${Math.ceil(right + PICTURE_SPARE + border)}px`);
+    const full = Math.ceil(left + line + PICTURE_SPARE + border);
+    const width = Math.round(full * PICTURE_SHARE);
+    $('grid').style.setProperty('--picture-width', `${width}px`);
+    $('grid').style.setProperty('--action-extra', `${full - width}px`);
 }
 
 // サムネイルは正方形で、picture の欄のキーの名前の行とボタンの高さ（見えている行でいちばん低いもの）に合わせる。表を描くたびに測る

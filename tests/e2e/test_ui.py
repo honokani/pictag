@@ -817,7 +817,7 @@ def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):
 def test_marks_wrap_where_the_editor_wraps(page, imgs):
     load_dir(page, imgs)
     editor = open_editor(page, "a.png", section="action")
-    editor.fill(", ".join(["girl spread arms wide"] * 8))  # 何行にも折り返す長さ
+    editor.fill(", ".join(["girl spread arms wide"] * 12))  # 何行にも折り返す長さ（action の列は picture が空けた幅だけ広い）
     # 印の層を中身の高さにすると、入力欄と同じ高さになる（同じ所で折り返している）
     heights = editor.evaluate("""el => {
         const layer = el.nextElementSibling;

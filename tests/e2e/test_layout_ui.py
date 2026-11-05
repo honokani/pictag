@@ -43,11 +43,16 @@ def overflow(page):
     return page.evaluate("() => $('imagesView').scrollWidth - $('imagesView').clientWidth")
 
 
-def spare_after_close_up(page):
-    """picture の欄の右端（枠線の内側）と、🎥 の行の最後のボタン（ショットの大きさの組の右端）の間"""
-    picture = td(page, 'td.cell[data-section="picture"]').bounding_box()
-    last = td(page, ".choice-row.camera .choice").last.bounding_box()
-    return picture["x"] + picture["width"] - 1 - (last["x"] + last["width"])
+def picture_widths(page):
+    """picture の欄の幅と、🎥 の行を1行に並べたときの幅（ショットの大きさの組の右端 + 10px + 枠線。折り返していても、行の中身の幅を足して出す）"""
+    return page.evaluate("""() => {
+        const td = document.querySelector('#gridBody tr[data-name="a.png"] td.cell[data-section="picture"]');
+        const row = td.querySelector('.choice-row.camera');
+        const items = [...row.children].map(el => el.getBoundingClientRect().width);
+        const line = items.reduce((sum, w) => sum + w, 0) + parseFloat(getComputedStyle(row).columnGap) * (items.length - 1);
+        const left = row.getBoundingClientRect().left - td.getBoundingClientRect().left;
+        return [td.getBoundingClientRect().width, left + line + 10 + parseFloat(getComputedStyle(td).borderRightWidth)];
+    }""")
 
 
 def test_marks_are_four_columns_of_eight(page, imgs):
@@ -67,25 +72,30 @@ def test_marks_are_four_columns_of_eight(page, imgs):
     assert width(td(page, "td.marks")) <= 116  # ボタン4つ分
 
 
-def test_picture_column_ends_10px_after_close_up_and_keeps_its_width_while_editing(page, imgs):
+def test_picture_column_is_66_percent_of_one_camera_line_and_keeps_its_width_while_editing(page, imgs):
+    # 🎥 の行を1行に並べた幅（ショットの大きさの組の右端 + 10px）の 66%。🎥 はショットの大きさの組だけ2段目に折り返す
     load_dir(page, imgs)
-    assert 9.5 <= spare_after_close_up(page) <= 11
-    picture = td(page, 'td.cell[data-section="picture"]')
-    before = width(picture)
-    picture.locator(".text").click()
-    expect(picture.locator("textarea").first).to_be_visible()
-    assert abs(width(picture) - before) < 0.5
+    picture, line = picture_widths(page)
+    assert abs(picture - line * 0.66) <= 1.5
+    groups = [td(page, ".choice-row.camera .group").nth(i).bounding_box()["y"] for i in range(3)]
+    assert abs(groups[1] - groups[0]) < 1 and groups[2] > groups[0] + 10
+    cell = td(page, 'td.cell[data-section="picture"]')
+    cell.locator(".text").click()
+    expect(cell.locator("textarea").first).to_be_visible()
+    assert abs(width(cell) - picture) < 0.5
 
 
 def test_hint_takes_the_rest_of_the_width(page, imgs):
     (imgs / "a.txt").write_text("1girl, solo, smile", encoding="utf-8")
     load_dir(page, imgs)
     assert overflow(page) == 0
-    for section in ["action", "girl", "guy"]:
-        assert round(width(td(page, f'td.cell[data-section="{section}"]'))) == 220, section  # 段落は今までどおり
+    picture, line = picture_widths(page)
+    assert abs(picture - line * 0.66) <= 1.5
+    assert abs(width(td(page, 'td.cell[data-section="action"]')) - (220 + line - picture)) <= 1.5  # picture が空けた幅は action へ
+    for section in ["girl", "guy"]:
+        assert round(width(td(page, f'td.cell[data-section="{section}"]'))) == 220, section  # ほかの段落は今までどおり
     assert round(width(td(page, "td.meta"))) == 56  # token の欄は縮めない
     assert width(td(page, "td.hint")) > 400  # 残りは hint（最小は 220）
-    assert 9.5 <= spare_after_close_up(page) <= 11
 
 
 def test_token_column_shows_the_count_over_the_limit_without_the_file_name(page, imgs):
@@ -125,10 +135,12 @@ def test_thumbnail_keeps_its_size_when_picture_values_are_written(page, imgs):
 def test_without_hint_the_preview_takes_the_rest_of_the_width(page, imgs):
     load_dir(page, imgs)  # hint が無くても、同じ列に preview を出す
     assert overflow(page) == 0
-    for section in ["action", "girl", "guy"]:
-        assert round(width(td(page, f'td.cell[data-section="{section}"]'))) == 220, section  # hint があるときと同じ
+    picture, line = picture_widths(page)
+    assert abs(width(td(page, 'td.cell[data-section="action"]')) - (220 + line - picture)) <= 1.5  # hint があるときと同じ
+    for section in ["girl", "guy"]:
+        assert round(width(td(page, f'td.cell[data-section="{section}"]'))) == 220, section
     assert width(td(page, "td.hint")) > 400  # 残りは preview
-    assert 9.5 <= spare_after_close_up(page) <= 11  # picture は広げない
+    assert abs(picture - line * 0.66) <= 1.5  # picture は広げない
 
 
 def test_thumbnail_zooms_in_with_width_from_unfolded_columns_right_of_picture(page, imgs):
