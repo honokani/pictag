@@ -52,9 +52,11 @@ def plural(word, count):
 
 
 def template_keys(section, templates, fixed_sections):
-    """段落の確定タグのキー（画面の templateKeys と同じ）: 自分の名前の確定タグ。無ければ、固定の段落と else は無し、ほかは subject"""
-    if section in templates:
-        return templates[section]
+    """段落の確定タグのキー（画面の templateKeys と同じ）: 自分の名前の組、無ければ A, B を除いた名前の組（girl B → girl）。
+    どちらも無ければ、固定の段落と else は無し、ほかは subject"""
+    own = next((templates[name] for name in (section, base_name(section)) if name in templates), None)
+    if own is not None:
+        return own
     return [] if section in fixed_sections or base_name(section) == OTHERS else templates.get('subject', [])
 
 

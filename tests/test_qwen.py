@@ -319,7 +319,8 @@ def test_qwen_fill_sends_format_samples_and_image_then_fills_empty_keys(qwen_api
     assert res["row"]["qwen_hint"] == ANSWER  # 表に無い段落（stick figure）も、答えにはそのまま残る
 
     inputs = comfy.prompts[0]["prompt"]["tg"]["inputs"]
-    assert "girl:\n  - looks:\n  - clothes:\n  - body:" in inputs["system_prompt"]
+    assert "girl:\n  - looks:\n  - face:\n  - clothes:\n  - body:" in inputs["system_prompt"]  # face は girl だけ
+    assert "guy:\n  - looks:\n  - clothes:\n  - body:" in inputs["system_prompt"]
     assert sample_numbers(comfy) == list(range(16))  # 上の 16 行のキャプションが見本（表の並びのまま）
     assert inputs["max_length"] > 507  # キャプションの上限より長く書ける
     stem = ASK.removesuffix(".png")
@@ -360,7 +361,7 @@ def test_qwen_fill_sends_what_is_written_but_not_the_previous_draft(qwen_api, co
     assert ("already written. Keep what is written as it is, and fill in the empty parts by looking at the image:\n\n"
             "picture:\n  - place:\n  - characters: 1 girl\n  - vibes:\n  - view: guy POV\n  - extra:\n\n"
             "action:\n\n"  # 直していない Qwen の文も送らない
-            "girl:\n  - looks:\n  - clothes: red dress, hat\n  - body:\n\n"
+            "girl:\n  - looks:\n  - face:\n  - clothes: red dress, hat\n  - body:\n\n"
             "The characters in this image: 1 girl. Use these words for them: girl, she, her.\n\n"
             "Write the caption for this image.") in comfy.prompts[1]["prompt"]["tg"]["inputs"]["prompt"]
 
