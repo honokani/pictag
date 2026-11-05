@@ -1,10 +1,10 @@
 """共用辞書の管理（登録・削除・改名）と「1つだけ」のグループ（関数単体）"""
 import pytest
 
-from groups import blocked_by, group_of, normalize_groups
-from words import (check_phrase, empty_shared, group_phrases, move_phrases, move_registered, register_phrases, register_words,
-                   rename_phrase, rename_registered, replace_phrases, replace_registered, ungroup_phrases, unregister_phrases,
-                   unregister_words)
+from groups import blocked_by, clean_groups, group_of, normalize_groups
+from words import (check_phrase, empty_shared, group_phrases, move_phrases, move_registered, name_group, register_phrases,
+                   register_words, rename_phrase, rename_registered, replace_phrases, replace_registered, ungroup_phrases,
+                   unregister_phrases, unregister_words)
 
 POSTURES = ["standing", "sitting", "lying"]
 SUBJECT_KEYS = ["looks", "clothes", "body"]
@@ -24,14 +24,55 @@ def test_normalize_merges_groups_sharing_a_phrase_and_drops_small_ones():
 
 def test_group_of_and_blocked_by():
     groups = [{"key": "looks", "phrases": POSTURES}]
-    assert group_of(groups, "looks", "sitting") == POSTURES
-    assert group_of(groups, "body", "sitting") == []
+    assert group_of(groups, "looks", "sitting") == groups[0]
+    assert group_of(groups, "body", "sitting") is None
 
     text = "looks: sitting, smile\nclothes: suit"
     assert blocked_by(groups, text, "looks", "standing") == "sitting"
     assert blocked_by(groups, text, "looks", "sitting") is None  # 自分自身とはぶつからない
     assert blocked_by(groups, text, "looks", "eyes closed") is None  # グループの外
     assert blocked_by(groups, "clothes: standing", "looks", "lying") is None  # 別のキーの行
+
+
+FACES = {"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "postfix"}
+EYES = {"key": "eyes", "phrases": ["eyes closed", "eyes open"], "name": "eyes ", "affix": "prefix"}
+
+
+def test_a_group_with_a_postfix_or_prefix_takes_in_every_phrase_that_has_it():
+    # postfix は名前で終わる語句、prefix は名前で始まる語句（同じキー）をいつも仲間にする。名前の空白もそのまま比べる
+    groups = [FACES, EYES]
+    assert group_of(groups, "face", "crying face") == FACES
+    assert group_of(groups, "face", "smileface") is None  # 「 face」で終わらない
+    assert group_of(groups, "looks", "crying face") is None  # 別のキー
+    assert group_of(groups, "eyes", "eyes half closed") == EYES
+    assert blocked_by(groups, "face: crying face, blush", "face", "smiling face") == "crying face"
+    assert blocked_by(groups, "face: smileface", "face", "smiling face") is None
+
+
+def test_normalize_keeps_the_first_name_and_groups_with_a_rule():
+    groups = [FACES,
+              {"key": "face", "phrases": ["smiling face", "grin"], "name": "mouth"},  # 重なれば、先にあった方の名前
+              {"key": "face", "phrases": ["crying face", "pout"]},  # 決まり（ face で終わる）で1つ目と重なる
+              {"key": "eyes", "phrases": ["eyes closed"], "name": "eyes ", "affix": "prefix"}]  # 決まりがあれば語句が1つでも残す
+    assert normalize_groups(groups) == [
+        {"key": "face", "phrases": ["smiling face", "surprised face", "grin", "crying face", "pout"], "name": " face", "affix": "postfix"},
+        {"key": "eyes", "phrases": ["eyes closed"], "name": "eyes ", "affix": "prefix"}]
+
+
+def test_clean_groups_keeps_only_a_valid_name_and_rule():
+    loaded = [FACES, {"key": "body", "phrases": ["x", "y"], "name": 3, "affix": "sideways"}]
+    assert clean_groups(loaded) == [FACES, {"key": "body", "phrases": ["x", "y"]}]
+
+
+def test_group_phrases_with_a_name_and_name_group():
+    shared = group_phrases(empty_shared(), "face", ["smiling face", "surprised face"], " face", "postfix")
+    assert shared["groups"] == [FACES]
+    shared = group_phrases(shared, "face", ["crying face", "pout"])  # 今あるグループ（決まりで重なる）に足すと、名前はそのまま
+    phrases = ["smiling face", "surprised face", "crying face", "pout"]
+    assert shared["groups"] == [{**FACES, "phrases": phrases}]
+    shared = name_group(shared, "face", "pout", "mouth", "")  # 仲間の語句でグループを選び、名前を変える（前後の決まりなし）
+    assert shared["groups"] == [{"key": "face", "phrases": phrases, "name": "mouth"}]
+    assert name_group(shared, "face", "pout", "  ", "postfix")["groups"] == [{"key": "face", "phrases": phrases}]  # 空白だけなら番号
 
 
 def test_register_adds_only_new_entries():

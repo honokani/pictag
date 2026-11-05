@@ -11,7 +11,7 @@ from collections import Counter
 from functools import reduce
 
 from caption_format import parse_line, phrases_of, with_line
-from groups import normalize_groups
+from groups import group_of, normalize_groups
 
 RESERVED_SECTIONS = {'サムネイル', 'is_dead', 'mark', 'marks', 'edited_at'}  # 表の固定列と同じ名前は使えない
 
@@ -97,9 +97,18 @@ def ungroup_phrases(shared, pairs):
     return {**shared, 'groups': normalize_groups(groups)}
 
 
-def group_phrases(shared, key, phrases):
-    """同じキーの語句を「1つだけ」のグループにする（入っているグループがあれば、それとまとめる）"""
-    return {**shared, 'groups': normalize_groups([*shared['groups'], {'key': key, 'phrases': list(phrases)}])}
+def group_phrases(shared, key, phrases, name='', affix=''):
+    """同じキーの語句を「1つだけ」のグループにする（重なるグループがあれば、それとまとめる。名前は先にあった方）。
+    名前と前後の決まり（affix: prefix / postfix）があれば、名前で始まる / 終わる同じキーの語句もいつも仲間にする"""
+    group = {'key': key, 'phrases': list(phrases), 'name': name, 'affix': affix}
+    return {**shared, 'groups': normalize_groups([*shared['groups'], group])}
+
+
+def name_group(shared, key, phrase, name, affix):
+    """phrase の入っているグループ（一覧か前後の決まりで）の名前と前後の決まりを変える（名前が空白だけなら番号に戻す。重なればまとめ直す）"""
+    target = group_of(shared['groups'], key, phrase)
+    renamed = [{'key': g['key'], 'phrases': g['phrases'], 'name': name, 'affix': affix} if g is target else g for g in shared['groups']]
+    return {**shared, 'groups': normalize_groups(renamed)}
 
 
 def unregister_phrases(shared, pairs):
@@ -164,6 +173,18 @@ def check_key(key):
     if not isinstance(key, str) or key != key.strip() or any(ch in key for ch in ',:\n\r'):
         raise ValueError('キーの指定が正しくありません')
     return key
+
+
+def check_group_naming(name, affix):
+    """グループの名前（前後の空白もそのまま使う。空白だけなら番号）と前後の決まり（prefix / postfix / 空）を検証する"""
+    name, affix = name or '', affix or ''
+    if not isinstance(name, str) or any(ord(ch) < 32 for ch in name):
+        raise ValueError('グループの名前に改行やタブは使えません')
+    if len(name) > 40:
+        raise ValueError('グループの名前は 40 文字までです')
+    if affix not in ('', 'prefix', 'postfix'):
+        raise ValueError('前後の決まりは prefix か postfix を選んでください')
+    return name, affix
 
 
 def render_input_line(key, phrases):

@@ -64,16 +64,22 @@ function matchesDictFilter(row) {
     return (!query || row.text.toLowerCase().includes(query)) && okKey && (!shared || (shared === 'in') === row.shared);
 }
 
-const groupIndex = (key, phrase) => state.groups.findIndex(g => g.key === key && g.phrases.includes(phrase));
+// 語句の入っているグループの位置（一覧か前後の決まりで。無ければ -1）
+const groupIndex = (key, phrase) => state.groups.findIndex(g => inGroup(g, key, phrase));
 
+// グループの印（ダブルクリックで名前を変える）
 function groupBadge(i) {
-    const title = `1つだけのグループ: ${state.groups[i].phrases.join(' / ')}`;
-    return `<span class="group-badge g${i % GROUP_COLORS}" title="${escapeHtml(title)}">G${i + 1}</span>`;
+    const g = state.groups[i];
+    return `<span class="group-badge g${i % GROUP_COLORS}" title="${escapeHtml(`${groupTitle(g, i)}（ダブルクリックで名前を変える）`)}">` +
+        `${escapeHtml(groupLabel(g, i))}</span>`;
 }
+
+// キーの列: 単語は（単語）、キーなしの文は action だけで使っていれば action、ほかは（キーなし）
+const dictKeyLabel = row => (row.kind === 'word' ? '（単語）' : row.key || (row.sections.every(s => s === 'action') ? 'action' : '（キーなし）'));
 
 function dictRowHtml(row) {
     const group = row.kind === 'phrase' && row.key ? groupIndex(row.key, row.text) : -1;
-    const key = row.kind === 'word' ? '（単語）' : row.key || '（キーなし）';
+    const key = dictKeyLabel(row);
     const text = dict.renaming === row.id
         ? `<input type="text" class="rename-input" value="${escapeHtml(row.text)}" aria-label="新しい名前" title="Enter で決定、Esc でやめる">`
         : escapeHtml(row.text);
@@ -189,14 +195,46 @@ async function groupSelected() {
     if (rows.some(r => r.kind !== 'phrase' || !r.key)) return setStatus('グループにできるのは、キーのある語句だけです', 'error');
     if (new Set(rows.map(r => r.key)).size > 1) return setStatus('グループにする語句は、同じキーのものを選んでください', 'error');
     if (rows.length < 2) return setStatus('グループにする語句を2つ以上選んでください', 'error');
-    await changeDictionary('/group_phrases', {key: rows[0].key, phrases: rows.map(r => r.text)},
+    // 今あるグループに足すときは、名前を聞かない（そのグループの名前のまま）。新しく作るときは名前の窓を出す（やめたら作らない）
+    const naming = rows.some(r => groupIndex(r.key, r.text) >= 0) ? {} : await askGroupName();
+    if (!naming) return setStatus('グループにするのをやめました', 'ok');
+    await changeDictionary('/group_phrases', {key: rows[0].key, phrases: rows.map(r => r.text), ...naming},
         `${rows[0].key} の ${rows.map(r => r.text).join(' / ')} を、1つだけのグループにしました`);
+}
+
+// グループの名前の窓: 名前（前後の空白もそのまま）と前後の決まりを聞く。決めたら {name, affix}、やめたら null
+function askGroupName(name = '', affix = 'postfix') {
+    const dialog = $('groupDialog');
+    $('groupName').value = name;
+    dialog.querySelector(`input[name="groupAffix"][value="${affix}"]`).checked = true;
+    dialog.returnValue = '';
+    dialog.showModal();
+    return new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'
+        ? {name: $('groupName').value, affix: dialog.querySelector('input[name="groupAffix"]:checked').value} : null), {once: true}));
+}
+
+// 印のダブルクリック: そのグループの名前と前後の決まりを変える（空なら番号に戻す）
+async function renameGroup(tr) {
+    const [key, phrase] = [tr.dataset.key, tr.dataset.text];
+    const i = groupIndex(key, phrase);
+    if (i < 0) return;
+    const g = state.groups[i];
+    const naming = await askGroupName(named(g) ? g.name : '', named(g) ? g.affix || '' : 'postfix');
+    if (!naming) return;
+    await changeDictionary('/name_group', {key, phrase, ...naming},
+        named(naming) ? `グループの名前を ${groupLabel(naming, i)} にしました` : `グループの名前を外しました（${groupLabel({}, i)}）`);
 }
 
 async function ungroupSelected() {
     const rows = selectedDictRows().filter(r => r.kind === 'phrase' && groupIndex(r.key, r.text) >= 0);
     if (!rows.length) return setStatus('選んだ語句は、グループに入っていません', 'error');
-    await changeDictionary('/ungroup_phrases', {phrases: phrasePairs(rows)}, `${rows.length} 件をグループから外しました`);
+    // 前後の決まりで入っている語句は外さない（決まりに合う限り、また仲間になる）
+    const bound = rows.filter(r => followsRule(state.groups[groupIndex(r.key, r.text)], r.text));
+    const free = rows.filter(r => !bound.includes(r));
+    const reason = `${bound.map(r => r.text).join(' / ')} は前後の決まりで入っているので、外せません（グループの名前か前後を変えてください）`;
+    if (!free.length) return setStatus(reason, 'error');
+    await changeDictionary('/ungroup_phrases', {phrases: phrasePairs(free)},
+        `${free.length} 件をグループから外しました${bound.length ? `（${reason}）` : ''}`);
 }
 
 async function addEntry() {
@@ -299,7 +337,12 @@ function wireDictionary() {
             startRename(tr);
             return;
         }
+        if (event.target.closest('.group-badge')) return;  // 印はダブルクリックで名前を変える（選択は変えない）
         clickDictRow(tr, event);
+    });
+    $('dictBody').addEventListener('dblclick', event => {
+        const badge = event.target.closest('.group-badge');
+        if (badge) guarded(renameGroup)(badge.closest('tr'));
     });
     $('dictBody').addEventListener('keydown', event => {
         const input = event.target.closest('.rename-input');

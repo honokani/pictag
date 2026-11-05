@@ -253,16 +253,34 @@ function phrasesByKey(text) {
 
 // ---- 「1つだけ」のグループ（groups.py と同じ規則。1枚の画像の1段落で、同じキーの語句のうち1つだけ） ----
 
-const groupOf = (key, phrase) => state.groups.find(g => g.key === key && g.phrases.includes(phrase));
+// 名前があるか（空白だけは無し）。前後の決まりは名前があるときだけ
+const named = g => typeof g.name === 'string' && g.name.trim() !== '';
+
+// 前後の決まりに合うか（postfix は名前で終わる、prefix は名前で始まる。名前の空白もそのまま比べる）
+const followsRule = (g, phrase) => named(g) && (g.affix === 'postfix' ? phrase.endsWith(g.name) : g.affix === 'prefix' && phrase.startsWith(g.name));
+
+// グループの仲間か（同じキーで、語句の一覧に入っているか、前後の決まりに合う）
+const inGroup = (g, key, phrase) => g.key === key && (g.phrases.includes(phrase) || followsRule(g, phrase));
+
+const groupOf = (key, phrase) => state.groups.find(g => inGroup(g, key, phrase));
 
 // 同じグループの別の語句が、もう入っているか（入っていれば候補に出さない）
 function blockedIn(byKey, key, phrase) {
     const group = groupOf(key, phrase);
-    return Boolean(group) && group.phrases.some(p => p !== phrase && (byKey[key] || []).includes(p));
+    return Boolean(group) && (byKey[key] || []).some(p => p !== phrase && inGroup(group, key, p));
 }
 
-// 語句のうち2つ以上が入っているグループ（ぶつかっている）
-const conflictOf = (key, phrases) => state.groups.find(g => g.key === key && g.phrases.filter(p => phrases.includes(p)).length >= 2);
+// 語句のうち2つ以上が仲間のグループ（ぶつかっている）
+const conflictOf = (key, phrases) => state.groups.find(g => phrases.filter(p => inGroup(g, key, p)).length >= 2);
+
+// グループの印: 名前があれば postfix は _名前、prefix は 名前_、決まりなしは名前のまま。無ければ G1, G2 …（i は並びの位置）
+const groupLabel = (g, i) => (!named(g) ? `G${i + 1}` : g.affix === 'postfix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name);
+
+// グループの説明（印と ⚠ の title）: 名前と前後の決まり、一覧の語句
+function groupTitle(g, i) {
+    const rule = !named(g) ? '' : g.affix === 'postfix' ? `「${g.name}」で終わる語句も` : g.affix === 'prefix' ? `「${g.name}」で始まる語句も` : '';
+    return `1つだけのグループ${named(g) ? ` ${groupLabel(g, i)}` : ''}${rule ? `（${rule}）` : ''}: ${g.phrases.join(' / ')}`;
+}
 
 // ---- あいまい検索（打った文字が順に含まれる語句を拾う。連続・語頭の一致を高く） ----
 
@@ -1107,7 +1125,7 @@ function cellHtml(section, row) {
         }
         const conflict = key ? conflictOf(key, byKey[key] || []) : null;
         const classes = ['ln', phrases.length === 0 ? 'empty' : '', conflict ? 'conflict' : ''].filter(Boolean).join(' ');
-        const title = conflict ? ` title="${escapeHtml(`1つだけのグループ: ${conflict.phrases.join(' / ')}`)}"` : '';
+        const title = conflict ? ` title="${escapeHtml(groupTitle(conflict, state.groups.indexOf(conflict)))}"` : '';
         const body = keyed ? keyValueHtml(key, phrases.length ? line.slice(line.indexOf(':') + 1).trim() : '') : escapeHtml(line.trimEnd());
         return `<div class="${classes}"${title}>${body}</div>`;
     };
@@ -1208,7 +1226,7 @@ async function refreshTable() {
 // ---- 英字だけ（キャプションや辞書に入る欄。全角は半角に、日本語などは消す） ----
 
 // キャプションや辞書に入る欄（表の入力欄・一括入力・キーを移す・単語のマークの語句・段落を追加・共用辞書の足す語句と改名）
-const ENGLISH_FIELDS = 'td.cell textarea, #bulkText, #movePhrase, #moveNew, #autoMarkPhrase, #sectionName, #dictAddText, .rename-input';
+const ENGLISH_FIELDS = 'td.cell textarea, #bulkText, #movePhrase, #moveNew, #autoMarkPhrase, #sectionName, #dictAddText, .rename-input, #groupName';
 // 英字の記号にそろえる文字（全角の英数字・記号・空白は NFKD で半角になる）
 const ENGLISH_MARKS = {'、': ',', '。': '.', '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '\t': ' '};
 
