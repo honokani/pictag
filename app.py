@@ -105,6 +105,12 @@ def write_json(path, data):
 def section_names(df):
     return [c for c in df.columns if c not in FIXED_COLUMNS]
 
+def rewritten(df, belongs, rewrite):
+    """表の、belongs(段落) が真の段落の入力を rewrite(段落, 入力) で書き換えた (前, 後)（その段落の列だけ。行の無い表は列も無し）"""
+    sections = [s for s in section_names(df) if belongs(s)] if 'サムネイル' in df.columns else []
+    before = df[sections].map(to_text)
+    return before, pd.DataFrame({s: before[s].map(lambda text: rewrite(s, text)) for s in sections}, index=before.index, columns=sections)
+
 def with_fixed_sections(sections):
     """固定の段落を先頭に揃える（無ければ足す）"""
     return [*FIXED_SECTIONS, *(s for s in sections if s not in FIXED_SECTIONS)]
@@ -380,14 +386,26 @@ class CaptionTool:
 
         logger.info(f"DataFrame created: {len(self.df)} rows, {len(self.df.columns)} columns")
 
-    def saved_tables(self):
-        """保存済みの他プロジェクトの (段落, 語句の使用回数, 単語の使用回数)。ファイルが変わらなければ読み直さない"""
+    def other_table_paths(self):
+        """保存済みの他プロジェクトの表のパス（今のプロジェクトは画面の表（未保存の入力を含む）を使うので除く）"""
         if not self.data_out_dir.exists():
             return []
+        return [path for path in sorted(self.data_out_dir.glob(f'*/{TABLE_FILE}')) if path.parent.name != self.dir_name]
+
+    def other_tables(self):
+        """保存済みの他プロジェクトの (表のパス, 表)。読めない表は飛ばす"""
+        tables = []
+        for path in self.other_table_paths():
+            try:
+                tables.append((path, read_table(path)))
+            except ValueError as e:
+                logger.warning(str(e))
+        return tables
+
+    def saved_tables(self):
+        """保存済みの他プロジェクトの (段落, 語句の使用回数, 単語の使用回数)。ファイルが変わらなければ読み直さない"""
         results = []
-        for path in sorted(self.data_out_dir.glob(f'*/{TABLE_FILE}')):
-            if path.parent.name == self.dir_name:
-                continue  # 今のプロジェクトは画面の表（未保存の入力を含む）を使う
+        for path in self.other_table_paths():
             mtime = path.stat().st_mtime_ns
             cached = self.saved_cache.get(path)
             if cached is None or cached[0] != mtime:
@@ -402,22 +420,25 @@ class CaptionTool:
             results.append(cached[1:])
         return results
 
+    def usage_here(self):
+        """開いているプロジェクト（画面の表。未保存の入力を含む）の (語句, 単語) の使用回数"""
+        if 'サムネイル' not in self.df.columns:
+            return Counter(), Counter()
+        texts = section_texts(self.df)
+        return count_words(texts), count_sentence_words(texts)
+
     def usage(self):
         """使用中の (語句, 単語) の使用回数（他プロジェクトの保存済みの表 + 今の表）"""
-        phrases, words = Counter(), Counter()
+        phrases, words = self.usage_here()
         for _, saved_phrases, saved_words in self.saved_tables():
             phrases.update(saved_phrases)
             words.update(saved_words)
-        if 'サムネイル' in self.df.columns:
-            texts = section_texts(self.df)
-            phrases.update(count_words(texts))
-            words.update(count_sentence_words(texts))
         return phrases, words
 
     def dictionary(self):
-        """画面に渡す辞書（使用中 + 共用辞書の語句・単語、確定タグ、「1つだけ」のグループ）"""
-        phrases, words = self.usage()
-        return {'phrases': phrase_entries(phrases, self.shared), 'words': word_entries(words, self.shared),
+        """画面に渡す辞書（使用中 + 共用辞書の語句・単語、確定タグ、「1つだけ」のグループ）。here は開いているプロジェクトでの使用回数"""
+        (phrases, words), (here_phrases, here_words) = self.usage(), self.usage_here()
+        return {'phrases': phrase_entries(phrases, self.shared, here_phrases), 'words': word_entries(words, self.shared, here_words),
                 'templates': self.shared['templates'], 'groups': self.shared['groups'],
                 'fixed_sections': FIXED_SECTIONS, 'default_sections': DEFAULT_SECTIONS, 'auto_keys': AUTO_KEYS}
 
@@ -506,7 +527,9 @@ class CaptionTool:
     def move_phrases(self, section, src, dst, phrases):
         """段落 section（A, B を除いた名前が同じ段落すべて）のキー src の語句 phrases を、キー dst へ移す
 
-        開いているプロジェクトの全行（削除済みも）と、共用辞書のその段落の語句を移す。入力を変えた行の数を返す（失敗は None）
+        開いているプロジェクトの全行（削除済みも。保存はまだ）、保存済みの他プロジェクトの全行（すぐ書き直す。前の表は table.json.bak に控える）と、
+        共用辞書のその段落の語句を移す。{changed: 開いているプロジェクトで入力を変えた行の数, other_rows: 他プロジェクトで書き直した行の数,
+        other_projects: 書き直した他プロジェクトの数} を返す（失敗は None）
         """
         self.last_error = ''
         try:
@@ -523,26 +546,42 @@ class CaptionTool:
             self.fail(str(e))
             return None
         belongs = lambda s: base_name(s) == base
+        move = lambda s, text: move_phrases(text, src, dst, phrases, template_keys(s, self.shared['templates'], FIXED_SECTIONS))
         registered = any(belongs(p['section']) and p['key'] == src and p['phrase'] in phrases for p in self.shared['phrases'])
-        sections = [s for s in section_names(self.df) if belongs(s)] if 'サムネイル' in self.df.columns else []
-        before = self.df[sections].map(to_text)
-
-        def moved(s):
-            keys = template_keys(s, self.shared['templates'], FIXED_SECTIONS)
-            return before[s].map(lambda text: move_phrases(text, src, dst, phrases, keys))
-
-        after = pd.DataFrame({s: moved(s) for s in sections}, index=before.index, columns=sections)
+        before, after = rewritten(self.df, belongs, move)
         changed = int((before != after).any(axis=1).sum())
-        if not registered and not changed:
-            self.fail(f'{base} の {src} に「{phrases[0]}」はありません（開いているプロジェクトにも共用辞書にも）')
+        others = []
+        for path, table in self.other_tables():
+            old, new = rewritten(table, belongs, move)
+            rows = (old != new).any(axis=1)
+            if rows.any():
+                table[list(new.columns)] = new
+                others.append((path, table, rows))
+        other_rows = sum(int(rows.sum()) for _, _, rows in others)
+        if not registered and not changed and not other_rows:
+            self.fail(f'{base} の {src} に「{phrases[0]}」はありません（どのプロジェクトにも共用辞書にも）')
             return None
         if registered:
             self.shared = move_registered(self.shared, belongs, src, dst, phrases)
             self.save_shared()
         if changed:
-            self.df[sections] = after
-        logger.info(f"Moved phrases: {base}: {src} -> {dst} {phrases} (rows: {changed})")
-        return changed
+            self.df[list(after.columns)] = after
+        for path, table, rows in others:
+            self.rewrite_saved(path, table, rows)
+        logger.info(f"Moved phrases: {base}: {src} -> {dst} {phrases} (rows: {changed}, other projects: {len(others)}, {other_rows} rows)")
+        return {'changed': changed, 'other_rows': other_rows, 'other_projects': len(others)}
+
+    def rewrite_saved(self, path, table, rows):
+        """保存済みの他プロジェクトの表を書き直す（前の表は table.json.bak に控える）。rows（真の行）のキャプションも書き直す"""
+        auto_marks = read_auto_marks(path)
+        shutil.copy2(path, path.with_name(f'{TABLE_FILE}.bak'))
+        write_json(path, table_to_json(table, auto_marks))
+        sections = section_names(table)
+        for record in table[rows].to_dict('records'):
+            folder = path.parent / ('captions_dead' if to_flag(record['is_dead']) else 'captions')
+            folder.mkdir(exist_ok=True)
+            caption_path = folder / f"{Path(record['サムネイル']).stem}{CAPTION_EXT}"
+            caption_path.write_text(self.caption_of(record, sections), encoding='utf-8', newline='\n')
 
     def replace_phrases(self, section, key, phrases, new):
         """段落 section（A, B を除いた名前が同じ段落すべて）のキー key の語句 phrases を、語句 new 1つにする（今ある語句でもよい）
@@ -1443,12 +1482,13 @@ def rename_entry():
 
 @app.route('/move_phrases', methods=['POST'])
 def move_phrases_route():
-    """キーを移す（{section, from_key, to_key, phrases}）。changed: 開いているプロジェクトで入力を変えた行の数"""
+    """キーを移す（{section, from_key, to_key, phrases}）。changed: 開いているプロジェクトで入力を変えた行の数、
+    other_rows・other_projects: 書き直した保存済みの他プロジェクトの行とプロジェクトの数"""
     data = request.get_json() or {}
-    changed = caption_tool.move_phrases(data.get('section'), data.get('from_key'), data.get('to_key'), data.get('phrases'))
-    if changed is None:
+    moved = caption_tool.move_phrases(data.get('section'), data.get('from_key'), data.get('to_key'), data.get('phrases'))
+    if moved is None:
         return jsonify({'success': False, 'message': caption_tool.last_error})
-    return jsonify({'success': True, 'changed': changed, 'dictionary': caption_tool.dictionary()})
+    return jsonify({'success': True, **moved, 'dictionary': caption_tool.dictionary()})
 
 
 @app.route('/replace_phrases', methods=['POST'])

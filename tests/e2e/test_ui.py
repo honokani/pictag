@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 import app as pictag
-from helpers import caption_of, make_images, word_tokenizer
+from helpers import Api, caption_of, make_images, word_tokenizer
 from tokens import TokenCounter
 
 sync_api = pytest.importorskip("playwright.sync_api")
@@ -257,6 +257,23 @@ def test_messages_show_the_time(page, imgs):
     page.click("#saveButton")
     expect(page.locator("#status")).to_have_text("保存しました")
     expect(page.locator("#statusTime")).to_have_text("14:32:05")  # 出たままでも、いつのメッセージか分かる
+
+
+def test_suggestion_count_is_the_open_project_then_the_others_in_brackets(page, imgs, tmp_path):
+    # 候補の件数は「開いているプロジェクトの件数（ほかのプロジェクトだけの件数）」。ほかに残っているかが分かる
+    other = Api(pictag.app.test_client())
+    other.load(make_images(tmp_path / "imgs" / "other", {"x.png": (64, 64), "y.png": (64, 64)}))
+    for row in range(2):
+        other.write(row, "body: long hair")
+    other.save()
+    load_dir(page, imgs)
+    write(page, "b.png", "body: long hair")
+    page.wait_for_function("() => state.phrases.some(p => p.phrase === 'long hair' && p.count === 3)")  # b.png の分を数え直すまで
+
+    editor = open_editor(page, "a.png")
+    editor.fill("")
+    editor.press_sequentially("body: lh")
+    expect(page.locator("#suggestions li.active .count")).to_have_text("1（2）")
 
 
 def test_suggestion_completes_phrase_of_the_line_key(page, imgs):
