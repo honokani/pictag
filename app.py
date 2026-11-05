@@ -27,7 +27,7 @@ from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks
                    many_numbers, many_text, marks_to_file, matches_pattern, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from verbs import PRESENT, PROGRESSIVE, convert, count_forms, majority, survey
-from words import (AUTO_KEYS, add_phrase, check_group_naming, check_key, check_phrase, check_section_name, count_sentence_words,
+from words import (AUTO_KEYS, add_phrase, check_group_traits, check_key, check_phrase, check_section_name, count_sentence_words,
                    count_words, empty_shared, freeze, group_phrases, move_phrases, move_registered, name_group, phrase_entries, register_phrases,
                    register_words, remove_phrase, rename_phrase, rename_registered, replace_phrases, replace_registered,
                    set_choice, ungroup_phrases, unregister_phrases, unregister_words, word_entries)
@@ -226,7 +226,7 @@ def words_of(items):
     return items
 
 def read_shared(path):
-    """共用辞書を読む（無い・壊れているときは既定の確定タグだけ。ファイルに無い確定タグの組は既定から補う。形の正しくないグループは除く）"""
+    """共用辞書を読む（無い・壊れているときは既定の確定タグだけ。ファイルに無い確定タグの組は既定から補う。形の正しくない kind は除く）"""
     shared = empty_shared()
     if not path.exists():
         return shared
@@ -436,7 +436,7 @@ class CaptionTool:
         return phrases, words
 
     def dictionary(self):
-        """画面に渡す辞書（使用中 + 共用辞書の語句・単語、確定タグ、「1つだけ」のグループ）。here は開いているプロジェクトでの使用回数"""
+        """画面に渡す辞書（使用中 + 共用辞書の語句・単語、確定タグ、kind）。here は開いているプロジェクトでの使用回数"""
         (phrases, words), (here_phrases, here_words) = self.usage(), self.usage_here()
         return {'phrases': phrase_entries(phrases, self.shared, here_phrases), 'words': word_entries(words, self.shared, here_words),
                 'templates': self.shared['templates'], 'groups': self.shared['groups'],
@@ -684,19 +684,19 @@ class CaptionTool:
         logger.info(f"Unified verb forms (rows: {changed})")
         return changed
 
-    def group(self, key, phrases, name='', affix=''):
-        """同じキーの語句を「1つだけ」のグループにする（共用辞書に無い語句は、使っている段落で入れる）。
-        名前と前後の決まり（prefix / postfix）を付けられる（今あるグループとまとまるときは、そのグループの名前のまま）"""
+    def group(self, key, phrases, name='', affix='', exclusive=True):
+        """同じキーの語句に kind を付与する（語句1つでもよい。共用辞書に無い語句は、使っている段落で入れる）。名前・前後の決まり
+        （prefix / postfix）・「1つだけ」を付けられる（今ある kind とまとまるときは、その kind の名前と「1つだけ」のまま）"""
         def change(shared):
             k = check_key(key)
             if not k:
-                raise ValueError('キーのない文はグループにできません')
-            named = check_group_naming(name, affix)
+                raise ValueError('キーのない文には kind を付与できません')
+            named = check_group_traits(name, affix, exclusive)
             if not isinstance(phrases, list) or not all(isinstance(p, str) for p in phrases):
                 raise ValueError('語句の指定が正しくありません')
             wanted = list(dict.fromkeys(phrases))
-            if len(wanted) < 2:
-                raise ValueError('グループにする語句を2つ以上選んでください')
+            if not wanted:
+                raise ValueError('kind を付与する語句を選んでください')
             phrase_usage, _ = self.usage()
             used = [t for t in phrase_usage if t[1] == k and t[2] in wanted]
             known = {t[2] for t in used} | {p['phrase'] for p in shared['phrases'] if p['key'] == k}
@@ -706,18 +706,18 @@ class CaptionTool:
             return group_phrases(register_phrases(shared, used), k, wanted, *named)
         return self.update_shared(change)
 
-    def name_group(self, key, phrase, name, affix):
-        """phrase（一覧か前後の決まりで仲間の語句）の入っているグループの名前と前後の決まりを変える（名前が空白だけなら番号に戻す）"""
+    def name_group(self, key, phrase, name, affix, exclusive=True):
+        """phrase（一覧か前後の決まりで仲間の語句）の入っている kind の名前・前後の決まり・「1つだけ」を変える（名前が空白だけなら番号に戻す）"""
         def change(shared):
             k = check_key(key)
-            named = check_group_naming(name, affix)
+            named = check_group_traits(name, affix, exclusive)
             if not isinstance(phrase, str) or group_of(shared['groups'], k, phrase) is None:
-                raise ValueError('その語句はグループに入っていません')
+                raise ValueError('その語句には kind がありません')
             return name_group(shared, k, phrase, *named)
         return self.update_shared(change)
 
     def ungroup(self, pairs):
-        """語句をグループから外す（語句が1つになったグループは消える）"""
+        """語句を kind から外す（語句も前後の決まりも無くなった kind は消える）"""
         return self.update_shared(lambda shared: ungroup_phrases(shared, pairs_of(pairs)))
 
     def separate_same_stems(self, alive, taken):
@@ -953,7 +953,7 @@ class CaptionTool:
         return True
 
     def add_to_rows(self, rows, section, text):
-        """一括入力で語句を足す。同じグループの別の語句がある行には、その語句を足さない
+        """一括入力で語句を足す。1つだけの kind の別の語句がある行には、その語句を足さない
 
         足さなかった語句のある行の数を返す（失敗は None）
         """
@@ -1062,7 +1062,7 @@ class CaptionTool:
         """行の ①〜⑯ を押す: 単語のマーク（番号 index）の語句（word_mark_phrase）を、その段落のそのキーに足す（キーなしは文の行）
 
         入れる段落は、その段落（A, B を除いた名前）のうち、その行で入力のあるものが1つならそれ、ほかは表で先のもの
-        （Qwen の答えの当て方と同じ）。付いている行と、同じグループの別の語句がある行には入れない。
+        （Qwen の答えの当て方と同じ）。付いている行と、1つだけの kind の別の語句がある行には入れない。
         1行だけに入れたときは、その行の書き換えとして時刻を付ける。(入れた語句, 入れなかった行の数) を返す（失敗は False）
         """
         self.last_error = ''
@@ -1449,7 +1449,7 @@ def serve_image(filename):
 
 @app.route('/get_dictionary')
 def get_dictionary():
-    """辞書（phrases: 語句、words: キーなしの文の単語、templates: 確定タグ、groups: 「1つだけ」のグループ）
+    """辞書（phrases: 語句、words: キーなしの文の単語、templates: 確定タグ、groups: kind）
 
     使用回数の多い順で、共用辞書だけのものは 0 回
     """
@@ -1533,23 +1533,23 @@ def apply_verb_forms_route():
 
 @app.route('/group_phrases', methods=['POST'])
 def group_phrases_api():
-    """同じキーの語句を「1つだけ」のグループにする（{key, phrases, name, affix: prefix / postfix / 空}）"""
+    """同じキーの語句に kind を付与する（{key, phrases, name, affix: prefix / postfix / 空, exclusive: 1つだけ（無ければ真）}）"""
     data = request.get_json() or {}
-    grouped = caption_tool.group(data.get('key'), data.get('phrases'), data.get('name'), data.get('affix'))
-    return dictionary_result(grouped, 'グループにしました')
+    grouped = caption_tool.group(data.get('key'), data.get('phrases'), data.get('name'), data.get('affix'), data.get('exclusive'))
+    return dictionary_result(grouped, 'kind を付与しました')
 
 @app.route('/name_group', methods=['POST'])
 def name_group_api():
-    """グループの名前と前後の決まりを変える（{key, phrase: 仲間の語句, name, affix: prefix / postfix / 空}）"""
+    """kind の名前・前後の決まり・「1つだけ」を変える（{key, phrase: 仲間の語句, name, affix: prefix / postfix / 空, exclusive}）"""
     data = request.get_json() or {}
-    named = caption_tool.name_group(data.get('key'), data.get('phrase'), data.get('name'), data.get('affix'))
-    return dictionary_result(named, 'グループの名前を変えました')
+    named = caption_tool.name_group(data.get('key'), data.get('phrase'), data.get('name'), data.get('affix'), data.get('exclusive'))
+    return dictionary_result(named, 'kind を変えました')
 
 @app.route('/ungroup_phrases', methods=['POST'])
 def ungroup_phrases_api():
-    """語句をグループから外す（{phrases: [{key, phrase}]}）"""
+    """語句を kind から外す（{phrases: [{key, phrase}]}）"""
     data = request.get_json() or {}
-    return dictionary_result(caption_tool.ungroup(data.get('phrases', [])), 'グループから外しました')
+    return dictionary_result(caption_tool.ungroup(data.get('phrases', [])), 'kind から外しました')
 
 @app.route('/freeze', methods=['POST'])
 def freeze_dictionary():
@@ -1657,7 +1657,7 @@ def add_word_mark():
 def add_phrase_to_rows():
     """複数行への一括入力（{rows, section, text}。text は「キー: 語句, 語句」かキーなしの文）
 
-    同じグループの別の語句がある行には足さない（skipped: 足さなかった語句のある行の数）
+    1つだけの kind の別の語句がある行には足さない（skipped: 足さなかった語句のある行の数）
     """
     data = request.get_json() or {}
     rows = data.get('rows')

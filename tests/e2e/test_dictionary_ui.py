@@ -65,15 +65,15 @@ def hold(page, button):
 
 
 def group_postures(page):
-    """共用辞書の画面で looks の standing と sitting を1つだけのグループにして、画像の画面へ戻る"""
+    """共用辞書の画面で looks の standing と sitting に kind（1つだけ）を付与して、画像の画面へ戻る"""
     show_dictionary(page)
     page.select_option("#dictKey", "looks")
     dict_row(page, "looks", "standing").locator(".dict-phrase").click()
-    dict_row(page, "looks", "sitting").locator(".dict-phrase").click()
+    dict_row(page, "looks", "sitting").locator(".dict-phrase").click(modifiers=["Control"])
     page.click("#dictGroupButton")
-    page.click('#groupDialog button[value="ok"]')  # 名前は付けない（番号）
-    expect(dict_row(page, "looks", "standing").locator(".group-badge")).to_have_text("G1")
-    expect(dict_row(page, "looks", "sitting").locator(".group-badge")).to_have_text("G1")
+    page.click('#groupDialog button[value="ok"]')  # 名前は付けない（番号）。1つだけ
+    expect(dict_row(page, "looks", "standing").locator(".group-badge")).to_have_text("K1")
+    expect(dict_row(page, "looks", "sitting").locator(".group-badge")).to_have_text("K1")
     show_images(page)
 
 
@@ -229,14 +229,14 @@ def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
     page.keyboard.press("Escape")
     page.keyboard.press("Escape")
 
-    # 同じグループの語句が2つある行には ⚠（グループの語句を title に出す）
+    # 1つだけの kind の語句が2つある行には ⚠（kind の語句を title に出す）
     cell(page, "lalaland.png").click()
     lalaland = looks_field(page, "lalaland.png")
     lalaland.fill("standing, sitting, dancing")
     lalaland.evaluate("el => el.blur()")
     conflict = cell(page, "lalaland.png").locator(".ln.conflict")
     expect(conflict).to_have_text("looks: standing, sitting, dancing")
-    expect(conflict).to_have_attribute("title", "1つだけのグループ: sitting / standing")  # 一覧の並び（abc 順）
+    expect(conflict).to_have_attribute("title", "kind K1（1つだけ）: sitting / standing")  # 一覧の並び（abc 順）
     expect(page.locator("#gridBody .ln.conflict")).to_have_count(1)
 
 
@@ -252,7 +252,7 @@ def test_face_rows_come_right_after_looks_rows(page, movies):
 
 
 def test_naming_a_group_with_a_postfix_takes_in_phrases_that_end_with_it(page, movies):
-    # 1つだけのグループにすると名前の窓が出る（やめると作らない）。postfix の「 face」なら印は「_ face」で、
+    # kind を付与すると名前の窓が出る（やめると付与しない）。postfix の「 face」なら印は「_ face」で、
     # 「 face」で終わる語句（crying face）もいつも仲間。印をダブルクリックすると名前を変えられる（空なら番号）
     for name, text in [("titanic.png", "face: smiling face, crying face"), ("roman_holiday.png", "face: surprised face")]:
         movies.write(movies.row_index(name), text)
@@ -260,8 +260,8 @@ def test_naming_a_group_with_a_postfix_takes_in_phrases_that_end_with_it(page, m
     open_movies(page)
     show_dictionary(page)
     page.select_option("#dictKey", "face")
-    for text in ["smiling face", "surprised face"]:
-        dict_row(page, "face", text).locator(".dict-phrase").click()
+    dict_row(page, "face", "smiling face").locator(".dict-phrase").click()
+    dict_row(page, "face", "surprised face").locator(".dict-phrase").click(modifiers=["Control"])
     page.click("#dictGroupButton")
     page.click('#groupDialog button[value="cancel"]')
     expect(page.locator("#dictBody .group-badge")).to_have_count(0)
@@ -275,32 +275,106 @@ def test_naming_a_group_with_a_postfix_takes_in_phrases_that_end_with_it(page, m
 
     show_images(page)
     expect(cell(page, "titanic.png").locator(".ln.conflict")).to_have_attribute(
-        "title", "1つだけのグループ _ face（「 face」で終わる語句も）: smiling face / surprised face")
+        "title", "kind _ face（「 face」で終わる語句も。1つだけ）: smiling face / surprised face")
 
     show_dictionary(page)
     dict_row(page, "face", "crying face").locator(".group-badge").dblclick()
     expect(page.locator("#groupName")).to_have_value(" face")
     page.fill("#groupName", "")
     page.click('#groupDialog button[value="ok"]')
-    expect(dict_row(page, "face", "smiling face").locator(".group-badge")).to_have_text("G1")
+    expect(dict_row(page, "face", "smiling face").locator(".group-badge")).to_have_text("K1")
     expect(dict_row(page, "face", "crying face").locator(".group-badge")).to_have_count(0)  # 決まりが無くなれば仲間でない
 
 
 def test_dictionary_columns_fit_their_contents(page, movies):
     # 表は列の幅の合計（画面いっぱいに広げない）。語句 320px・使っている段落 120px、ほかの列は中身の幅（見出しは「回数」「辞書」）。
-    # action だけで使うキーなしの文は、キーの列に action と出す
+    # kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す
     page.set_viewport_size({"width": 1800, "height": 800})
     open_movies(page)
     show_dictionary(page)
     expect(page.locator("#dictBody .dict-key", has_text="action").first).to_be_visible()  # 行を描くまで待つ
     expect(page.locator("#dictBody .dict-key", has_text="（キーなし）")).to_have_count(0)
     heads = page.locator("#dictGrid thead th")
-    expect(heads).to_have_text(["", "キー", "語句", "使っている段落", "回数", "辞書", "グループ", ""])
+    expect(heads).to_have_text(["", "キー▲▼", "kind▲▼", "語句▲▼", "使っている段落", "回数", "辞書", ""])
     widths = heads.evaluate_all("ths => ths.map(th => th.getBoundingClientRect().width)")
-    assert widths[0] <= 30 and widths[1] <= 100  # チェックが入る分だけ / キーは中身の幅
-    assert abs(widths[2] - 320) <= 1 and abs(widths[3] - 120) <= 1
-    assert max(widths[4], widths[5]) <= 50 and widths[7] <= 64  # 「回数」「辞書」と、改名のボタンが入る幅
-    assert page.locator("#dictGrid").bounding_box()["width"] < 1000
+    assert widths[0] <= 30 and widths[1] <= 130 and widths[2] <= 110  # チェックが入る分だけ / キーと kind は中身の幅
+    assert abs(widths[3] - 320) <= 1 and abs(widths[4] - 120) <= 1
+    assert max(widths[5], widths[6]) <= 50 and widths[7] <= 64  # 「回数」「辞書」と、改名のボタンが入る幅
+    assert page.locator("#dictGrid").bounding_box()["width"] < 1100
+
+
+def test_click_selects_one_row_and_ctrl_or_shift_select_more(page, movies):
+    # ふつうのクリックはその行だけを選ぶ。Ctrl（と左端のチェック）で足し引き、Shift で範囲を足す。
+    # 選んである行をふつうにクリックしても選択はそのままで、最後に選んだ行（右に画像を出す行）がその行になる
+    open_movies(page)
+    show_dictionary(page)
+    page.select_option("#dictKey", "looks")
+    rows = page.locator("#dictBody tr")
+    expect(rows.nth(2)).to_be_visible()
+    selected = page.locator("#dictBody tr.selected")
+    rows.nth(0).locator(".dict-phrase").click()
+    rows.nth(1).locator(".dict-phrase").click()
+    expect(selected).to_have_count(1)
+    rows.nth(0).locator(".dict-phrase").click(modifiers=["Control"])
+    expect(selected).to_have_count(2)
+    rows.nth(1).locator(".dict-phrase").click()
+    expect(selected).to_have_count(2)
+    assert page.evaluate("() => dict.focus") == rows.nth(1).get_attribute("data-id")
+    rows.nth(2).locator(".dict-phrase").click()
+    expect(selected).to_have_count(1)
+    rows.nth(0).locator(".dict-phrase").click(modifiers=["Shift"])
+    expect(selected).to_have_count(3)
+    rows.nth(2).locator(".dict-check").click()
+    expect(selected).to_have_count(2)
+
+
+def test_dictionary_rows_sort_and_filter_by_key_and_kind(page, movies):
+    # キー・kind・語句の見出しの ▲▼ で並べ替える（同じものをもう一度押すと元の並び。kind の無い行は後ろ）。
+    # キーと kind の絞り込みは「対象を表示 / 以外を表示」を選べる（「すべて」のときは使えない）
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    page.select_option("#dictKey", "")  # group_postures で looks にしたのを、すべてのキーに戻す
+    texts = lambda: page.locator("#dictBody tr").evaluate_all("rows => rows.map(r => r.dataset.text)")
+    default = texts()
+    page.click('#dictGrid button.sort[data-sort="text"][data-dir="-1"]')
+    assert page.evaluate("""() => { const t = [...document.querySelectorAll('#dictBody tr')].map(r => r.dataset.text);
+        return t.every((x, i) => i === 0 || t[i - 1].localeCompare(x, undefined, {sensitivity: 'base'}) >= 0); }""")
+    page.click('#dictGrid button.sort[data-sort="text"][data-dir="-1"]')
+    assert texts() == default
+    page.click('#dictGrid button.sort[data-sort="kind"][data-dir="1"]')
+    assert texts()[:2] == ["sitting", "standing"]  # kind のある行が先（その中は元の並び）
+    page.click('#dictGrid button.sort[data-sort="kind"][data-dir="1"]')
+
+    expect(page.locator("#dictKeyMode")).to_be_disabled()
+    page.select_option("#dictKey", "looks")
+    page.select_option("#dictKeyMode", "out")
+    expect(page.locator('#dictBody tr[data-key="looks"]')).to_have_count(0)
+    expect(page.locator("#dictBody tr").first).to_be_visible()
+    page.select_option("#dictKeyMode", "in")
+    page.select_option("#dictKind", label="K1")
+    expect(page.locator("#dictBody tr")).to_have_count(2)
+    page.select_option("#dictKindMode", "out")
+    expect(page.locator("#dictBody tr .group-badge")).to_have_count(0)
+    expect(page.locator("#dictBody tr").first).to_be_visible()
+
+
+def test_a_kind_from_one_phrase_that_is_not_exclusive_marks_no_conflict(page, movies):
+    # 語句1つでも kind を付与できる。「1つだけ」を外した kind は、同じ行に仲間が2つあっても ⚠ を付けない
+    movies.write(movies.row_index("titanic.png"), "body: red/long hair, wavy hair")
+    movies.save()
+    open_movies(page)
+    show_dictionary(page)
+    page.select_option("#dictKey", "body")
+    dict_row(page, "body", "red/long hair").locator(".dict-phrase").click()
+    page.click("#dictGroupButton")
+    expect(page.locator("#groupExclusive")).to_be_checked()  # 初めは 1つだけ
+    page.fill("#groupName", "hair")
+    page.uncheck("#groupExclusive")
+    page.click('#groupDialog button[value="ok"]')
+    expect(dict_row(page, "body", "wavy hair").locator(".group-badge")).to_have_text("_hair")
+    show_images(page)
+    expect(cell(page, "titanic.png").locator(".ln.conflict")).to_have_count(0)
 
 
 def test_bulk_add_reports_rows_skipped_by_a_group(page, movies):
@@ -311,7 +385,7 @@ def test_bulk_add_reports_rows_skipped_by_a_group(page, movies):
     page.select_option("#bulkKey", "looks")
     page.fill("#bulkText", "sitting")
     page.click('#bulkForm button[value="add"]')
-    expect(page.locator("#status")).to_have_text("3 行に追加しました（2 行は、同じグループの語句があるので足していません）")
+    expect(page.locator("#status")).to_have_text("3 行に追加しました（2 行は、1つだけの kind の別の語句があるので足していません）")
     expect(line_of(page, "titanic.png", "looks")).to_have_text("looks: standing, eyes closed, smile")
     expect(line_of(page, "roman_holiday.png", "looks")).to_have_text("looks: sitting, smile")
 

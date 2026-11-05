@@ -1,18 +1,21 @@
 // pictag 共用辞書の画面（タブで切り替え）
-// 一覧は「キー: 語句」で1行（段落をまたいでまとめる）と、キーなしの文の単語。登録・削除・改名・「1つだけ」のグループ
+// 一覧は「キー: 語句」で1行（段落をまたいでまとめる）と、キーなしの文の単語。登録・削除・改名・kind
 // control.js の state・通信・表示の小物を使う
 'use strict';
 
 const dict = {
-    rows: [],              // 表示中の行（絞り込み後）
+    rows: [],              // 表示中の行（絞り込み・並べ替えのあと）
     selected: new Set(),   // 行の id
     anchor: null,          // Shift 範囲選択の起点（最後にクリックした行）
+    focus: null,           // 最後に選んだ行の id（右に画像を出す行）
+    sort: null,            // 見出しの ▲▼ の並べ替え {by: key / kind / text, dir: 1 / -1}（無ければ元の並び）
     renaming: null,        // 改名中の行の id
     scroll: 0,             // 画像の画面のスクロール位置（戻ったときに戻す）
 };
 
 const KEYLESS_FILTER = ':keyless';  // キーの絞り込みの「キーなし」「単語」（キーに「:」は無いので重ならない）
 const WORD_FILTER = ':word';
+const NO_KIND = ':none';            // kind の絞り込みの「kind なし」
 const GROUP_COLORS = 6;
 
 // ---- 一覧の行 ----
@@ -55,22 +58,41 @@ function compareRows(a, b) {
     return rankA - rankB || keyA.localeCompare(keyB) || a.text.localeCompare(b.text, undefined, {sensitivity: 'base'});
 }
 
+// 絞り込み: 語句の文字、キーと kind（それぞれ「対象を表示 / 以外を表示」。「すべて」なら絞らない）、共用辞書に入っているか
 function matchesDictFilter(row) {
     const query = $('dictFilter').value.trim().toLowerCase();
-    const key = $('dictKey').value;
-    const shared = $('dictShared').value;
-    const okKey = key === '' || (key === WORD_FILTER ? row.kind === 'word'
-        : key === KEYLESS_FILTER ? row.kind === 'phrase' && !row.key : row.key === key);
-    return (!query || row.text.toLowerCase().includes(query)) && okKey && (!shared || (shared === 'in') === row.shared);
+    const [key, kind, shared] = [$('dictKey').value, $('dictKind').value, $('dictShared').value];
+    const keyHit = key === WORD_FILTER ? row.kind === 'word' : key === KEYLESS_FILTER ? row.kind === 'phrase' && !row.key : row.key === key;
+    const kindHit = kind === NO_KIND ? rowKind(row) < 0 : rowKind(row) === Number(kind);
+    const okKey = key === '' || keyHit === ($('dictKeyMode').value === 'in');
+    const okKind = kind === '' || kindHit === ($('dictKindMode').value === 'in');
+    return (!query || row.text.toLowerCase().includes(query)) && okKey && okKind && (!shared || (shared === 'in') === row.shared);
 }
 
-// 語句の入っているグループの位置（一覧か前後の決まりで。無ければ -1）
-const groupIndex = (key, phrase) => state.groups.findIndex(g => inGroup(g, key, phrase));
+// 並べ替え（見出しの ▲▼）の比べる文字: キーは表示の名前、kind は印の文字（kind の無い行は向きによらず後ろ）、語句。同じなら元の並び
+const SORT_TEXT = {
+    key: row => dictKeyLabel(row),
+    kind: row => (rowKind(row) < 0 ? null : groupLabel(state.groups[rowKind(row)], rowKind(row))),
+    text: row => row.text,
+};
 
-// グループの印（ダブルクリックで名前を変える）
+function sortedRows(rows) {
+    if (!dict.sort) return rows;
+    const text = SORT_TEXT[dict.sort.by];
+    return rows.map((row, i) => ({row, i, t: text(row)}))
+        .sort((a, b) => (a.t === null) - (b.t === null)
+            || (a.t === null ? 0 : dict.sort.dir * a.t.localeCompare(b.t, undefined, {sensitivity: 'base'})) || a.i - b.i)
+        .map(x => x.row);
+}
+
+// 語句の入っている kind の位置（一覧か前後の決まりで。無ければ -1）
+const groupIndex = (key, phrase) => state.groups.findIndex(g => inGroup(g, key, phrase));
+const rowKind = row => (row.kind === 'phrase' && row.key ? groupIndex(row.key, row.text) : -1);
+
+// kind の印（ダブルクリックで名前・前後の決まり・1つだけを変える）
 function groupBadge(i) {
     const g = state.groups[i];
-    return `<span class="group-badge g${i % GROUP_COLORS}" title="${escapeHtml(`${groupTitle(g, i)}（ダブルクリックで名前を変える）`)}">` +
+    return `<span class="group-badge g${i % GROUP_COLORS}" title="${escapeHtml(`${groupTitle(g, i)}（ダブルクリックで変える）`)}">` +
         `${escapeHtml(groupLabel(g, i))}</span>`;
 }
 
@@ -78,7 +100,7 @@ function groupBadge(i) {
 const dictKeyLabel = row => (row.kind === 'word' ? '（単語）' : row.key || (row.sections.every(s => s === 'action') ? 'action' : '（キーなし）'));
 
 function dictRowHtml(row) {
-    const group = row.kind === 'phrase' && row.key ? groupIndex(row.key, row.text) : -1;
+    const group = rowKind(row);
     const key = dictKeyLabel(row);
     const text = dict.renaming === row.id
         ? `<input type="text" class="rename-input" value="${escapeHtml(row.text)}" aria-label="新しい名前" title="Enter で決定、Esc でやめる">`
@@ -88,11 +110,11 @@ function dictRowHtml(row) {
         `data-text="${escapeHtml(row.text)}"${on ? ' class="selected"' : ''}>` +
         `<td><input type="checkbox" class="dict-check"${on ? ' checked' : ''} aria-label="選ぶ"></td>` +
         `<td class="dict-key">${escapeHtml(key)}</td>` +
+        `<td class="dict-group">${group >= 0 ? groupBadge(group) : ''}</td>` +
         `<td class="dict-phrase">${text}</td>` +
         `<td class="dict-sections">${escapeHtml(row.sections.join(', '))}</td>` +
         `<td class="num">${row.count}</td>` +
         `<td class="dict-shared">${row.shared ? '<span class="shared-mark" title="共用辞書に入っている">✓</span>' : ''}</td>` +
-        `<td class="dict-group">${group >= 0 ? groupBadge(group) : ''}</td>` +
         `<td>${row.kind === 'phrase' ? '<button type="button" class="dict-rename">改名</button>' : ''}</td></tr>`;
 }
 
@@ -108,6 +130,22 @@ function fillDictKeyFilter(rows) {
     keepOptions($('dictKey'), [['', 'すべてのキー'], ...keys.map(k => [k, k]), [KEYLESS_FILTER, '（キーなし）'], [WORD_FILTER, '（単語）']]);
 }
 
+// kind の絞り込みの選択肢（すべて・kind なし・各 kind の印）。「対象を表示 / 以外を表示」は「すべて」のとき使えない
+function fillDictKindFilter() {
+    keepOptions($('dictKind'), [['', 'すべての kind'], [NO_KIND, '（kind なし）'], ...state.groups.map((g, i) => [String(i), groupLabel(g, i)])]);
+    $('dictKeyMode').disabled = $('dictKey').value === '';
+    $('dictKindMode').disabled = $('dictKind').value === '';
+}
+
+// 見出しの ▲▼ のうち、今の並べ替えのボタンを目立たせる
+function paintSortButtons() {
+    for (const button of document.querySelectorAll('#dictGrid button.sort')) {
+        const on = Boolean(dict.sort) && dict.sort.by === button.dataset.sort && dict.sort.dir === Number(button.dataset.dir);
+        button.classList.toggle('on', on);
+        button.setAttribute('aria-pressed', String(on));
+    }
+}
+
 // 手で足す語句の段落とキー（一括入力と同じく 段落 → キー）
 function fillDictAdd() {
     const sections = [...new Set([...state.defaultSections, ...state.sections, ...state.phrases.map(p => p.section)])];
@@ -118,18 +156,21 @@ function fillDictAdd() {
 function renderDictionary() {
     const all = dictionaryRows();
     fillDictKeyFilter(all);
+    fillDictKindFilter();
     fillDictAdd();
-    dict.rows = all.filter(matchesDictFilter);
+    dict.rows = sortedRows(all.filter(matchesDictFilter));
     const visible = new Set(dict.rows.map(r => r.id));
     dict.selected = new Set([...dict.selected].filter(id => visible.has(id)));  // 見えなくなった行は選択から外す
+    if (!dict.selected.has(dict.focus)) dict.focus = [...dict.selected].pop() ?? null;
     $('dictBody').innerHTML = dict.rows.map(dictRowHtml).join('');
     $('dictCount').textContent = `${dict.rows.length} 件`;
     $('dictEmpty').hidden = dict.rows.length > 0;
     paintDictSelection();
 }
 
-// ---- 選択（クリック: 足し引き / Shift: 最後にクリックした行からの範囲を足す） ----
+// ---- 選択（クリック: その行だけ / Ctrl と左端のチェック: 足し引き / Shift: 最後にクリックした行からの範囲を足す） ----
 
+// 選んである行をふつうにクリックしたときは、選択はそのままで、最後に選んだ行（dict.focus。右に画像を出す行）だけを変える
 function clickDictRow(tr, event) {
     const id = tr.dataset.id;
     const order = dict.rows.map(r => r.id);
@@ -137,12 +178,14 @@ function clickDictRow(tr, event) {
     const to = order.indexOf(id);
     if (event.shiftKey && from >= 0 && to >= 0) {
         order.slice(Math.min(from, to), Math.max(from, to) + 1).forEach(i => dict.selected.add(i));
-    } else if (dict.selected.has(id)) {
-        dict.selected.delete(id);
-    } else {
-        dict.selected.add(id);
+    } else if (event.ctrlKey || event.metaKey || event.target.closest('.dict-check')) {
+        if (dict.selected.has(id)) dict.selected.delete(id);
+        else dict.selected.add(id);
+    } else if (!dict.selected.has(id)) {
+        dict.selected = new Set([id]);
     }
     dict.anchor = id;
+    dict.focus = dict.selected.has(id) ? id : [...dict.selected].pop() ?? null;
     paintDictSelection();
 }
 
@@ -192,49 +235,51 @@ async function unregisterSelected() {
 
 async function groupSelected() {
     const rows = selectedDictRows();
-    if (rows.some(r => r.kind !== 'phrase' || !r.key)) return setStatus('グループにできるのは、キーのある語句だけです', 'error');
-    if (new Set(rows.map(r => r.key)).size > 1) return setStatus('グループにする語句は、同じキーのものを選んでください', 'error');
-    if (rows.length < 2) return setStatus('グループにする語句を2つ以上選んでください', 'error');
-    // 今あるグループに足すときは、名前を聞かない（そのグループの名前のまま）。新しく作るときは名前の窓を出す（やめたら作らない）
+    if (!rows.length) return setStatus('kind を付与する語句を選んでください', 'error');
+    if (rows.some(r => r.kind !== 'phrase' || !r.key)) return setStatus('kind を付与できるのは、キーのある語句だけです', 'error');
+    if (new Set(rows.map(r => r.key)).size > 1) return setStatus('kind を付与する語句は、同じキーのものを選んでください', 'error');
+    // 今ある kind に足すときは聞かない（その kind のまま）。新しく付与するときは窓で名前・前後の決まり・1つだけを聞く（やめたら付与しない）
     const naming = rows.some(r => groupIndex(r.key, r.text) >= 0) ? {} : await askGroupName();
-    if (!naming) return setStatus('グループにするのをやめました', 'ok');
+    if (!naming) return setStatus('kind の付与をやめました', 'ok');
     await changeDictionary('/group_phrases', {key: rows[0].key, phrases: rows.map(r => r.text), ...naming},
-        `${rows[0].key} の ${rows.map(r => r.text).join(' / ')} を、1つだけのグループにしました`);
+        `${rows[0].key} の ${rows.map(r => r.text).join(' / ')} に kind を付与しました`);
 }
 
-// グループの名前の窓: 名前（前後の空白もそのまま）と前後の決まりを聞く。決めたら {name, affix}、やめたら null
-function askGroupName(name = '', affix = 'postfix') {
+// kind の窓: 名前（前後の空白もそのまま）・前後の決まり・1つだけを聞く。決めたら {name, affix, exclusive}、やめたら null
+function askGroupName(name = '', affix = 'postfix', exclusive = true) {
     const dialog = $('groupDialog');
     $('groupName').value = name;
     dialog.querySelector(`input[name="groupAffix"][value="${affix}"]`).checked = true;
+    $('groupExclusive').checked = exclusive;
     dialog.returnValue = '';
     dialog.showModal();
     return new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'
-        ? {name: $('groupName').value, affix: dialog.querySelector('input[name="groupAffix"]:checked').value} : null), {once: true}));
+        ? {name: $('groupName').value, affix: dialog.querySelector('input[name="groupAffix"]:checked').value,
+            exclusive: $('groupExclusive').checked} : null), {once: true}));
 }
 
-// 印のダブルクリック: そのグループの名前と前後の決まりを変える（空なら番号に戻す）
+// 印のダブルクリック: その kind の名前・前後の決まり・1つだけを変える（名前が空なら番号に戻す）
 async function renameGroup(tr) {
     const [key, phrase] = [tr.dataset.key, tr.dataset.text];
     const i = groupIndex(key, phrase);
     if (i < 0) return;
     const g = state.groups[i];
-    const naming = await askGroupName(named(g) ? g.name : '', named(g) ? g.affix || '' : 'postfix');
+    const naming = await askGroupName(named(g) ? g.name : '', named(g) ? g.affix || '' : 'postfix', exclusiveKind(g));
     if (!naming) return;
     await changeDictionary('/name_group', {key, phrase, ...naming},
-        named(naming) ? `グループの名前を ${groupLabel(naming, i)} にしました` : `グループの名前を外しました（${groupLabel({}, i)}）`);
+        named(naming) ? `kind を ${groupLabel(naming, i)} にしました` : `kind の名前を外しました（${groupLabel({}, i)}）`);
 }
 
 async function ungroupSelected() {
-    const rows = selectedDictRows().filter(r => r.kind === 'phrase' && groupIndex(r.key, r.text) >= 0);
-    if (!rows.length) return setStatus('選んだ語句は、グループに入っていません', 'error');
+    const rows = selectedDictRows().filter(r => rowKind(r) >= 0);
+    if (!rows.length) return setStatus('選んだ語句には kind がありません', 'error');
     // 前後の決まりで入っている語句は外さない（決まりに合う限り、また仲間になる）
-    const bound = rows.filter(r => followsRule(state.groups[groupIndex(r.key, r.text)], r.text));
+    const bound = rows.filter(r => followsRule(state.groups[rowKind(r)], r.text));
     const free = rows.filter(r => !bound.includes(r));
-    const reason = `${bound.map(r => r.text).join(' / ')} は前後の決まりで入っているので、外せません（グループの名前か前後を変えてください）`;
+    const reason = `${bound.map(r => r.text).join(' / ')} は前後の決まりで入っているので、外せません（kind の名前か前後を変えてください）`;
     if (!free.length) return setStatus(reason, 'error');
     await changeDictionary('/ungroup_phrases', {phrases: phrasePairs(free)},
-        `${free.length} 件をグループから外しました${bound.length ? `（${reason}）` : ''}`);
+        `${free.length} 件を kind から外しました${bound.length ? `（${reason}）` : ''}`);
 }
 
 async function addEntry() {
@@ -323,8 +368,16 @@ function wireDictionary() {
         if (state.view === 'dictionary' && dict.renaming === null) renderDictionary();
     });
     $('dictFilter').addEventListener('input', renderDictionary);
-    $('dictKey').addEventListener('change', renderDictionary);
-    $('dictShared').addEventListener('change', renderDictionary);
+    for (const id of ['dictKey', 'dictKeyMode', 'dictKind', 'dictKindMode', 'dictShared']) $(id).addEventListener('change', renderDictionary);
+    // 見出しの ▲▼: その列で並べ替える。同じものをもう一度押すと元の並び
+    document.querySelector('#dictGrid thead').addEventListener('click', event => {
+        const button = event.target.closest('button.sort');
+        if (!button) return;
+        const next = {by: button.dataset.sort, dir: Number(button.dataset.dir)};
+        dict.sort = dict.sort && dict.sort.by === next.by && dict.sort.dir === next.dir ? null : next;
+        paintSortButtons();
+        renderDictionary();
+    });
     $('dictAll').addEventListener('change', () => {
         dict.selected = $('dictAll').checked ? new Set(dict.rows.map(r => r.id)) : new Set();
         paintDictSelection();

@@ -10,15 +10,17 @@ POSTURES = ["standing", "sitting", "lying"]
 SUBJECT_KEYS = ["looks", "clothes", "body"]
 
 
-def test_normalize_merges_groups_sharing_a_phrase_and_drops_small_ones():
+def test_normalize_merges_groups_sharing_a_phrase_and_drops_empty_ones():
     groups = [{"key": "looks", "phrases": ["standing", "sitting"]},
               {"key": "clothes", "phrases": ["suit", "sitting"]},  # 別のキーとはまとめない
               {"key": "looks", "phrases": ["lying", "kneeling"]},
               {"key": "looks", "phrases": ["sitting", "lying"]},  # 1つ目と3つ目をつなぐ
-              {"key": "body", "phrases": ["short hair"]}]  # 語句が1つのグループは消える
+              {"key": "body", "phrases": ["short hair"]},  # 語句が1つの kind も残す
+              {"key": "body", "phrases": []}]  # 語句の無い kind は消える
     assert normalize_groups(groups) == [
         {"key": "looks", "phrases": ["standing", "sitting", "lying", "kneeling"]},
         {"key": "clothes", "phrases": ["suit", "sitting"]},
+        {"key": "body", "phrases": ["short hair"]},
     ]
 
 
@@ -92,7 +94,7 @@ def test_unregister_removes_key_phrase_of_every_section_and_from_groups():
     out = unregister_phrases(shared, [("looks", "standing")])
     assert out["phrases"] == [{"section": "girl", "key": "looks", "phrase": "sitting"},
                               {"section": "girl", "key": "body", "phrase": "standing"}]
-    assert out["groups"] == []  # 語句が1つになったグループは消える
+    assert out["groups"] == [{"key": "looks", "phrases": ["sitting"]}]  # 語句が1つになった kind も残る
 
 
 def test_unregister_words_of_every_section():
@@ -178,11 +180,27 @@ def test_group_phrases_extends_the_group_a_phrase_is_in():
     assert shared["groups"] == [{"key": "looks", "phrases": POSTURES}]
 
 
-def test_ungroup_drops_a_group_left_with_one_phrase():
+def test_ungroup_keeps_a_kind_with_one_phrase_and_drops_an_empty_one():
     shared = group_phrases(empty_shared(), "looks", POSTURES)
-    shared = ungroup_phrases(shared, [("looks", "lying")])
-    assert shared["groups"] == [{"key": "looks", "phrases": ["standing", "sitting"]}]
-    assert ungroup_phrases(shared, [("looks", "sitting")])["groups"] == []
+    shared = ungroup_phrases(shared, [("looks", "lying"), ("looks", "sitting")])
+    assert shared["groups"] == [{"key": "looks", "phrases": ["standing"]}]
+    assert ungroup_phrases(shared, [("looks", "standing")])["groups"] == []
+
+
+def test_a_kind_that_is_not_exclusive_blocks_nothing():
+    # 「1つだけ」でない kind（分類だけ）は、同じ行に仲間があってもぶつからない。「1つだけ」は kind ごと（書いていなければ 1つだけ）
+    hair = {"key": "body", "phrases": ["long hair", "black hair"], "exclusive": False}
+    assert blocked_by([hair], "body: long hair", "body", "black hair") is None
+    assert blocked_by([{"key": "body", "phrases": ["long hair", "black hair"]}], "body: long hair", "body", "black hair") == "long hair"
+    assert clean_groups([hair, {"key": "looks", "phrases": ["a", "b"], "exclusive": "no"}]) == [
+        hair, {"key": "looks", "phrases": ["a", "b"]}]  # 形の正しくない値は 1つだけ のまま
+
+
+def test_group_phrases_and_name_group_set_whether_a_kind_is_exclusive():
+    shared = group_phrases(empty_shared(), "body", ["long hair"], "hair", "postfix", False)  # 語句1つでも kind にできる
+    assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "postfix", "exclusive": False}]
+    shared = name_group(shared, "body", "black hair", "hair", "postfix", True)  # 決まりの仲間で選び、1つだけにする
+    assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "postfix"}]
 
 
 @pytest.mark.parametrize("key, phrase, message", [

@@ -33,7 +33,7 @@ const state = {
     viewChoices: {camera: [], pov: []},  // view のボタン（🎥 の組、👀 の人物ごとの POV）
     phrases: [],          // 辞書の語句 [{section, key, phrase, count, shared}]
     words: [],            // キーなしの文の単語 [{section, word, count, shared}]
-    groups: [],           // 「1つだけ」のグループ [{key, phrases}]（共用辞書）
+    groups: [],           // kind [{key, phrases, name, affix, exclusive}]（共用辞書。中の名前は groups）
     defaultSections: [],  // 新規プロジェクトの段落（共用辞書の画面で語句を足す段落の候補）
     view: 'images',       // 表示中の画面（images / dictionary）
     selected: new Set(),  // 行の index
@@ -251,35 +251,39 @@ function phrasesByKey(text) {
     return byKey;
 }
 
-// ---- 「1つだけ」のグループ（groups.py と同じ規則。1枚の画像の1段落で、同じキーの語句のうち1つだけ） ----
+// ---- kind（groups.py と同じ規則。「1つだけ」の kind は、1枚の画像の1段落に仲間を1つだけ） ----
 
 // 名前があるか（空白だけは無し）。前後の決まりは名前があるときだけ
 const named = g => typeof g.name === 'string' && g.name.trim() !== '';
 
+// 「1つだけ」の kind か（書いていなければ 1つだけ）
+const exclusiveKind = g => g.exclusive !== false;
+
 // 前後の決まりに合うか（postfix は名前で終わる、prefix は名前で始まる。名前の空白もそのまま比べる）
 const followsRule = (g, phrase) => named(g) && (g.affix === 'postfix' ? phrase.endsWith(g.name) : g.affix === 'prefix' && phrase.startsWith(g.name));
 
-// グループの仲間か（同じキーで、語句の一覧に入っているか、前後の決まりに合う）
+// kind の仲間か（同じキーで、語句の一覧に入っているか、前後の決まりに合う）
 const inGroup = (g, key, phrase) => g.key === key && (g.phrases.includes(phrase) || followsRule(g, phrase));
 
 const groupOf = (key, phrase) => state.groups.find(g => inGroup(g, key, phrase));
 
-// 同じグループの別の語句が、もう入っているか（入っていれば候補に出さない）
+// 同じ「1つだけ」の kind の別の語句が、もう入っているか（入っていれば候補に出さない）
 function blockedIn(byKey, key, phrase) {
     const group = groupOf(key, phrase);
-    return Boolean(group) && (byKey[key] || []).some(p => p !== phrase && inGroup(group, key, p));
+    return Boolean(group) && exclusiveKind(group) && (byKey[key] || []).some(p => p !== phrase && inGroup(group, key, p));
 }
 
-// 語句のうち2つ以上が仲間のグループ（ぶつかっている）
-const conflictOf = (key, phrases) => state.groups.find(g => phrases.filter(p => inGroup(g, key, p)).length >= 2);
+// 語句のうち2つ以上が仲間の「1つだけ」の kind（ぶつかっている）
+const conflictOf = (key, phrases) => state.groups.find(g => exclusiveKind(g) && phrases.filter(p => inGroup(g, key, p)).length >= 2);
 
-// グループの印: 名前があれば postfix は _名前、prefix は 名前_、決まりなしは名前のまま。無ければ G1, G2 …（i は並びの位置）
-const groupLabel = (g, i) => (!named(g) ? `G${i + 1}` : g.affix === 'postfix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name);
+// kind の印: 名前があれば postfix は _名前、prefix は 名前_、決まりなしは名前のまま。無ければ K1, K2 …（i は並びの位置）
+const groupLabel = (g, i) => (!named(g) ? `K${i + 1}` : g.affix === 'postfix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name);
 
-// グループの説明（印と ⚠ の title）: 名前と前後の決まり、一覧の語句
+// kind の説明（印と ⚠ の title）: 印、前後の決まりと 1つだけ、一覧の語句
 function groupTitle(g, i) {
     const rule = !named(g) ? '' : g.affix === 'postfix' ? `「${g.name}」で終わる語句も` : g.affix === 'prefix' ? `「${g.name}」で始まる語句も` : '';
-    return `1つだけのグループ${named(g) ? ` ${groupLabel(g, i)}` : ''}${rule ? `（${rule}）` : ''}: ${g.phrases.join(' / ')}`;
+    const notes = [rule, exclusiveKind(g) ? '1つだけ' : ''].filter(Boolean).join('。');
+    return `kind ${groupLabel(g, i)}${notes ? `（${notes}）` : ''}: ${g.phrases.join(' / ')}`;
 }
 
 // ---- あいまい検索（打った文字が順に含まれる語句を拾う。連続・語頭の一致を高く） ----
@@ -394,7 +398,7 @@ function kindOf(section) {
 
 const sameKind = (a, b) => kindOf(a) === kindOf(b);
 
-// キーのある行: 同じ種類の段落でそのキーに使われた語句（打っていなくても使用回数の多い順に出す）。同じグループの語句が入っていれば出さない
+// キーのある行: 同じ種類の段落でそのキーに使われた語句（打っていなくても使用回数の多い順に出す）。同じ「1つだけ」の kind の語句が入っていれば出さない
 function phraseCandidates(section, ctx) {
     return keepBest(state.phrases
         .filter(p => p.key === ctx.key && sameKind(p.section, section) && !ctx.current.includes(p.phrase)
@@ -593,7 +597,7 @@ function refreshWords() {
     }, 100);
 }
 
-// 辞書を受け取る（/get_dictionary と、共用辞書を書き換えた API の応答）。グループが変われば ⚠ を付け直す
+// 辞書を受け取る（/get_dictionary と、共用辞書を書き換えた API の応答）。kind が変われば ⚠ を付け直す
 function applyDictionary(body) {
     const groupsChanged = JSON.stringify(body.groups) !== JSON.stringify(state.groups);
     state.phrases = body.phrases;
@@ -1113,7 +1117,7 @@ const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c
 
 // 欄の表示: 確定タグのキーを並びどおりに、入力欄と同じくキーの名前の下に値を出す。値の無いキーは名前だけ薄く、自動のキー（characters）は自動の値
 // ほかの行（キーの無い文・確定タグに無いキー）は、あれば「その他:」の下に（最後のキーの値の続きに見えないように）。確定タグの無い段落（action・else）は行をそのまま
-// 同じグループの語句が2つ以上ある行には ⚠（CSS）
+// 「1つだけ」の kind の語句が2つ以上ある行には ⚠（CSS）
 function cellHtml(section, row) {
     const keys = templateKeys(section);
     const byKey = phrasesByKey(row.texts[section]);
@@ -1178,7 +1182,7 @@ function renderTable() {
     paintResumeButton();
 }
 
-// 行だけ描き直す（グループが変わったときの ⚠ の付け直し）
+// 行だけ描き直す（kind が変わったときの ⚠ の付け直し）
 function rerenderRows() {
     commitEdit();
     $('gridBody').innerHTML = state.rows.map(rowHtml).join('');
@@ -1512,7 +1516,7 @@ async function bulkEdit(op) {
     setDirty(true);
     refreshWords();
     const done = `${rows.length} 行${op === 'add' ? 'に追加' : 'から削除'}しました`;
-    if (res.skipped) return setStatus(`${done}（${res.skipped} 行は、同じグループの語句があるので足していません）`, 'warn');
+    if (res.skipped) return setStatus(`${done}（${res.skipped} 行は、1つだけの kind の別の語句があるので足していません）`, 'warn');
     setStatus(done, 'ok');
 }
 
@@ -1822,7 +1826,7 @@ function clickMark(button) {
 }
 
 // 行の ①〜⑯: その番号の語句を行に入れる（選択中の行の中で押すと選択中の全行）。* を含む語句は、合う語句のうち件数が最も多いもの
-// （サーバーが決める）。付いている行と、同じグループの別の語句がある行には入れない（付いている行だけなら何もしない）
+// （サーバーが決める）。付いている行と、1つだけの kind の別の語句がある行には入れない（付いている行だけなら何もしない）
 async function putWordMark(span) {
     const i = Number(span.dataset.mark);
     const label = state.markChoices.auto[i];
@@ -1835,11 +1839,11 @@ async function putWordMark(span) {
     if (!res.success) return setStatus(res.message, 'error');
     res.rows.forEach(replaceRow);
     const put = rows.length - res.skipped;
-    if (!put) return setStatus(`${label}: 入れられる行がありませんでした（付いているか、同じグループの語句があります）`, 'warn');
+    if (!put) return setStatus(`${label}: 入れられる行がありませんでした（付いているか、1つだけの kind の別の語句があります）`, 'warn');
     setDirty(true);
     refreshWords();
     const done = `${put} 行に「${res.phrase}」を入れました`;
-    setStatus(res.skipped ? `${done}（${res.skipped} 行は、付いているか同じグループの語句があるので入れていません）` : done,
+    setStatus(res.skipped ? `${done}（${res.skipped} 行は、付いているか1つだけの kind の別の語句があるので入れていません）` : done,
         res.skipped ? 'warn' : 'ok');
 }
 
