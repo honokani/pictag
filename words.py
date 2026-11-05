@@ -52,17 +52,20 @@ def word_id(entry):
     return (entry['section'], entry['word'])
 
 
-def phrase_entries(usage, shared):
-    """使用中の語句と共用辞書の語句（使用回数の多い順。共用辞書だけの語句は 0 回）"""
+def phrase_entries(usage, shared, here=None):
+    """使用中の語句と共用辞書の語句（使用回数の多い順。共用辞書だけの語句は 0 回）。here は開いているプロジェクトでの使用回数"""
+    here = here or {}
     in_shared = {phrase_id(p) for p in shared['phrases']}
-    return [{'section': s, 'key': k, 'phrase': p, 'count': usage.get((s, k, p), 0), 'shared': (s, k, p) in in_shared}
+    return [{'section': s, 'key': k, 'phrase': p, 'count': usage.get((s, k, p), 0), 'here': here.get((s, k, p), 0),
+             'shared': (s, k, p) in in_shared}
             for s, k, p in sorted(set(usage) | in_shared, key=lambda t: (-usage.get(t, 0), t))]
 
 
-def word_entries(usage, shared):
-    """使用中の単語と共用辞書の単語（使用回数の多い順。共用辞書だけの単語は 0 回）"""
+def word_entries(usage, shared, here=None):
+    """使用中の単語と共用辞書の単語（使用回数の多い順。共用辞書だけの単語は 0 回）。here は開いているプロジェクトでの使用回数"""
+    here = here or {}
     in_shared = {word_id(w) for w in shared['words']}
-    return [{'section': s, 'word': w, 'count': usage.get((s, w), 0), 'shared': (s, w) in in_shared}
+    return [{'section': s, 'word': w, 'count': usage.get((s, w), 0), 'here': here.get((s, w), 0), 'shared': (s, w) in in_shared}
             for s, w in sorted(set(usage) | in_shared, key=lambda t: (-usage.get(t, 0), t))]
 
 

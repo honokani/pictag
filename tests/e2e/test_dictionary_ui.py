@@ -294,6 +294,23 @@ def test_move_phrases_of_a_section_to_another_key(page, movies):
     expect(phrase).to_have_value("")
 
 
+def test_move_phrases_also_rewrites_other_projects_and_says_so(page, movies, tmp_path):
+    # ほかの保存済みのプロジェクトの全行もすぐ書き直し、メッセージで伝える（開いているプロジェクトは保存まで書かない）
+    other = Api(pictag.app.test_client())
+    load_scenes(other, tmp_path / "imgs" / "others", ["titanic.png"])
+    other.save()
+    open_movies(page)
+    page.wait_for_function("() => state.phrases.some(p => p.phrase === 'eyes closed')")  # 辞書は表のあとに読む
+    page.select_option("#moveSection", "girl")
+    page.select_option("#moveFrom", "looks")
+    page.locator("#movePhrase").fill("eyes closed")
+    page.select_option("#moveTo", "face")
+    page.click("#moveForm button")
+    expect(page.locator("#status")).to_have_text("girl の looks の eyes closed を face に移しました"
+                                                 "（開いているプロジェクトの 1 行。保存はまだです。ほかの 1 プロジェクトの 1 行は書き換えて保存しました）")
+    expect(line_of(page, "titanic.png", "face")).to_have_text("face: eyes closed")
+
+
 def test_replace_phrases_of_a_section_when_moving_to_the_same_key(page, movies):
     # 「キーを移す」で移す先に同じキーを選ぶと、置換後の語句の欄が出てボタンが「置換」になる。置換後の語句は今ある語句でもよい
     open_movies(page)

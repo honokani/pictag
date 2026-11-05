@@ -159,6 +159,46 @@ def test_move_phrases_rejects_the_same_key_unknown_phrases_or_bad_names(api, tmp
     assert girl_texts(api)["titanic.png"].startswith("looks: standing, eyes closed, smile\n")
 
 
+def saved_girl(base_dir, project, image):
+    """保存済みの表の girl の入力"""
+    table = json.loads((base_dir / "data_out" / project / "table.json").read_text(encoding="utf-8"))
+    return next(r["texts"].get("girl", "") for r in table["rows"] if r["image"] == image)
+
+
+def test_move_phrases_also_rewrites_other_saved_projects_and_keeps_their_previous_table(api, tmp_path, base_dir):
+    # ほかの保存済みのプロジェクトの全行もすぐ書き直す（表とキャプション。前の表は table.json.bak に控える）。
+    # 語句の無いプロジェクトは書かない。開いているプロジェクトは保存まで書かない
+    load_scenes(api, tmp_path / "imgs" / "first", ["titanic.png"])
+    api.save()
+    load_scenes(api, tmp_path / "imgs" / "plain", ["roman_holiday.png"])
+    api.save()
+    load_scenes(api, tmp_path / "imgs" / "open", ["titanic.png"])
+    out = base_dir / "data_out"
+    before = (out / "first" / "table.json").read_text(encoding="utf-8")
+    plain = (out / "plain" / "table.json").stat().st_mtime_ns
+
+    res = api.post("/move_phrases", {"section": "girl", "from_key": "looks", "to_key": "face", "phrases": ["eyes closed"]})
+    assert res["success"] and (res["changed"], res["other_rows"], res["other_projects"]) == (1, 1, 1), res
+    moved = "looks: standing, smile\nface: eyes closed\nclothes: long dress, cardigan\nbody: red/long hair"
+    assert girl_texts(api)["titanic.png"] == moved
+    assert saved_girl(base_dir, "first", "titanic.png") == moved
+    assert "  - face: eyes closed\n" in (out / "first" / "captions" / "titanic.caption").read_text(encoding="utf-8")
+    assert (out / "first" / "table.json.bak").read_text(encoding="utf-8") == before
+    assert (out / "plain" / "table.json").stat().st_mtime_ns == plain and not (out / "plain" / "table.json.bak").exists()
+    table = out / "open" / "table.json"
+    assert not table.exists() or "face: eyes closed" not in table.read_text(encoding="utf-8")
+    assert entry(api, "looks", "eyes closed") == {} and entry(api, "face", "eyes closed") == {"girl": (2, False)}
+
+
+def test_move_phrases_works_when_only_another_project_has_them(api, tmp_path, base_dir):
+    load_scenes(api, tmp_path / "imgs" / "first", ["titanic.png"])
+    api.save()
+    load_scenes(api, tmp_path / "imgs" / "open", ["roman_holiday.png"])
+    res = api.post("/move_phrases", {"section": "girl", "from_key": "looks", "to_key": "face", "phrases": ["eyes closed"]})
+    assert res["success"] and (res["changed"], res["other_rows"], res["other_projects"]) == (0, 1, 1), res
+    assert saved_girl(base_dir, "first", "titanic.png").startswith("looks: standing, smile\nface: eyes closed\n")
+
+
 # ---- キーの中で置き換える（キーを移すで、移す先が移す元と同じキー） ----
 
 def test_replace_phrases_in_sections_of_the_same_name_and_in_shared(api, tmp_path):
