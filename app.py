@@ -16,7 +16,7 @@ import pandas as pd
 from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
-from groups import blocked_by, clean_groups
+from groups import blocked_by, clean_groups, group_of
 from public_samples import SCENES
 from qwen import (DEFAULT_URL, SAMPLE_COUNT, SENTENCE_EXAMPLE, SENTENCE_EXAMPLES, characters_note, clear_drafts, fill_section,
                   generate, jpeg_of, keep_word_marks, match_section, parse_caption, pick_random_samples, pick_samples,
@@ -27,8 +27,8 @@ from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks
                    many_numbers, many_text, marks_to_file, matches_pattern, one_from_file, one_number, one_text, toggle_many)
 from tokens import TOKEN_LIMIT, TokenCounter
 from verbs import PRESENT, PROGRESSIVE, convert, count_forms, majority, survey
-from words import (AUTO_KEYS, add_phrase, check_key, check_phrase, check_section_name, count_sentence_words, count_words,
-                   empty_shared, freeze, group_phrases, move_phrases, move_registered, phrase_entries, register_phrases,
+from words import (AUTO_KEYS, add_phrase, check_group_naming, check_key, check_phrase, check_section_name, count_sentence_words,
+                   count_words, empty_shared, freeze, group_phrases, move_phrases, move_registered, name_group, phrase_entries, register_phrases,
                    register_words, remove_phrase, rename_phrase, rename_registered, replace_phrases, replace_registered,
                    set_choice, ungroup_phrases, unregister_phrases, unregister_words, word_entries)
 
@@ -684,12 +684,14 @@ class CaptionTool:
         logger.info(f"Unified verb forms (rows: {changed})")
         return changed
 
-    def group(self, key, phrases):
-        """同じキーの語句を「1つだけ」のグループにする（共用辞書に無い語句は、使っている段落で入れる）"""
+    def group(self, key, phrases, name='', affix=''):
+        """同じキーの語句を「1つだけ」のグループにする（共用辞書に無い語句は、使っている段落で入れる）。
+        名前と前後の決まり（prefix / postfix）を付けられる（今あるグループとまとまるときは、そのグループの名前のまま）"""
         def change(shared):
             k = check_key(key)
             if not k:
                 raise ValueError('キーのない文はグループにできません')
+            named = check_group_naming(name, affix)
             if not isinstance(phrases, list) or not all(isinstance(p, str) for p in phrases):
                 raise ValueError('語句の指定が正しくありません')
             wanted = list(dict.fromkeys(phrases))
@@ -701,7 +703,17 @@ class CaptionTool:
             unknown = [p for p in wanted if p not in known]
             if unknown:
                 raise ValueError(f'「{k}: {unknown[0]}」は辞書にありません')
-            return group_phrases(register_phrases(shared, used), k, wanted)
+            return group_phrases(register_phrases(shared, used), k, wanted, *named)
+        return self.update_shared(change)
+
+    def name_group(self, key, phrase, name, affix):
+        """phrase（一覧か前後の決まりで仲間の語句）の入っているグループの名前と前後の決まりを変える（名前が空白だけなら番号に戻す）"""
+        def change(shared):
+            k = check_key(key)
+            named = check_group_naming(name, affix)
+            if not isinstance(phrase, str) or group_of(shared['groups'], k, phrase) is None:
+                raise ValueError('その語句はグループに入っていません')
+            return name_group(shared, k, phrase, *named)
         return self.update_shared(change)
 
     def ungroup(self, pairs):
@@ -1521,9 +1533,17 @@ def apply_verb_forms_route():
 
 @app.route('/group_phrases', methods=['POST'])
 def group_phrases_api():
-    """同じキーの語句を「1つだけ」のグループにする（{key, phrases}）"""
+    """同じキーの語句を「1つだけ」のグループにする（{key, phrases, name, affix: prefix / postfix / 空}）"""
     data = request.get_json() or {}
-    return dictionary_result(caption_tool.group(data.get('key'), data.get('phrases')), 'グループにしました')
+    grouped = caption_tool.group(data.get('key'), data.get('phrases'), data.get('name'), data.get('affix'))
+    return dictionary_result(grouped, 'グループにしました')
+
+@app.route('/name_group', methods=['POST'])
+def name_group_api():
+    """グループの名前と前後の決まりを変える（{key, phrase: 仲間の語句, name, affix: prefix / postfix / 空}）"""
+    data = request.get_json() or {}
+    named = caption_tool.name_group(data.get('key'), data.get('phrase'), data.get('name'), data.get('affix'))
+    return dictionary_result(named, 'グループの名前を変えました')
 
 @app.route('/ungroup_phrases', methods=['POST'])
 def ungroup_phrases_api():

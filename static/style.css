@@ -264,11 +264,14 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 .rename-option { margin-left: auto; color: #555; font-size: 12px; }
 #dictView { padding-bottom: 24px; }
 #dictView p { padding: 24px; color: #777; }
+/* 共用辞書の表は列の幅の合計（画面の幅いっぱいに広げない）。語句と使っている段落は幅を決めて折り返し、ほかの列は中身の幅 */
+#dictGrid { min-width: 0; }
 #dictGrid tbody tr { cursor: pointer; }
+#dictGrid th:first-child, #dictGrid td:first-child { padding-left: 2px; padding-right: 2px; }  /* チェックが入る分だけ */
 #dictGrid td.dict-key { color: #555; white-space: nowrap; }
-#dictGrid td.dict-phrase { min-width: 260px; }
+#dictGrid td.dict-phrase { width: 320px; }
 #dictGrid td.dict-phrase input { width: 100%; }
-#dictGrid td.dict-sections { color: #666; font-size: 12px; }
+#dictGrid td.dict-sections { width: 120px; color: #666; font-size: 12px; }
 #dictGrid td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .shared-mark { color: #2e7d32; font-weight: 700; }
 .group-badge { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 12px; color: #fff; background: #6a1b9a; }
@@ -317,7 +320,9 @@ dialog img { display: block; max-width: 88vw; max-height: 80vh; margin: 0 auto; 
 .verb-name { color: #888; font-size: 12px; }
 .verb-mark { color: #b26a00; font-size: 12px; }  /* 迷う文の印 */
 .verb-actions { margin: 8px 0 0; text-align: right; }
-.rename-form { display: grid; gap: 6px; }
+.rename-form, .group-form { display: grid; gap: 6px; }
+#groupName { width: min(20em, 80vw); }
+.group-affix { margin: 0; display: grid; gap: 2px; font-size: 12px; }
 #renameName { width: min(28em, 80vw); }
 .rename-actions { margin: 0; text-align: right; }
 .verb-choice { margin: 6px 0; }  /* 同じ数のとき: どちらにそろえるか */

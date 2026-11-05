@@ -131,7 +131,7 @@
         <table id="dictGrid">
             <thead><tr>
                 <th><input id="dictAll" type="checkbox" aria-label="表示中をすべて選択"></th>
-                <th>キー</th><th>語句</th><th>使っている段落</th><th>使用回数</th><th>共用辞書</th><th>グループ</th><th></th>
+                <th>キー</th><th>語句</th><th>使っている段落</th><th>回数</th><th>辞書</th><th>グループ</th><th></th>
             </tr></thead>
             <tbody id="dictBody"></tbody>
         </table>
@@ -170,6 +170,24 @@
             <input id="renameName" type="text" autocomplete="off" spellcheck="false">
             <p class="rename-actions">
                 <button type="submit" value="rename" class="primary">改名</button>
+                <button type="submit" value="cancel">やめる</button>
+            </p>
+        </form>
+    </dialog>
+
+    <!-- グループの名前: 1つだけのグループを新しく作るときと、印をダブルクリックしたときに開く。postfix / prefix を選ぶと、
+         名前で終わる / 始まる同じキーの語句もいつも仲間になる（名前の前後の空白もそのまま比べる）。空なら番号（G1 …） -->
+    <dialog id="groupDialog" aria-label="グループの名前">
+        <form method="dialog" class="group-form">
+            <label for="groupName">グループの名前（空なら番号。前後の空白もそのまま比べる）</label>
+            <input id="groupName" type="text" autocomplete="off" spellcheck="false">
+            <p class="group-affix">
+                <label><input type="radio" name="groupAffix" value="postfix" checked> postfix（後ろが共通。印は _名前）</label>
+                <label><input type="radio" name="groupAffix" value="prefix"> prefix（前が共通。印は 名前_）</label>
+                <label><input type="radio" name="groupAffix" value=""> そのまま（前後の決まりなし）</label>
+            </p>
+            <p class="rename-actions">
+                <button type="submit" value="ok" class="primary">決める</button>
                 <button type="submit" value="cancel">やめる</button>
             </p>
         </form>

@@ -71,6 +71,7 @@ def group_postures(page):
     dict_row(page, "looks", "standing").locator(".dict-phrase").click()
     dict_row(page, "looks", "sitting").locator(".dict-phrase").click()
     page.click("#dictGroupButton")
+    page.click('#groupDialog button[value="ok"]')  # 名前は付けない（番号）
     expect(dict_row(page, "looks", "standing").locator(".group-badge")).to_have_text("G1")
     expect(dict_row(page, "looks", "sitting").locator(".group-badge")).to_have_text("G1")
     show_images(page)
@@ -248,6 +249,58 @@ def test_face_rows_come_right_after_looks_rows(page, movies):
     expect(dict_row(page, "face", "smile")).to_have_count(1)
     keys = page.locator("#dictBody tr").evaluate_all("rows => [...new Set(rows.map(r => r.dataset.key))]")
     assert keys.index("face") == keys.index("looks") + 1 and keys.index("clothes") == keys.index("face") + 1
+
+
+def test_naming_a_group_with_a_postfix_takes_in_phrases_that_end_with_it(page, movies):
+    # 1つだけのグループにすると名前の窓が出る（やめると作らない）。postfix の「 face」なら印は「_ face」で、
+    # 「 face」で終わる語句（crying face）もいつも仲間。印をダブルクリックすると名前を変えられる（空なら番号）
+    for name, text in [("titanic.png", "face: smiling face, crying face"), ("roman_holiday.png", "face: surprised face")]:
+        movies.write(movies.row_index(name), text)
+    movies.save()
+    open_movies(page)
+    show_dictionary(page)
+    page.select_option("#dictKey", "face")
+    for text in ["smiling face", "surprised face"]:
+        dict_row(page, "face", text).locator(".dict-phrase").click()
+    page.click("#dictGroupButton")
+    page.click('#groupDialog button[value="cancel"]')
+    expect(page.locator("#dictBody .group-badge")).to_have_count(0)
+
+    page.click("#dictGroupButton")
+    expect(page.locator('#groupDialog input[value="postfix"]')).to_be_checked()  # 初めは postfix
+    page.fill("#groupName", " face")
+    page.click('#groupDialog button[value="ok"]')
+    for text in ["smiling face", "surprised face", "crying face"]:
+        expect(dict_row(page, "face", text).locator(".group-badge")).to_have_text("_ face")
+
+    show_images(page)
+    expect(cell(page, "titanic.png").locator(".ln.conflict")).to_have_attribute(
+        "title", "1つだけのグループ _ face（「 face」で終わる語句も）: smiling face / surprised face")
+
+    show_dictionary(page)
+    dict_row(page, "face", "crying face").locator(".group-badge").dblclick()
+    expect(page.locator("#groupName")).to_have_value(" face")
+    page.fill("#groupName", "")
+    page.click('#groupDialog button[value="ok"]')
+    expect(dict_row(page, "face", "smiling face").locator(".group-badge")).to_have_text("G1")
+    expect(dict_row(page, "face", "crying face").locator(".group-badge")).to_have_count(0)  # 決まりが無くなれば仲間でない
+
+
+def test_dictionary_columns_fit_their_contents(page, movies):
+    # 表は列の幅の合計（画面いっぱいに広げない）。語句 320px・使っている段落 120px、ほかの列は中身の幅（見出しは「回数」「辞書」）。
+    # action だけで使うキーなしの文は、キーの列に action と出す
+    page.set_viewport_size({"width": 1800, "height": 800})
+    open_movies(page)
+    show_dictionary(page)
+    expect(page.locator("#dictBody .dict-key", has_text="action").first).to_be_visible()  # 行を描くまで待つ
+    expect(page.locator("#dictBody .dict-key", has_text="（キーなし）")).to_have_count(0)
+    heads = page.locator("#dictGrid thead th")
+    expect(heads).to_have_text(["", "キー", "語句", "使っている段落", "回数", "辞書", "グループ", ""])
+    widths = heads.evaluate_all("ths => ths.map(th => th.getBoundingClientRect().width)")
+    assert widths[0] <= 30 and widths[1] <= 100  # チェックが入る分だけ / キーは中身の幅
+    assert abs(widths[2] - 320) <= 1 and abs(widths[3] - 120) <= 1
+    assert max(widths[4], widths[5]) <= 50 and widths[7] <= 64  # 「回数」「辞書」と、改名のボタンが入る幅
+    assert page.locator("#dictGrid").bounding_box()["width"] < 1000
 
 
 def test_bulk_add_reports_rows_skipped_by_a_group(page, movies):

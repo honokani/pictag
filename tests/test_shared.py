@@ -287,6 +287,33 @@ def test_bulk_add_skips_rows_that_have_a_group_mate(api, tmp_path):
     assert girl["singin_rain.png"] == "looks: sitting"
 
 
+def test_group_with_a_postfix_takes_in_phrases_that_end_with_it(api, tmp_path):
+    # 名前と postfix を付けたグループは、名前で終わる同じキーの語句もいつも仲間（一括入力で足さない）。仲間の語句で選んで名前を変えられる
+    rows = load_scenes(api, movies(tmp_path), COUPLES)
+    for name, text in [("titanic.png", "face: smiling face"), ("roman_holiday.png", "face: surprised face"),
+                       ("lalaland.png", "face: crying face")]:
+        api.write(rows[name], text)
+    res = api.post("/group_phrases", {"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "postfix"})
+    assert res["success"], res
+    assert api.dictionary()["groups"] == [{"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "postfix"}]
+    res = api.bulk_add(list(rows.values()), "face: smiling face")
+    assert res["success"] and res["skipped"] == 2, res  # surprised face と crying face（決まりで仲間）の行には足さない
+    res = api.post("/name_group", {"key": "face", "phrase": "crying face", "name": "", "affix": ""})  # 決まりの仲間で選んでも同じグループ
+    assert res["success"] and api.dictionary()["groups"] == [{"key": "face", "phrases": ["smiling face", "surprised face"]}], res
+
+
+def test_group_rejects_a_bad_name_or_rule(api, tmp_path):
+    rows = load_scenes(api, movies(tmp_path), ["titanic.png", "roman_holiday.png"])
+    api.write(rows["titanic.png"], "face: smiling face")
+    api.write(rows["roman_holiday.png"], "face: surprised face")
+    for naming in [{"name": " face", "affix": "middle"}, {"name": "a\nface", "affix": "postfix"}]:  # 決まりの種類・改名の入った名前
+        res = api.post("/group_phrases", {"key": "face", "phrases": ["smiling face", "surprised face"], **naming})
+        assert not res["success"] and res["message"], naming
+    res = api.post("/name_group", {"key": "face", "phrase": "smiling face", "name": "face", "affix": "postfix"})
+    assert not res["success"] and res["message"], res  # グループに入っていない語句
+    assert api.dictionary()["groups"] == []
+
+
 def test_groups_and_registrations_survive_a_restart(api, tmp_path, base_dir):
     load_scenes(api, movies(tmp_path), ["titanic.png", "roman_holiday.png"])
     api.post("/group_phrases", {"key": "looks", "phrases": ["standing", "sitting"]})
