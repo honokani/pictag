@@ -15,8 +15,10 @@ from groups import normalize_groups
 
 RESERVED_SECTIONS = {'サムネイル', 'is_dead', 'mark', 'marks', 'edited_at'}  # 表の固定列と同じ名前は使えない
 
-# 確定タグ: 段落ごとのキーの並び（空の欄にも出す）。subject は人物などの段落（girl / guy / dog …）すべてに使う
-DEFAULT_TEMPLATES = {'picture': ['place', 'characters', 'vibes', 'view', 'extra'], 'subject': ['looks', 'clothes', 'body']}
+# 確定タグ: 段落ごとのキーの並び（空の欄にも出す）。段落の名前（A, B を除いた名前でも）の組が無い人物などの段落
+# （guy / dog …）には subject を使う。girl だけ face（表情など顔の細部。looks は全体）を looks の次に置く
+DEFAULT_TEMPLATES = {'picture': ['place', 'characters', 'vibes', 'view', 'extra'], 'subject': ['looks', 'clothes', 'body'],
+                     'girl': ['looks', 'face', 'clothes', 'body']}
 AUTO_KEYS = ['characters']  # 自動で作るキー（入力欄には出さない）
 
 WORD = re.compile(r'[^\s,.;:!?"()\[\]]+')  # 単語（girl's のアポストロフィは残す）

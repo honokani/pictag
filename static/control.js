@@ -186,9 +186,11 @@ function tidyInput(text, section) {
 
 const baseName = section => section.replace(/ [A-Z]$/, '');  // guy A → guy（subjects.py の base_name と同じ）
 
-// 段落の確定タグ（キーの並び）。固定の段落は自分の名前で、人物などの段落は subject を使う。else（人物でない物の段落）には無い
+// 段落の確定タグ（キーの並び）: 自分の名前の組、無ければ A, B を除いた名前の組（girl B → girl。subjects.py の template_keys と同じ）。
+// どちらも無ければ、固定の段落と else（人物でない物の段落）は無し、ほかの人物などの段落は subject
 function templateKeys(section) {
-    if (state.templates[section]) return state.templates[section];
+    const own = [section, baseName(section)].find(name => Object.hasOwn(state.templates, name));
+    if (own) return state.templates[own];
     const none = state.fixedSections.includes(section) || baseName(section) === state.othersSection;
     return none ? [] : (state.templates.subject || []);
 }

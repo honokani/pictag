@@ -79,7 +79,8 @@ def test_unreadable_table_is_not_opened(api, tool, imgs, base_dir):
     assert (base_dir / "data_out" / "proj" / "table.json").read_text(encoding="utf-8") == "{broken"
 
 
-DEFAULT_TEMPLATES = {"picture": ["place", "characters", "vibes", "view", "extra"], "subject": ["looks", "clothes", "body"]}
+DEFAULT_TEMPLATES = {"picture": ["place", "characters", "vibes", "view", "extra"], "subject": ["looks", "clothes", "body"],
+                     "girl": ["looks", "face", "clothes", "body"]}  # face（顔の細部）は girl だけ。looks の次
 
 
 def test_words_of_sentences_are_in_dictionary(api, imgs):

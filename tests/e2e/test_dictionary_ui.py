@@ -239,6 +239,17 @@ def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
     expect(page.locator("#gridBody .ln.conflict")).to_have_count(1)
 
 
+def test_face_rows_come_right_after_looks_rows(page, movies):
+    # 確定タグのキーの並び（picture → 人物）。girl だけにある face は、girl の組の並びどおり looks の次
+    movies.write(movies.row_index("titanic.png"), "looks: standing\nface: eyes closed, smile\nclothes: long dress, cardigan")
+    movies.save()
+    open_movies(page)
+    show_dictionary(page)
+    expect(dict_row(page, "face", "smile")).to_have_count(1)
+    keys = page.locator("#dictBody tr").evaluate_all("rows => [...new Set(rows.map(r => r.dataset.key))]")
+    assert keys.index("face") == keys.index("looks") + 1 and keys.index("clothes") == keys.index("face") + 1
+
+
 def test_bulk_add_reports_rows_skipped_by_a_group(page, movies):
     open_movies(page)
     group_postures(page)

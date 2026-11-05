@@ -36,9 +36,17 @@ function dictionaryRows() {
 function keyRank(row) {
     if (row.kind === 'word') return [3, ''];
     if (!row.key) return [2, ''];
-    const template = [...(state.templates.picture || []), ...(state.templates.subject || [])];
-    const at = template.indexOf(row.key);
+    const at = templateOrder().indexOf(row.key);
     return at >= 0 ? [0, String(at).padStart(3, '0')] : [1, row.key];
+}
+
+// 確定タグのキーの並び: 組を順に重ね、まだ無いキーは同じ組の1つ前のキーの次に入れる（subject と girl → looks, face, clothes, body）
+function templateOrder() {
+    return Object.values(state.templates).reduce((order, keys) => keys.reduce((acc, key, i) => {
+        if (acc.includes(key)) return acc;
+        const at = i > 0 ? acc.indexOf(keys[i - 1]) + 1 : acc.length;
+        return [...acc.slice(0, at), key, ...acc.slice(at)];
+    }, order), []);
 }
 
 function compareRows(a, b) {
