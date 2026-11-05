@@ -293,9 +293,9 @@ def test_naming_a_kind_with_a_postfix_takes_in_phrases_that_end_with_it(page, mo
     expect(dict_row(page, "face", "crying face").locator(".group-badge")).to_have_count(0)  # 決まりが無くなれば仲間でない
 
 
-def test_dictionary_columns_fit_their_contents(page, movies):
-    # 表は列の幅の合計（画面いっぱいに広げない）。語句 320px・使っている段落 120px、ほかの列は中身の幅（見出しは「回数」「辞書」）。
-    # kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す
+def test_dictionary_table_takes_the_left_half_and_the_right_half_shows_images_and_kinds(page, movies):
+    # 表は左半分（改名の列の右端が真ん中。語句の列が残りの幅、使っている段落は 120px、ほかの列は中身の幅）。右半分の上に画像、下に kind。
+    # 見出しは「回数」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す
     page.set_viewport_size({"width": 1800, "height": 800})
     open_movies(page)
     show_dictionary(page)
@@ -305,9 +305,52 @@ def test_dictionary_columns_fit_their_contents(page, movies):
     expect(heads).to_have_text(["", "キー▲▼", "kind▲▼", "語句▲▼", "使っている段落", "回数", "辞書", ""])
     widths = heads.evaluate_all("ths => ths.map(th => th.getBoundingClientRect().width)")
     assert widths[0] <= 30 and widths[1] <= 130 and widths[2] <= 110  # チェックが入る分だけ / キーと kind は中身の幅
-    assert abs(widths[3] - 320) <= 1 and abs(widths[4] - 120) <= 1
+    assert widths[3] > 400 and abs(widths[4] - 120) <= 1  # 語句の列が残りの幅
     assert max(widths[5], widths[6]) <= 50 and widths[7] <= 64  # 「回数」「辞書」と、改名のボタンが入る幅
-    assert page.locator("#dictGrid").bounding_box()["width"] < 1100
+    rename = heads.nth(7).bounding_box()
+    assert abs(rename["x"] + rename["width"] - 900) <= 20  # 真ん中（左半分の縦のスクロールバーの分だけ手前）
+    images, kinds = page.locator("#dictImages").bounding_box(), page.locator("#dictKinds").bounding_box()
+    assert abs(images["x"] - 900) <= 2 and abs(kinds["x"] - 900) <= 2 and images["y"] < kinds["y"]  # 右半分の上と下
+
+
+def test_choosing_a_phrase_shows_its_images_and_clicking_one_opens_its_row(page, movies):
+    # 語句の行を選ぶと、開いているプロジェクトでその語句を使っている画像を右上に出す（最後に選んだ行の画像）。
+    # 画像をクリックすると、画像の画面のその行へ
+    open_movies(page)
+    show_dictionary(page)
+    page.fill("#dictFilter", ".looks")
+    thumbs = page.locator("#dictImageList .dict-thumb")
+    expect(thumbs).to_have_count(0)
+    dict_row(page, "looks", "smile").locator(".dict-phrase").click()
+    expect(thumbs).to_have_count(2)
+    assert sorted(thumbs.evaluate_all("els => els.map(e => e.title)")) == ["roman_holiday.png", "titanic.png"]
+    dict_row(page, "looks", "dancing").locator(".dict-phrase").click(modifiers=["Control"])
+    expect(thumbs).to_have_count(1)  # 最後に選んだ行（dancing）の画像
+    dict_row(page, "looks", "smile").locator(".dict-phrase").click()  # 選んである行: 選択はそのままで、画像はその行の
+    expect(thumbs).to_have_count(2)
+    expect(page.locator("#dictBody tr.selected")).to_have_count(2)
+    page.locator('#dictImageList .dict-thumb[title="roman_holiday.png"]').click()
+    expect(page.locator("#imagesView")).to_be_visible()
+    expect(page.locator('#gridBody tr[data-name="roman_holiday.png"]')).to_be_in_viewport()
+
+
+def test_the_kind_list_shows_every_kind_and_jumps_to_its_phrases(page, movies):
+    # 右下に全部の kind（印・仲間の語句・改名）。語句をクリックすると左の表のその行を選ぶ（検索で見えなければ検索を外す）。改名で窓が出る
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    kind = page.locator("#dictKindList .dict-kind").first
+    expect(kind.locator(".group-badge")).to_have_text(".posture")
+    expect(kind.locator(".kind-member")).to_have_text(["sitting", "standing"])
+    page.fill("#dictFilter", ".body")
+    kind.locator(".kind-member", has_text="standing").click()
+    expect(page.locator("#dictFilter")).to_have_value("")
+    expect(page.locator("#dictBody tr.selected")).to_have_attribute("data-text", "standing")
+    kind.locator(".kind-edit").click()
+    expect(page.locator("#groupName")).to_have_value("posture")
+    page.fill("#groupName", "pose")
+    page.click('#groupDialog button[value="ok"]')
+    expect(kind.locator(".group-badge")).to_have_text(".pose")
 
 
 def test_click_selects_one_row_and_ctrl_or_shift_select_more(page, movies):
