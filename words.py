@@ -2,7 +2,7 @@
 
 - 使用中の語句は全プロジェクトの入力から作る。新しい語句は使った時点で入り、どの画像からも消えたら消える
 - 共用辞書（data_work/shared.json）は freeze や登録で語句を入れたもの。使われなくなっても残る。
-  確定タグ（段落ごとのキーの並び）と「1つだけ」のグループ（groups.py）も持つ。削除・改名は「キー: 語句」単位（どの段落のものも）。
+  確定タグ（段落ごとのキーの並び）と kind（groups.py）も持つ。削除・改名は「キー: 語句」単位（どの段落のものも）。
   キーを移す・置換は段落（A, B も）単位
 - キーなしの文（action など）は、文のほかに単語（girl / spread / girl's ...）も辞書に入れる
 """
@@ -91,28 +91,29 @@ def freeze(shared, phrase_usage, word_usage):
 
 
 def ungroup_phrases(shared, pairs):
-    """(キー, 語句) をグループから外す（語句が1つになったグループは消える）"""
+    """(キー, 語句) を kind から外す（語句も前後の決まりも無くなった kind は消える）"""
     out = set(pairs)
     groups = [{**g, 'phrases': [p for p in g['phrases'] if (g['key'], p) not in out]} for g in shared['groups']]
     return {**shared, 'groups': normalize_groups(groups)}
 
 
-def group_phrases(shared, key, phrases, name='', affix=''):
-    """同じキーの語句を「1つだけ」のグループにする（重なるグループがあれば、それとまとめる。名前は先にあった方）。
-    名前と前後の決まり（affix: prefix / postfix）があれば、名前で始まる / 終わる同じキーの語句もいつも仲間にする"""
-    group = {'key': key, 'phrases': list(phrases), 'name': name, 'affix': affix}
+def group_phrases(shared, key, phrases, name='', affix='', exclusive=True):
+    """同じキーの語句に kind を付与する（語句1つでもよい。重なる kind があれば、それとまとめる。名前と「1つだけ」は先にあった方）。
+    名前と前後の決まり（affix: prefix / postfix）があれば、名前で始まる / 終わる同じキーの語句もいつも仲間にする。exclusive は「1つだけ」"""
+    group = {'key': key, 'phrases': list(phrases), 'name': name, 'affix': affix, 'exclusive': exclusive}
     return {**shared, 'groups': normalize_groups([*shared['groups'], group])}
 
 
-def name_group(shared, key, phrase, name, affix):
-    """phrase の入っているグループ（一覧か前後の決まりで）の名前と前後の決まりを変える（名前が空白だけなら番号に戻す。重なればまとめ直す）"""
+def name_group(shared, key, phrase, name, affix, exclusive=True):
+    """phrase の入っている kind（一覧か前後の決まりで）の名前・前後の決まり・「1つだけ」を変える（名前が空白だけなら番号に戻す。重なればまとめ直す）"""
     target = group_of(shared['groups'], key, phrase)
-    renamed = [{'key': g['key'], 'phrases': g['phrases'], 'name': name, 'affix': affix} if g is target else g for g in shared['groups']]
+    renamed = [{'key': g['key'], 'phrases': g['phrases'], 'name': name, 'affix': affix, 'exclusive': exclusive} if g is target else g
+               for g in shared['groups']]
     return {**shared, 'groups': normalize_groups(renamed)}
 
 
 def unregister_phrases(shared, pairs):
-    """(キー, 語句) を共用辞書から消す（どの段落のものも）。グループからも外す"""
+    """(キー, 語句) を共用辞書から消す（どの段落のものも）。kind からも外す"""
     out = set(pairs)
     kept = [p for p in shared['phrases'] if (p['key'], p['phrase']) not in out]
     return ungroup_phrases({**shared, 'phrases': kept}, out)
@@ -125,7 +126,7 @@ def unregister_words(shared, words):
 
 
 def rename_registered(shared, key, old, new):
-    """共用辞書の「key: old」を new にする（どの段落のものも。重なれば1つに）。グループの中の名前も変える"""
+    """共用辞書の「key: old」を new にする（どの段落のものも。重なれば1つに）。kind の中の名前も変える"""
     def rename(phrase):
         return new if phrase == old else phrase
 
@@ -135,7 +136,7 @@ def rename_registered(shared, key, old, new):
 
 
 def move_registered(shared, belongs, src, dst, phrases):
-    """共用辞書の、belongs(段落) が真の段落の「src: 語句」（phrases）を「dst: 語句」にする（重なれば1つに）。グループはそのまま"""
+    """共用辞書の、belongs(段落) が真の段落の「src: 語句」（phrases）を「dst: 語句」にする（重なれば1つに）。kind はそのまま"""
     moving = set(phrases)
 
     def move(p):
@@ -145,7 +146,7 @@ def move_registered(shared, belongs, src, dst, phrases):
 
 
 def replace_registered(shared, belongs, key, olds, new):
-    """共用辞書の、belongs(段落) が真の段落の「key: 語句」（olds）を「key: new」にする（重なれば1つに）。グループはそのまま"""
+    """共用辞書の、belongs(段落) が真の段落の「key: 語句」（olds）を「key: new」にする（重なれば1つに）。kind はそのまま"""
     replacing = set(olds)
 
     def replace(p):
@@ -175,16 +176,18 @@ def check_key(key):
     return key
 
 
-def check_group_naming(name, affix):
-    """グループの名前（前後の空白もそのまま使う。空白だけなら番号）と前後の決まり（prefix / postfix / 空）を検証する"""
+def check_group_traits(name, affix, exclusive):
+    """kind の名前（前後の空白もそのまま使う。空白だけなら番号）・前後の決まり（prefix / postfix / 空）・「1つだけ」（真偽。無ければ真）を検証する"""
     name, affix = name or '', affix or ''
     if not isinstance(name, str) or any(ord(ch) < 32 for ch in name):
-        raise ValueError('グループの名前に改行やタブは使えません')
+        raise ValueError('kind の名前に改行やタブは使えません')
     if len(name) > 40:
-        raise ValueError('グループの名前は 40 文字までです')
+        raise ValueError('kind の名前は 40 文字までです')
     if affix not in ('', 'prefix', 'postfix'):
         raise ValueError('前後の決まりは prefix か postfix を選んでください')
-    return name, affix
+    if exclusive is not None and not isinstance(exclusive, bool):
+        raise ValueError('「1つだけ」の指定が正しくありません')
+    return name, affix, exclusive is not False
 
 
 def render_input_line(key, phrases):

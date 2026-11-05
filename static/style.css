@@ -268,6 +268,9 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 #dictGrid { min-width: 0; }
 #dictGrid tbody tr { cursor: pointer; }
 #dictGrid th:first-child, #dictGrid td:first-child { padding-left: 2px; padding-right: 2px; }  /* チェックが入る分だけ */
+#dictGrid th { white-space: nowrap; }
+#dictGrid th .sort { border: none; background: none; padding: 0 1px; font-size: 10px; color: #bbb; cursor: pointer; }  /* 見出しの ▲▼ */
+#dictGrid th .sort.on { color: #1a73e8; }
 #dictGrid td.dict-key { color: #555; white-space: nowrap; }
 #dictGrid td.dict-phrase { width: 320px; }
 #dictGrid td.dict-phrase input { width: 100%; }

@@ -5,7 +5,7 @@
 
 ## 主な特徴
 - 段落ごとの確定タグ（looks / clothes / body など）を空の欄にも出し、characters（1 girl + 1 guy など）は自動で作る
-- 入力欄で、辞書からあいまい検索の候補（語句・単語）を出す。共用辞書と「1つだけ」のグループを管理できる
+- 入力欄で、辞書からあいまい検索の候補（語句・単語）を出す。共用辞書と kind（2階のタグ）を管理できる
 - 複数行への一括入力と、作業用のマーク（A〜H・★●▲■◆♥♣♠、決めた語句のある行に付く単語の ①〜⑯）での絞り込み
 - view のボタン（🎥 向き・高さ・ショットの大きさ、👀 POV）
 - 右端の列に hint（画像と同じ名前の .txt）か、書き出す文面の preview を出す
@@ -40,7 +40,7 @@ data_out/<フォルダ名>/tgt_path.txt                # 画像ディレクト�
 data_work/<フォルダ名>/                           # サムネイル
 data_work/<フォルダ名>/qwen/<画像名>.txt           # Qwen の答え（qwen 版の 🤖。右端の列の hint_by_qwen で見る）
 data_work/<フォルダ名>/qwen/<画像名>.json          # Qwen が欄に入れたもの（押し直したときに置き換える下書き）
-data_work/shared.json                            # 共用辞書（語句・単語、確定タグ、1つだけのグループ。全プロジェクト共通）
+data_work/shared.json                            # 共用辞書（語句・単語、確定タグ、kind。全プロジェクト共通）
 data_work/tokenizer/qwen3vl_tokenizer.json        # トークン数を数えるトークナイザー
 ```
 
@@ -69,7 +69,7 @@ uv run pytest -m "not e2e"    # ブラウザを使うテストを除く
 app.py             # Flask サーバー本体（表・保存・API）
 caption_format.py  # 段落の入力 → キャプション
 words.py           # 使用中の語句（辞書）、共用辞書の登録・削除・改名、一括入力の足し引き
-groups.py          # 「1つだけ」のグループ
+groups.py          # kind（名前・前後の決まり・1つだけ）
 subjects.py        # 人物などの段落の自動命名、characters、view の選択肢
 marks.py           # マーキング
 tokens.py          # トークン数（Qwen3-VL のトークナイザー）
