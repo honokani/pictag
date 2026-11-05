@@ -259,10 +259,10 @@ def test_group_registers_its_phrases_and_is_listed(api, tmp_path, base_dir):
     assert entry(api, "looks", "lying") == {"dog A": (1, True), "dog B": (1, True)}  # 使っている段落で共用辞書に入る
 
 
-def test_group_needs_two_known_phrases_of_one_key(api, tmp_path):
+def test_kind_needs_known_phrases_of_one_key(api, tmp_path):
     load_scenes(api, movies(tmp_path), ["titanic.png"])
-    for key, phrases in [("looks", ["standing"]), ("", ["girl spread arms", "guy hold girl's waist from behind"]),
-                         ("looks", ["standing", "flying"])]:
+    for key, phrases in [("looks", []), ("", ["girl spread arms", "guy hold girl's waist from behind"]),
+                         ("looks", ["standing", "flying"])]:  # 語句なし / キーなしの文 / 辞書に無い語句（語句1つは付与できる）
         res = api.post("/group_phrases", {"key": key, "phrases": phrases})
         assert not res["success"] and res["message"], (key, phrases)
     assert api.dictionary()["groups"] == []
@@ -300,6 +300,20 @@ def test_group_with_a_postfix_takes_in_phrases_that_end_with_it(api, tmp_path):
     assert res["success"] and res["skipped"] == 2, res  # surprised face と crying face（決まりで仲間）の行には足さない
     res = api.post("/name_group", {"key": "face", "phrase": "crying face", "name": "", "affix": ""})  # 決まりの仲間で選んでも同じグループ
     assert res["success"] and api.dictionary()["groups"] == [{"key": "face", "phrases": ["smiling face", "surprised face"]}], res
+
+
+def test_a_kind_can_have_one_phrase_and_need_not_be_exclusive(api, tmp_path):
+    # kind は語句1つでも付与できる。「1つだけ」でない kind の仲間がある行にも、一括入力で足す。あとから「1つだけ」にもできる
+    rows = load_scenes(api, movies(tmp_path), COUPLES)
+    res = api.post("/group_phrases", {"key": "body", "phrases": ["red/long hair"], "name": "hair", "affix": "postfix", "exclusive": False})
+    assert res["success"], res
+    res = api.bulk_add(list(rows.values()), "body: wavy hair")
+    assert res["success"] and res["skipped"] == 0, res
+    res = api.post("/name_group", {"key": "body", "phrase": "wavy hair", "name": "hair", "affix": "postfix", "exclusive": True})
+    assert res["success"], res
+    assert api.dictionary()["groups"] == [{"key": "body", "phrases": ["red/long hair"], "name": "hair", "affix": "postfix"}]
+    res = api.post("/group_phrases", {"key": "body", "phrases": ["red/long hair"], "exclusive": "yes"})
+    assert not res["success"] and res["message"], res
 
 
 def test_group_rejects_a_bad_name_or_rule(api, tmp_path):
