@@ -262,17 +262,32 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 #dictAddSection, #dictAddKey { max-width: 120px; }
 #dictFilter, #dictAddText { width: 170px; }
 .rename-option { margin-left: auto; color: #555; font-size: 12px; }
-#dictView { padding-bottom: 24px; }
-#dictView p { padding: 24px; color: #777; }
+/* 共用辞書の画面: 左半分に表、右半分の上に画像・下に kind（それぞれの中で縦に流す） */
+#dictView:not([hidden]) { display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; }
+#dictView .dict-pane { overflow: auto; min-height: 0; }
+#dictLeft { padding-bottom: 24px; }
+#dictRight { display: grid; grid-template-rows: 1fr 1fr; min-height: 0; border-left: 1px solid #ddd; }
+#dictKinds { border-top: 1px solid #ddd; }
+.dict-side { padding: 6px 8px; }
+.dict-side > .key-help { margin: 0 0 6px; }
+#dictEmpty { padding: 24px; color: #777; }
+.dict-thumbs { display: flex; flex-wrap: wrap; gap: 6px; }
+.dict-thumb { padding: 0; border: 1px solid #ddd; background: #fff; cursor: pointer; }
+.dict-thumb.dead { opacity: .4; }
+.dict-thumb img { display: block; width: 96px; height: 96px; object-fit: contain; }
+.dict-kind { padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
+.kind-members { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.kind-member { padding: 0 6px; border: 1px solid #ccc; border-radius: 3px; background: #fff; font-size: 12px; cursor: pointer; }
 /* 共用辞書の表は列の幅の合計（画面の幅いっぱいに広げない）。語句と使っている段落は幅を決めて折り返し、ほかの列は中身の幅 */
-#dictGrid { min-width: 0; }
+#dictGrid { width: 100%; min-width: 0; }
+#dictGrid td { width: 1%; }  /* 語句の列のほかは中身の幅に縮め、語句の列が残りの幅を取る（使っている段落は 120px） */
 #dictGrid tbody tr { cursor: pointer; }
 #dictGrid th:first-child, #dictGrid td:first-child { padding-left: 2px; padding-right: 2px; }  /* チェックが入る分だけ */
 #dictGrid th { white-space: nowrap; }
 #dictGrid th .sort { border: none; background: none; padding: 0 1px; font-size: 10px; color: #bbb; cursor: pointer; }  /* 見出しの ▲▼ */
 #dictGrid th .sort.on { color: #1a73e8; }
 #dictGrid td.dict-key { color: #555; white-space: nowrap; }
-#dictGrid td.dict-phrase { width: 320px; }
+#dictGrid td.dict-phrase { width: auto; }
 #dictGrid td.dict-phrase input { width: 100%; }
 #dictGrid td.dict-sections { width: 120px; color: #666; font-size: 12px; }
 #dictGrid td.num { text-align: right; font-variant-numeric: tabular-nums; }

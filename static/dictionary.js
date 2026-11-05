@@ -89,10 +89,10 @@ function sortedRows(rows) {
 const groupIndex = (key, phrase) => state.groups.findIndex(g => inGroup(g, key, phrase));
 const rowKind = row => (row.kind === 'phrase' && row.key ? groupIndex(row.key, row.text) : -1);
 
-// kind の印（ダブルクリックで名前・前後の決まり・1つだけを変える）
-function groupBadge(i) {
+// kind の印（表の印はダブルクリックで名前・前後の決まり・1つだけを変える）
+function groupBadge(i, dblclick = true) {
     const g = state.groups[i];
-    return `<span class="group-badge g${i % GROUP_COLORS}" title="${escapeHtml(`${groupTitle(g, i)}（ダブルクリックで変える）`)}">` +
+    return `<span class="group-badge g${i % GROUP_COLORS}" title="${escapeHtml(`${groupTitle(g, i)}${dblclick ? '（ダブルクリックで変える）' : ''}`)}">` +
         `${escapeHtml(groupLabel(g, i))}</span>`;
 }
 
@@ -152,6 +152,7 @@ function renderDictionary() {
     $('dictCount').textContent = `${dict.rows.length} 件`;
     $('dictEmpty').hidden = dict.rows.length > 0;
     paintDictSelection();
+    renderDictKinds();
 }
 
 // ---- 選択（クリック: その行だけ / Ctrl と左端のチェック: 足し引き / Shift: 最後にクリックした行からの範囲を足す） ----
@@ -186,6 +187,71 @@ function paintDictSelection() {
     $('dictSelForm').hidden = count === 0;
     $('dictHelp').hidden = count > 0;
     $('dictAll').checked = count > 0 && dict.rows.every(r => dict.selected.has(r.id));
+    renderDictImages();
+}
+
+// ---- 右半分（上: 最後に選んだ語句の画像 / 下: 全部の kind） ----
+
+const WORD_CHARS = /[^\s,.;:!?"()\[\]]+/g;  // 文の単語（words.py の WORD と同じ）
+
+// 画像の行が、辞書の行（キーのある語句・キーなしの文・単語）を使っているか（辞書の行の段落と同じ種類の段落で）
+function usesEntry(r, entry) {
+    return Object.entries(r.texts || {}).some(([section, text]) => entry.sections.includes(baseName(section))
+        && (text || '').split('\n').map(parseLine).some(({key, phrases}) => (entry.kind === 'word'
+            ? !key && phrases.some(p => (p.match(WORD_CHARS) || []).includes(entry.text))
+            : key === (entry.key || '') && phrases.includes(entry.text))));
+}
+
+// 右上: 最後に選んだ行（dict.focus）の語句を使っている、開いているプロジェクトの画像（表の並び。クリックで画像の画面のその行へ）
+function renderDictImages() {
+    const entry = dict.rows.find(r => r.id === dict.focus);
+    const rows = entry && state.loaded ? state.rows.filter(r => usesEntry(r, entry)) : [];
+    $('dictImagesNote').textContent = !entry ? '語句の行を選ぶと、開いているプロジェクトでその語句を使っている画像を出します'
+        : !state.loaded ? 'プロジェクトを開くと、その語句を使っている画像を出します'
+        : `${dictKeyLabel(entry)}: ${entry.text} を使っている画像（${rows.length} 枚。クリックで画像の画面のその行へ）`;
+    $('dictImageList').innerHTML = rows.map(r => `<button type="button" class="dict-thumb${r.is_dead ? ' dead' : ''}" data-index="${r.index}" ` +
+        `title="${escapeHtml(r['サムネイル'])}"><img loading="lazy" src="/thumbnail/${encodeURIComponent(r['サムネイル'])}" alt=""></button>`).join('');
+}
+
+// 画像の画面へ切り替えて、その行を列の見出しのすぐ下に見せる（絞り込みなどで隠れていれば、📍 と同じく知らせるだけ）
+function jumpToImage(index) {
+    showView('images');
+    const tr = rowElement(index);
+    if (!tr || tr.getBoundingClientRect().height === 0) {
+        const row = state.rows.find(r => r.index === index);
+        return setStatus(`${row ? row['サムネイル'] : '画像'} は、絞り込みか「削除済み画像を表示」で隠れています`, 'warn');
+    }
+    showRowBelowHead(index, 0);
+}
+
+// kind の仲間の語句: 一覧の語句と、前後の決まりに合う辞書の語句（同じキー）
+const kindMembers = g => [...new Set([...g.phrases, ...state.phrases.filter(p => p.key === g.key && followsRule(g, p.phrase)).map(p => p.phrase)])];
+
+// 右下: 全部の kind（印・キー・1つだけ・改名と、仲間の語句。語句をクリックすると左の表のその行へ）
+function renderDictKinds() {
+    $('dictKindsNote').textContent = state.groups.length ? `kind ${state.groups.length} 件（語句をクリックすると、左の表のその行へ）`
+        : 'kind はまだありません（左の表で語句を選び、「kindを付与する」）';
+    $('dictKindList').innerHTML = state.groups.map((g, i) => `<div class="dict-kind" data-i="${i}">${groupBadge(i, false)} ` +
+        `<span class="key-help">${escapeHtml(g.key)}${exclusiveKind(g) ? '・1つだけ' : ''}</span> <button type="button" class="kind-edit">改名</button>` +
+        `<div class="kind-members">${kindMembers(g).map(p => `<button type="button" class="kind-member" data-key="${escapeHtml(g.key)}" ` +
+            `data-text="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join('')}</div></div>`).join('');
+}
+
+// 左の表のその語句の行へ（検索で見えなければ検索を外す）。その行だけを選ぶので、右上の画像もその語句の
+function jumpToEntry(key, text) {
+    const id = JSON.stringify(['phrase', key, text]);
+    if (!dict.rows.some(r => r.id === id)) {
+        $('dictFilter').value = '';
+        $('dictFilterMode').value = 'in';
+        $('dictShared').value = '';
+        renderDictionary();
+    }
+    const tr = [...$('dictBody').rows].find(row => row.dataset.id === id);
+    if (!tr) return setStatus(`${key}: ${text} は、どこにも使っていない語句です（表にありません）`, 'warn');
+    dict.selected = new Set([id]);
+    dict.anchor = dict.focus = id;
+    paintDictSelection();
+    tr.scrollIntoView({block: 'center'});
 }
 
 const selectedDictRows = () => dict.rows.filter(r => dict.selected.has(r.id));
@@ -245,16 +311,20 @@ function askGroupName(name = '', affix = 'postfix', exclusive = true) {
             exclusive: $('groupExclusive').checked} : null), {once: true}));
 }
 
-// 印のダブルクリック: その kind の名前・前後の決まり・1つだけを変える（名前が空なら番号に戻す）
-async function renameGroup(tr) {
-    const [key, phrase] = [tr.dataset.key, tr.dataset.text];
-    const i = groupIndex(key, phrase);
-    if (i < 0) return;
+// kind の名前・前後の決まり・1つだけを窓で変える（名前は外せない）。phrase は仲間の語句（どの kind かをサーバーが見分ける）
+async function renameKind(i, phrase = kindMembers(state.groups[i])[0]) {
     const g = state.groups[i];
+    if (!g || phrase === undefined) return;
     const naming = await askGroupName(named(g) ? g.name : '', named(g) ? g.affix || '' : 'postfix', exclusiveKind(g));
     if (!naming) return;
     if (!named(naming)) return setStatus('kind の名前は外せません（名前を入れてください）', 'error');
-    await changeDictionary('/name_group', {key, phrase, ...naming}, `kind を ${groupLabel(naming, i)} にしました`);
+    await changeDictionary('/name_group', {key: g.key, phrase, ...naming}, `kind を ${groupLabel(naming, i)} にしました`);
+}
+
+// 表の印のダブルクリック: その行の kind を変える
+async function renameGroup(tr) {
+    const i = groupIndex(tr.dataset.key, tr.dataset.text);
+    if (i >= 0) await renameKind(i, tr.dataset.text);
 }
 
 async function ungroupSelected() {
@@ -383,6 +453,17 @@ function wireDictionary() {
     $('dictBody').addEventListener('dblclick', event => {
         const badge = event.target.closest('.group-badge');
         if (badge) guarded(renameGroup)(badge.closest('tr'));
+    });
+    // 右上の画像: クリックで画像の画面のその行へ / 右下の kind: 語句で左の表のその行へ、改名で窓
+    $('dictImageList').addEventListener('click', event => {
+        const thumb = event.target.closest('.dict-thumb');
+        if (thumb) jumpToImage(Number(thumb.dataset.index));
+    });
+    $('dictKindList').addEventListener('click', event => {
+        const member = event.target.closest('.kind-member');
+        if (member) return jumpToEntry(member.dataset.key, member.dataset.text);
+        const edit = event.target.closest('.kind-edit');
+        if (edit) guarded(renameKind)(Number(edit.closest('.dict-kind').dataset.i));
     });
     $('dictBody').addEventListener('keydown', event => {
         const input = event.target.closest('.rename-input');
