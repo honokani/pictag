@@ -135,9 +135,10 @@ td.cell .ln.conflict:not(:has(> .key))::before, td.cell .ln.conflict .val::befor
 td.cell .ln .key, td.cell .others, td.cell .field-key { font-size: 12px; line-height: 21px; color: #666; }
 td.cell .ln.empty .key { color: #b8b8b8; }
 
-/* picture の列は close-up の右端 + 10px（幅は JS が測って --picture-width に入れる）。残りの幅は hint の列（hint が無いときは preview） */
+/* picture の列は、🎥 の行を1行に並べた幅（最後のボタンの右端 + 10px）の 66%（幅は JS が測って --picture-width に入れる。🎥 のボタンは2段に折り返す）。
+   空けた幅は action に足す（--action-extra）。残りの幅は hint の列（hint が無いときは preview） */
 td.cell[data-section="picture"] { width: var(--picture-width, 420px); min-width: var(--picture-width, 420px); }
-.choice-row.camera { flex-wrap: nowrap; }
+td.cell[data-section="action"] { min-width: calc(220px + var(--action-extra, 0px) - var(--lend, 0px)); max-width: calc(380px + var(--action-extra, 0px) - var(--lend, 0px)); }
 .choices { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; font-size: 12px; }
 .choice-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .choices .group { display: inline-flex; gap: 2px; }
@@ -157,7 +158,7 @@ td.cell textarea { width: 100%; min-height: 4.5em; resize: vertical; }
 td.cell .editor.split textarea { min-height: 0; }
 td.cell .field-key { cursor: default; }
 
-/* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture の幅より後ろに置いて優先する） */
+/* 見出しの右端の ◀ で段落の列を細く畳み、▶ で開く。畳んだ列の欄は、入力のある行に ● だけ（picture・action の幅より後ろに置いて優先する） */
 th .section-head { display: flex; align-items: center; }
 th .fold-section, th .thumb-zoom { margin-left: auto; border: none; background: none; padding: 0 4px; color: #888; }  /* サムネイルの ▶ / ◀ も同じ見た目 */
 th .verb-forms { border: none; background: none; padding: 0 4px; color: #888; }  /* action の ⇄（名前のすぐ右） */
