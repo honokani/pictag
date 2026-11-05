@@ -2,12 +2,24 @@
 import pytest
 
 from subjects import (CAMERA_EMOJI, CAMERA_GROUPS, base_name, characters_of, display_names, insert_position, name_for_new,
-                      pov_choices)
+                      pov_choices, template_keys)
 
 
 @pytest.mark.parametrize("section, expected", [("guy A", "guy"), ("girl", "girl"), ("big dog B", "big dog"), ("A", "A")])
 def test_base_name(section, expected):
     assert base_name(section) == expected
+
+
+TEMPLATES = {"picture": ["place", "view"], "subject": ["looks", "clothes", "body"], "girl": ["looks", "face", "clothes", "body"]}
+
+
+@pytest.mark.parametrize("section, expected", [
+    ("girl", TEMPLATES["girl"]), ("girl B", TEMPLATES["girl"]),  # 自分の名前の組。無ければ A, B を除いた名前の組
+    ("guy A", TEMPLATES["subject"]), ("dog", TEMPLATES["subject"]),  # どちらも無ければ subject
+    ("picture", TEMPLATES["picture"]), ("action", []), ("else", []),  # 組の無い固定の段落と else は無し
+])
+def test_template_keys(section, expected):
+    assert template_keys(section, TEMPLATES, ["picture", "action"]) == expected
 
 
 @pytest.mark.parametrize("present, expected", [

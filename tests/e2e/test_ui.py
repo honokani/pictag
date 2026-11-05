@@ -124,7 +124,8 @@ def test_load_shows_rows_sections_and_template_keys(page, imgs):
 
     # 確定タグのキーは空の欄にも薄く出る（action は確定タグなし）
     expect(cell(page, "a.png", "picture").locator(".ln.empty")).to_have_text(["place:", "characters:", "vibes:", "view:", "extra:"])
-    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:", "face:", "clothes:", "body:"])  # face は girl だけ
+    expect(cell(page, "a.png", "guy").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
     expect(cell(page, "a.png", "action").locator(".ln")).to_have_count(0)
 
 
@@ -139,7 +140,7 @@ def test_editor_puts_each_template_key_in_its_own_field_under_its_name(page, img
     load_dir(page, imgs)
     write(page, "a.png", "body: long hair\ngirl is smiling")
     open_editor(page, "a.png")
-    expect(cell(page, "a.png").locator(".field-key")).to_have_text(["looks:", "clothes:", "body:", "その他:"])
+    expect(cell(page, "a.png").locator(".field-key")).to_have_text(["looks:", "face:", "clothes:", "body:", "その他:"])
     expect(field(page, "a.png", "body")).to_have_value("long hair")  # キーの後ろの値だけ
     expect(field(page, "a.png", "")).to_have_value("girl is smiling")  # キーの無い文などは「その他」
     expect(field(page, "a.png", "looks")).to_be_focused()  # 最初の値の無いキー
@@ -148,7 +149,7 @@ def test_editor_puts_each_template_key_in_its_own_field_under_its_name(page, img
     field(page, "a.png", "looks").evaluate("el => el.blur()")
     text = "looks: standing\nbody: long hair\ngirl is smiling"
     expect(filled(page, "a.png")).to_have_text(text.split("\n"))
-    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["clothes:"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["face:", "clothes:"])
     expect(tokens_of(page, "a.png")).to_have_text(f"{count(caption_of(text))} / 507")
     # 値の無いキーは保存しない
     assert tool.df.set_index("サムネイル").loc["a.png", "girl"] == text
@@ -193,7 +194,7 @@ def test_cell_shows_values_under_their_key_like_the_editor(page, imgs):
     expect(looks.locator(".val")).to_have_text("standing")
     key, value = looks.locator(".key").bounding_box(), looks.locator(".val").bounding_box()
     assert value["y"] >= key["y"] + key["height"] - 0.5  # 値はキーの名前の次の行
-    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["clothes:"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["face:", "clothes:"])
     expect(cell(page, "a.png").locator(".ln.empty .val")).to_have_count(0)
     expect(cell(page, "a.png").locator(".others")).to_have_text("その他:")
 
@@ -731,7 +732,7 @@ def test_leaving_the_editor_merges_a_repeated_key(page, imgs):
     editor.fill("looks: looks :\nclothes:clothes: clothes : skirt\nbody: body: long hair")
     editor.evaluate("el => el.blur()")
     expect(filled(page, "a.png")).to_have_text(["clothes: skirt", "body: long hair"])
-    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:"])
+    expect(cell(page, "a.png").locator(".ln.empty")).to_have_text(["looks:", "face:"])
 
 
 def test_leaving_action_ends_sentences_with_periods(page, imgs):
@@ -804,7 +805,7 @@ def test_editor_shows_space_and_newline_marks_that_are_not_text(page, imgs):
     write(page, "a.png", "body: long hair")
     editor = open_editor(page, "a.png")
     marks = cell(page, "a.png").locator(".ws-marks")
-    expect(marks).to_have_count(4)  # 欄ごとに重ねる
+    expect(marks).to_have_count(5)  # 欄ごとに重ねる（girl は looks・face・clothes・body・その他）
     expect(marks.locator(".sp")).to_have_count(1)  # 開いたときから出す
     editor.fill("girl  is\nsmiling")
     expect(marks.locator(".sp")).to_have_count(3)
@@ -1134,6 +1135,17 @@ def test_leaving_the_editor_puts_lines_after_a_bare_key_on_its_line(page, imgs):
         ["mirror: face reflects on mirror. ball reflects on mirror.", "lamp: bright", "curtain: red, long"])
 
 
+def test_girl_a_and_b_have_face_after_looks_and_guy_does_not(page, imgs):
+    # face（顔の細部）は girl だけ（A, B の付いた girl も）。ほかの段落は looks / clothes / body
+    load_dir(page, imgs)
+    page.fill("#sectionName", "girl")
+    page.click("#sectionForm button")
+    expect(page.locator("#gridHead .section-name")).to_have_count(5)
+    for section in ["girl A", "girl B"]:
+        expect(cell(page, "a.png", section).locator(".ln.empty")).to_have_text(["looks:", "face:", "clothes:", "body:"])
+    expect(cell(page, "a.png", "guy").locator(".ln.empty")).to_have_text(["looks:", "clothes:", "body:"])
+
+
 def test_adding_girl_twice_names_them_a_and_b(page, imgs):
     load_dir(page, imgs)
     page.fill("#sectionName", "girl")
@@ -1451,6 +1463,8 @@ def test_bulk_keys_follow_the_section(page, imgs):
     page.select_option("#bulkSection", "picture")
     assert option_values(page, "#bulkKey") == ["place", "vibes", "view", "extra", ""]
     page.select_option("#bulkSection", "girl")
+    assert option_values(page, "#bulkKey") == ["looks", "face", "clothes", "body", ""]
+    page.select_option("#bulkSection", "guy")
     assert option_values(page, "#bulkKey") == ["looks", "clothes", "body", ""]
     page.select_option("#bulkSection", "action")
     assert option_values(page, "#bulkKey") == [""]

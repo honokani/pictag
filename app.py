@@ -220,7 +220,7 @@ def words_of(items):
     return items
 
 def read_shared(path):
-    """共用辞書を読む（無い・壊れているときは既定の確定タグだけ。形の正しくないグループは除く）"""
+    """共用辞書を読む（無い・壊れているときは既定の確定タグだけ。ファイルに無い確定タグの組は既定から補う。形の正しくないグループは除く）"""
     shared = empty_shared()
     if not path.exists():
         return shared
@@ -228,7 +228,7 @@ def read_shared(path):
         data = json.loads(path.read_text(encoding='utf-8'))
         loaded = {key: data.get(key, value) if isinstance(data.get(key), type(value)) else value
                   for key, value in shared.items()}
-        return {**loaded, 'groups': clean_groups(loaded['groups'])}
+        return {**loaded, 'templates': {**shared['templates'], **loaded['templates']}, 'groups': clean_groups(loaded['groups'])}
     except (OSError, ValueError, AttributeError) as e:
         logger.warning(f"Failed to load shared dictionary: {e}")
         return shared

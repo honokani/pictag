@@ -264,6 +264,17 @@ def test_shared_file_without_groups_still_loads(base_dir):
     assert fresh.shared["phrases"] == [{"section": "girl", "key": "looks", "phrase": "standing"}]
 
 
+def test_shared_file_without_the_girl_template_gets_it_and_keeps_its_own(base_dir):
+    # girl の組（face）ができる前の共用辞書: ファイルに無い組は既定から補い、ファイルにある組はそのまま
+    (base_dir / "data_work").mkdir()
+    (base_dir / "data_work" / "shared.json").write_text(json.dumps(
+        {"templates": {"picture": ["place", "view"], "subject": ["looks", "clothes", "body"]}, "phrases": [], "words": []}),
+        encoding="utf-8")
+    fresh = pictag.CaptionTool(base_dir=base_dir)
+    assert fresh.shared["templates"] == {"picture": ["place", "view"], "subject": ["looks", "clothes", "body"],
+                                         "girl": ["looks", "face", "clothes", "body"]}
+
+
 # ---- 場面がそのままキャプションになる ----
 
 TITANIC_CAPTION = "\n".join([
