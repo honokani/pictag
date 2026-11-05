@@ -89,6 +89,22 @@ def test_words_of_sentences_are_in_dictionary(api, imgs):
     assert api.words() == {("action", w): 1 for w in ["girl", "spread", "arms", "guy", "grab", "girl's", "waist"]}
 
 
+def test_dictionary_counts_uses_in_the_open_project_apart(api, imgs, tmp_path):
+    # count はほかの保存済みのプロジェクトも含めた使用回数、here は開いているプロジェクト（未保存の入力も）の分
+    api.load(make_images(tmp_path / "imgs" / "other", {"x.png": (64, 64), "y.png": (64, 64)}))
+    for row in range(2):
+        api.write(row, "body: long hair")
+    api.write(0, "girl spread arms", section="action")
+    api.save()
+    api.load(imgs)
+    api.write(0, "body: long hair")
+    dictionary = api.dictionary()
+    phrases = {(p["section"], p["key"], p["phrase"]): (p["count"], p["here"]) for p in dictionary["phrases"]}
+    words = {(w["section"], w["word"]): (w["count"], w["here"]) for w in dictionary["words"]}
+    assert phrases[("girl", "body", "long hair")] == (3, 1)
+    assert words[("action", "spread")] == (1, 0)
+
+
 def test_dictionary_has_default_templates(api, imgs):
     api.load(imgs)
     assert api.dictionary()["templates"] == DEFAULT_TEMPLATES

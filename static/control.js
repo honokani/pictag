@@ -381,13 +381,13 @@ function phraseCandidates(section, ctx) {
     return keepBest(state.phrases
         .filter(p => p.key === ctx.key && sameKind(p.section, section) && !ctx.current.includes(p.phrase)
             && !blockedIn(ctx.cellPhrases, p.key, p.phrase))
-        .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})));
+        .map(p => ({kind: 'phrase', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, here: p.here, bonus: wordBonus(p, section)})));
 }
 
 // キーなしの文の単語（1文字以上打ったとき。語の後にスペースを2つ続けたときは、打たなくても使用回数の多い順に出す）
 function wordCandidates(section, ctx) {
     if (!(ctx.query || calledBySpaces(ctx))) return [];
-    return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, bonus: wordBonus(w, section)})));
+    return keepBest(state.words.map(w => ({kind: 'word', label: w.word, match: w.word, word: w.word, count: w.count, here: w.here, bonus: wordBonus(w, section)})));
 }
 
 // キーなしの文の途中の文: 行頭から打った所まで（sentence）であいまい検索する（単語を1文字以上打ったとき。後ろに語が続く所では出さない）。
@@ -395,7 +395,7 @@ function wordCandidates(section, ctx) {
 function sentenceCandidates(section, ctx) {
     if (!ctx.query || ctx.after.trim()) return [];
     return keepBest(state.phrases.filter(p => !p.key).map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase,
-        count: p.count, bonus: wordBonus(p, section), query: ctx.sentence, from: ctx.sentenceStart})));
+        count: p.count, here: p.here, bonus: wordBonus(p, section), query: ctx.sentence, from: ctx.sentenceStart})));
 }
 
 // キーなしの文の途中: 単語と、行頭から打った所までに合う文（合う度合いの順に混ぜる）
@@ -409,10 +409,10 @@ function lineStartCandidates(section, ctx) {
     return keepBest([
         ...state.phrases.flatMap(p => {
             const bonus = wordBonus(p, section);
-            if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus}];
+            if (!p.key) return [{kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, here: p.here, bonus}];
             const inCell = (ctx.cellPhrases[p.key] || []).includes(p.phrase);
             const keyed = inCell || !sameKind(p.section, section) || blockedIn(ctx.cellPhrases, p.key, p.phrase) ? []
-                : [{kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, bonus}];
+                : [{kind: 'keyed', label: `${p.key}: ${p.phrase}`, match: p.phrase, key: p.key, phrase: p.phrase, count: p.count, here: p.here, bonus}];
             return [{kind: 'key', label: `${p.key}:`, match: p.key, key: p.key, count: 0, bonus: bonus + 1}, ...keyed];
         }),
         ...wordCandidates(section, ctx),
@@ -424,7 +424,7 @@ function keylessCandidates(section, ctx) {
     if (!ctx.query) return [];
     return keepBest([
         ...state.phrases.filter(p => !p.key)
-            .map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, bonus: wordBonus(p, section)})),
+            .map(p => ({kind: 'line', label: p.phrase, match: p.phrase, phrase: p.phrase, count: p.count, here: p.here, bonus: wordBonus(p, section)})),
         ...wordCandidates(section, ctx),
     ]);
 }
@@ -436,7 +436,7 @@ function movingCandidates(section, ctx) {
         .filter(p => p.key === ctx.key && baseName(p.section) === section && !ctx.current.includes(p.phrase))
         .map(p => {
             const phrase = ctx.key ? p.phrase : withoutPeriod(p.phrase);
-            return {kind: 'phrase', label: phrase, match: phrase, phrase, count: p.count, bonus: Math.log1p(p.count)};
+            return {kind: 'phrase', label: phrase, match: phrase, phrase, count: p.count, here: p.here, bonus: Math.log1p(p.count)};
         }));
 }
 
@@ -461,9 +461,10 @@ function showSuggestions(el, section, contextFor = contextOf) {
     }
     state.suggest = {el, section, ctx, items, active: 0, moved: false};
     const list = $('suggestions');
+    // 件数は「開いているプロジェクトの件数（ほかのプロジェクトだけの件数）」
     list.innerHTML = items.map((item, i) =>
         `<li role="option" data-i="${i}"${i === 0 ? ' class="active"' : ''}>${escapeHtml(item.label)}` +
-        `${item.count ? `<span class="count">${item.count}</span>` : ''}</li>`).join('');
+        `${item.count ? `<span class="count">${item.here}（${item.count - item.here}）</span>` : ''}</li>`).join('');
     list.hidden = false;
     const rect = el.getBoundingClientRect();
     const below = rect.bottom + list.offsetHeight <= window.innerHeight;
@@ -1988,8 +1989,9 @@ async function movePhrases() {
         await refreshTable();
     }
     applyDictionary(res.dictionary);
-    const where = res.changed ? `開いているプロジェクトの ${res.changed} 行。保存はまだです` : '共用辞書だけ';
-    setStatus(`${section} の ${from} の ${phrases.join('・')} を ${to} に移しました（${where}）`, 'ok');
+    const where = [res.changed ? `開いているプロジェクトの ${res.changed} 行。保存はまだです` : '',
+        res.other_rows ? `ほかの ${res.other_projects} プロジェクトの ${res.other_rows} 行は書き換えて保存しました` : ''].filter(Boolean).join('。');
+    setStatus(`${section} の ${from} の ${phrases.join('・')} を ${to} に移しました（${where || '共用辞書だけ'}）`, 'ok');
 }
 
 // 置換: その段落（A, B も）のキーの語句を、置換後の語句 1つにする（今ある語句でもよい）。候補を選ぶと行末に付く「, 」は外して送る

@@ -22,9 +22,17 @@ def test_count_words_counts_each_section_key_and_phrase():
 def test_phrase_entries_are_sorted_by_use():
     counter = count_words([("girl", "body: black hair"), ("girl", "body: long hair"), ("girl", "body: long hair")])
     assert phrase_entries(counter, empty_shared()) == [
-        {"section": "girl", "key": "body", "phrase": "long hair", "count": 2, "shared": False},
-        {"section": "girl", "key": "body", "phrase": "black hair", "count": 1, "shared": False},
+        {"section": "girl", "key": "body", "phrase": "long hair", "count": 2, "here": 0, "shared": False},
+        {"section": "girl", "key": "body", "phrase": "black hair", "count": 1, "here": 0, "shared": False},
     ]
+
+
+def test_phrase_entries_count_uses_in_the_open_project_apart():
+    # count はほかのプロジェクトも含めた使用回数、here は開いているプロジェクトの分
+    total = count_words([("girl", "body: long hair")] * 3)
+    here = count_words([("girl", "body: long hair")])
+    assert phrase_entries(total, empty_shared(), here) == [
+        {"section": "girl", "key": "body", "phrase": "long hair", "count": 3, "here": 1, "shared": False}]
 
 
 @pytest.mark.parametrize("text, key, phrase, expected", [
@@ -85,8 +93,8 @@ def test_phrase_entries_include_shared_phrases_with_zero_count():
     shared = {"templates": {}, "phrases": [{"section": "girl", "key": "body", "phrase": "short hair"}], "words": []}
     entries = phrase_entries(count_words([("girl", "body: long hair")]), shared)
     assert entries == [
-        {"section": "girl", "key": "body", "phrase": "long hair", "count": 1, "shared": False},
-        {"section": "girl", "key": "body", "phrase": "short hair", "count": 0, "shared": True},
+        {"section": "girl", "key": "body", "phrase": "long hair", "count": 1, "here": 0, "shared": False},
+        {"section": "girl", "key": "body", "phrase": "short hair", "count": 0, "here": 0, "shared": True},
     ]
 
 
