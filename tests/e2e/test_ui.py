@@ -276,6 +276,31 @@ def test_suggestion_count_is_the_open_project_then_the_others_in_brackets(page, 
     expect(page.locator("#suggestions li.active .count")).to_have_text("1（2）")
 
 
+def test_choosing_a_suggestion_in_the_middle_of_a_word_replaces_the_rest_of_the_word(page, imgs):
+    # カーソルが語の途中（floo|r）でも、候補を選ぶと語の残り（r）も置き換える。空白の先の語（arms）は残す
+    load_dir(page, imgs)
+    write(page, "b.png", "place: floor background", section="picture")
+    write(page, "b.png", "girl spread arms", section="action")
+    wait_for_phrase(page, "floor background")
+    page.wait_for_function("() => state.words.some(w => w.word === 'spread')")
+
+    open_editor(page, "a.png", "picture")
+    place = field(page, "a.png", "place", "picture")
+    place.fill("floor")
+    place.evaluate("el => { el.setSelectionRange(4, 4); el.dispatchEvent(new Event('input')); }")  # floo|r
+    expect(page.locator("#suggestions li.active")).to_contain_text("floor background")
+    place.press("Enter")
+    expect(place).to_have_value("floor background, ")
+    place.evaluate("el => el.blur()")
+
+    action = open_editor(page, "a.png", "action")
+    action.fill("girl sprd arms")
+    action.evaluate("el => { el.setSelectionRange(8, 8); el.dispatchEvent(new Event('input')); }")  # girl spr|d arms
+    expect(page.locator("#suggestions li.active")).to_contain_text("spread")
+    action.press("Enter")
+    expect(action).to_have_value("girl spread arms")
+
+
 def test_suggestion_completes_phrase_of_the_line_key(page, imgs):
     load_dir(page, imgs)
     write(page, "b.png", "body: long hair")

@@ -506,8 +506,16 @@ function acceptIntoField(el, ctx, field, item) {
     field.dispatchEvent(new Event('input'));  // そのキーの語句の候補を出す
 }
 
+// カーソルが語の途中（前も後ろも語の文字。floo|r）なら、後ろに続く同じ語の残り（r）も、選んだ候補で置き換える
+// （空白・カンマ・コロン・ピリオドの先は残す。語の頭（前が空白やカンマ）では、後ろの語の前に足すので置き換えない）
+function withWordTail(ctx) {
+    const tail = /[^\s,:.]$/.test(ctx.query) ? ctx.after.match(/^[^\s,:.]*/)[0] : '';
+    return {...ctx, end: ctx.end + tail.length, after: ctx.after.slice(tail.length)};
+}
+
 function accept(item) {
-    const {el, ctx} = state.suggest;
+    const {el} = state.suggest;
+    const ctx = withWordTail(state.suggest.ctx);
     const field = item.key && el.dataset.key === '' ? state.editor.fields.find(f => f.dataset.key === item.key) : null;
     if (field && (item.kind === 'keyed' || item.kind === 'key')) {
         acceptIntoField(el, ctx, field, item);
