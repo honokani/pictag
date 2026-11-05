@@ -691,7 +691,7 @@ class CaptionTool:
             k = check_key(key)
             if not k:
                 raise ValueError('キーのない文には kind を付与できません')
-            named = check_group_traits(name, affix, exclusive)
+            named = self.check_kind_name(shared, *check_group_traits(name, affix, exclusive))
             if not isinstance(phrases, list) or not all(isinstance(p, str) for p in phrases):
                 raise ValueError('語句の指定が正しくありません')
             wanted = list(dict.fromkeys(phrases))
@@ -710,11 +710,20 @@ class CaptionTool:
         """phrase（一覧か前後の決まりで仲間の語句）の入っている kind の名前・前後の決まり・「1つだけ」を変える（名前が空白だけなら番号に戻す）"""
         def change(shared):
             k = check_key(key)
-            named = check_group_traits(name, affix, exclusive)
+            named = self.check_kind_name(shared, *check_group_traits(name, affix, exclusive))
             if not isinstance(phrase, str) or group_of(shared['groups'], k, phrase) is None:
                 raise ValueError('その語句には kind がありません')
             return name_group(shared, k, phrase, *named)
         return self.update_shared(change)
+
+    def check_kind_name(self, shared, name, affix, exclusive):
+        """前後の決まりの無い kind の名前は、キーと同じにできない（.looks はキー looks の kind になる）。(名前, 決まり, 1つだけ) を返す"""
+        phrase_usage, _ = self.usage()
+        keys = ({k for keys in shared['templates'].values() for k in keys} | {t[1] for t in phrase_usage}
+                | {p['key'] for p in shared['phrases']})
+        if not affix and name.strip() in keys - {''}:
+            raise ValueError(f'「.{name.strip()}」はキーと同じ名前なので、kind の名前に使えません（postfix か prefix にするか、ほかの名前に）')
+        return name, affix, exclusive
 
     def ungroup(self, pairs):
         """語句を kind から外す（語句も前後の決まりも無くなった kind は消える）"""

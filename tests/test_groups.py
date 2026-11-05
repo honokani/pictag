@@ -216,6 +216,7 @@ def test_check_phrase_rejects(key, phrase, message):
 
 def test_check_phrase_trims_and_allows_colon_after_a_key():
     assert check_phrase("looks", "  standing ") == "standing"
+    assert check_phrase("looks", ".smile") == "smile"  # 語句の頭の「.」は外す（「.」で始まるのは kind の名前）
     assert check_phrase("extra", "3:4 ratio") == "3:4 ratio"
 
 

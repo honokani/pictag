@@ -767,6 +767,20 @@ def test_leaving_the_editor_tidies_commas_and_spaces(page, imgs):
     expect(filled(page, "a.png")).to_have_text(["looks: standing, smiling", "body: long, hair, bare hands"])
 
 
+def test_leaving_the_editor_fixes_periods_between_letters(page, imgs):
+    # 「.」はタグの頭に置かない: キーのある行は cute.smile → cute, smile、語句の頭の「.」は外す（1.5 のような数は残す）。
+    # キーの無い文（action）は、文字と文字の間の「.」（smiles.girl）で行を分ける
+    load_dir(page, imgs)
+    editor = open_editor(page, "a.png")
+    editor.fill("looks: cute.smile, .wink\nbody: 1.5m tall")
+    editor.evaluate("el => el.blur()")
+    expect(filled(page, "a.png")).to_have_text(["looks: cute, smile, wink", "body: 1.5m tall"])
+    action = open_editor(page, "a.png", section="action")
+    action.fill("girl smiles.girl waves")
+    action.evaluate("el => el.blur()")
+    expect(filled(page, "a.png", "action")).to_have_text(["girl smiles.", "girl waves"])
+
+
 def test_leaving_the_editor_merges_a_repeated_key(page, imgs):
     # 行頭で重なった同じキーは1つにまとめる（looks: looks : → looks:。値の無いキーは保存しない）
     load_dir(page, imgs)
