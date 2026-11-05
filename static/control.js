@@ -175,10 +175,21 @@ function foldBareKeys(lines) {
     return out;
 }
 
-// 保存する形に整える: 各行を整え、空行と値の無いキーの行を落とす
+// 「.」はタグの頭に置かない（「.」で始まるのは kind の名前）: キーのある行は、文字と文字の間の「.」（cute.smile）をカンマにし、
+// 語句の頭の「.」を外す（1.5 のような数の「.」は残す）。キーの無い文は、文字と文字の間の「.」（smiles.girl）で行を分ける
+function fixDots(line) {
+    if (!parseLine(line).key) return line.replace(/(?<=\p{L})\.(?=\p{L})/gu, '.\n');
+    const colon = line.indexOf(':');
+    return line.slice(0, colon + 1) + line.slice(colon + 1)
+        .replace(/(?<=\p{L})\.(?=\p{L})/gu, ', ')
+        .replace(/(^|,)\s*\.+(?=\S)/g, '$1 ');
+}
+
+// 保存する形に整える: 「.」を直し、各行を整え、空行と値の無いキーの行を落とす
 function tidyInput(text, section) {
     const sentence = line => section === 'action' && !parseLine(line).key;
     return text.split('\n')
+        .flatMap(line => fixDots(line).split('\n'))
         .map(line => tidyLine(sentence(line) ? endSentence(line) : line))
         .filter(line => parseLine(line).phrases.length > 0)
         .join('\n');
@@ -276,8 +287,8 @@ function blockedIn(byKey, key, phrase) {
 // 語句のうち2つ以上が仲間の「1つだけ」の kind（ぶつかっている）
 const conflictOf = (key, phrases) => state.groups.find(g => exclusiveKind(g) && phrases.filter(p => inGroup(g, key, p)).length >= 2);
 
-// kind の印: 名前があれば postfix は _名前、prefix は 名前_、決まりなしは名前のまま。無ければ K1, K2 …（i は並びの位置）
-const groupLabel = (g, i) => (!named(g) ? `K${i + 1}` : g.affix === 'postfix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name);
+// kind の印（kind はいつも「.」で始まる）: postfix は ._名前、prefix は .名前_、決まりなしは .名前。名前が無ければ .K1, .K2 …（i は並びの位置）
+const groupLabel = (g, i) => `.${!named(g) ? `K${i + 1}` : g.affix === 'postfix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name}`;
 
 // kind の説明（印と ⚠ の title）: 印、前後の決まりと 1つだけ、一覧の語句
 function groupTitle(g, i) {

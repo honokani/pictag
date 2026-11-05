@@ -316,6 +316,17 @@ def test_a_kind_can_have_one_phrase_and_need_not_be_exclusive(api, tmp_path):
     assert not res["success"] and res["message"], res
 
 
+def test_a_kind_named_like_a_key_needs_a_prefix_or_postfix(api, tmp_path):
+    # 前後の決まりの無い kind の名前は、キー（.looks のような、キーの kind）と同じにできない。._looks・.looks_ はよい
+    load_scenes(api, movies(tmp_path), ["titanic.png"])
+    res = api.post("/group_phrases", {"key": "looks", "phrases": ["smile"], "name": "looks", "affix": ""})
+    assert not res["success"] and "キー" in res["message"], res
+    res = api.post("/group_phrases", {"key": "looks", "phrases": ["smile"], "name": "looks", "affix": "postfix"})
+    assert res["success"], res
+    res = api.post("/name_group", {"key": "looks", "phrase": "smile", "name": "body", "affix": ""})
+    assert not res["success"] and "キー" in res["message"], res
+
+
 def test_group_rejects_a_bad_name_or_rule(api, tmp_path):
     rows = load_scenes(api, movies(tmp_path), ["titanic.png", "roman_holiday.png"])
     api.write(rows["titanic.png"], "face: smiling face")
