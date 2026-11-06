@@ -85,6 +85,12 @@ def same_path(a, b):
     """同じディレクトリを指すか（Windows の大文字小文字・区切り文字の違いは無視）"""
     return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
 
+def trash(path):
+    """ファイルを OS のごみ箱へ移す（画像削除。テストでは差し替えて、本物のごみ箱を使わない）。部品は使うときに読む
+    （pull したあと uv sync の前に立ち上げ直したサーバーでも、ほかの機能は動くように）"""
+    from send2trash import send2trash
+    send2trash(str(path))
+
 # フォルダの名前に使えない文字（Windows）
 BAD_NAME_CHARS = '<>:"/\\|?*'
 
@@ -850,6 +856,55 @@ class CaptionTool:
         logger.info(f"Removed {removed} dead rows. Total rows: {before} -> {len(self.df)}")
         self.save_data()
         return removed
+
+    def delete_images(self, names):
+        """画像削除: 選んだ行の画像（と同じ名前の hint）を OS のごみ箱へ移し、その行を削除済みにする（入力は残し、キャプションは
+        captions_dead へ）。もう削除済みの行は飛ばす。{deleted: 移した画像, skipped: 飛ばした画像, failed: 移せなかったものと理由}
+        を返す（何も移せなければ False）
+
+        移す前にサムネイルを data_work に残す（削除済みの行に画像を出し、読み込み直しても削除済みの行として残すため）
+        """
+        self.last_error = ''
+        if self.image_dir is None or self.df.empty:
+            return self.fail('データがありません')
+        if not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names):
+            return self.fail('画像を削除する行を選んでください')
+        rows = {name: i for i, name in self.df['サムネイル'].items() if isinstance(name, str)}
+        unknown = [n for n in names if n not in rows]
+        if unknown:
+            return self.fail(f'表に無い画像です: {unknown[0]}')
+        wanted = list(dict.fromkeys(names))
+        skipped = [n for n in wanted if to_flag(self.df.at[rows[n], 'is_dead'])]
+        if len(skipped) == len(wanted):
+            return self.fail('選んだ行は、どれも削除済みです')
+        deleted, failed = [], []
+        for name in (n for n in wanted if n not in skipped):
+            image = self.image_dir / name
+            try:
+                if image.exists():
+                    self.keep_thumbnail(image)
+                    trash(image)
+            except Exception as e:
+                failed.append(f'{name}（{e}）')
+                continue
+            self.df.at[rows[name], 'is_dead'] = True
+            self.move_caption(name, False)
+            deleted.append(name)
+            hint = image.with_name(f'{Path(name).stem}{HINT_EXT}')
+            try:
+                if hint.is_file():
+                    trash(hint)
+            except Exception as e:
+                failed.append(f'{name} の hint（{e}）')
+        logger.info(f"Deleted images to the trash: {deleted} (skipped: {skipped}, failed: {failed})")
+        if not deleted:
+            return self.fail(f"ごみ箱へ移せませんでした: {'、'.join(failed)}")
+        return {'deleted': deleted, 'skipped': skipped, 'failed': failed}
+
+    def keep_thumbnail(self, image_path):
+        """画像のサムネイルを data_work に残す（長辺 600px 以下の画像はサムネイルを作らないので、元画像の写しを置く）"""
+        if self.create_thumbnail(image_path) == image_path:
+            shutil.copy2(image_path, self.thumbnail_file(image_path.name))
 
     def thumbnail_file(self, image_name):
         """サムネイルのパス（生成済みかは問わない）"""
@@ -1736,6 +1791,22 @@ def remove_section():
     data = request.get_json() or {}
     success = caption_tool.remove_section(data.get('name'))
     return jsonify({'success': success, 'message': caption_tool.last_error})
+
+@app.route('/delete_images', methods=['POST'])
+def delete_images():
+    """画像削除: 選んだ行の画像を OS のごみ箱へ移し、その行を削除済みにする（入力は残す）"""
+    data = request.get_json() or {}
+    try:
+        result = caption_tool.delete_images(data.get('names'))
+    except Exception as e:
+        logger.error(f"Failed to delete images: {e}")
+        return jsonify({'success': False, 'message': str(e)})
+    if not result:
+        return jsonify({'success': False, 'message': caption_tool.last_error})
+    notes = ([f"削除済みの {len(result['skipped'])} 行は飛ばしました"] if result['skipped'] else []) + \
+        ([f"ごみ箱へ移せなかったもの: {'、'.join(result['failed'])}"] if result['failed'] else [])
+    message = '。'.join([f"{len(result['deleted'])} 枚の画像をごみ箱へ移しました（行は削除済み。入力は残ります）", *notes])
+    return jsonify({'success': True, 'message': message, **result})
 
 @app.route('/remove_all_dead', methods=['POST'])
 def remove_all_dead():

@@ -319,7 +319,7 @@ function jumpToImage(index) {
     const tr = rowElement(index);
     if (!tr || tr.getBoundingClientRect().height === 0) {
         const row = state.rows.find(r => r.index === index);
-        return setStatus(`${row ? row['サムネイル'] : '画像'} は、絞り込みか「削除済み画像を表示」で隠れています`, 'warn');
+        return setStatus(`${row ? row['サムネイル'] : '画像'} は、絞り込みか「削除済み表示」で隠れています`, 'warn');
     }
     showRowBelowHead(index, 0);
 }
