@@ -13,6 +13,7 @@ const dict = {
     scroll: 0,             // 画像の画面のスクロール位置（戻ったときに戻す）
     exact: false,          // 検索ボタンか Enter で、文字どおりの一致にしたか（また打つと、あいまいに戻る）
     preview: null,         // 簡易表示に出している画像 {project, name}（別の語句を選んでも残す）
+    big: false,            // 簡易表示の画像を、左の表の場所に大きく重ねているか
 };
 
 const GROUP_COLORS = 6;
@@ -82,13 +83,18 @@ function searchExactly() {
     renderDictionary();
 }
 
-// リセット: 検索の文字を消し、「対象を表示」と「共用辞書: すべて」に戻す
-function resetDictFilter() {
-    $('dictFilter').value = '';
+// 左上の検索を text にして、「対象を表示」と「共用辞書: すべて」に戻す（exact なら検索ボタンと同じ文字どおりの一致）
+function setDictSearch(text, exact) {
+    $('dictFilter').value = text;
     $('dictFilterMode').value = 'in';
     $('dictShared').value = '';
-    dict.exact = false;
+    dict.exact = exact;
     renderDictionary();
+}
+
+// リセット: 検索の文字を消し、「対象を表示」と「共用辞書: すべて」に戻す
+function resetDictFilter() {
+    setDictSearch('', false);
 }
 
 // 並べ替え（見出しの ▲▼）の比べるもの: キーは表示の名前、kind は印の文字（kind の無い行は向きによらず後ろ）、語句、
@@ -247,15 +253,20 @@ function renderDictImages() {
 
 const GRID_VARS = ['--picture-width', '--action-extra', '--thumb-size', '--lend'];  // 画像の画面の列の幅（control.js が #grid に置く）
 
+// 簡易表示に出している行（ほかのプロジェクトを開いたら無し）
+const shownRow = () => (dict.preview && dict.preview.project === state.projectName
+    ? state.rows.find(r => r['サムネイル'] === dict.preview.name) : null);
+
 // 右の真ん中（簡易表示）: 右上でクリックした画像の、画像の画面の行のサムネイルと段落の欄をそのまま（token・🤖・マーク・hint の列は
-// 出さない。列の幅も画像の画面と同じ）。見るだけで、サムネイルのクリックで画像の画面のその行へ。別の語句を選んでも残し、
-// ほかのプロジェクトを開いたら出さない
+// 出さない。列の幅も画像の画面と同じ）。見るだけで、押せるのはサムネイル（左の表の場所に大きい画像）と、その下の jump（画像の
+// 画面のその行へ）・閉じる。別の語句を選んでも残し、ほかのプロジェクトを開いたら出さない。出している間は説明を出さない
 function renderRowView() {
-    const shown = dict.preview && dict.preview.project === state.projectName
-        ? state.rows.find(r => r['サムネイル'] === dict.preview.name) : null;
+    const shown = shownRow();
+    renderBigImage(shown);
     const table = $('dictRowTable');
-    $('dictRowNote').textContent = shown ? `${shown['サムネイル']}（サムネイルのクリックで、画像の画面のその行へ）`
-        : '右上の画像をクリックすると、画像の画面のその行（サムネイルと段落の欄）をここに出します';
+    const note = $('dictRowNote');
+    note.textContent = shown ? '' : '右上の画像をクリックすると、画像の画面のその行（サムネイルと段落の欄）をここに出します';
+    note.hidden = Boolean(shown);
     table.hidden = !shown;
     if (!shown) return;
     GRID_VARS.forEach(name => table.style.setProperty(name, $('grid').style.getPropertyValue(name)));
@@ -267,6 +278,32 @@ function renderRowView() {
     [...table.tHead.rows[0].cells].forEach((th, i) => keep[i] || th.remove());
     [...tr.cells].forEach((td, i) => keep[i] || td.remove());
     tr.classList.remove('filtered', 'selected');  // 画像の画面の絞り込みと選択には左右されない
+    tr.querySelector('td.thumb').insertAdjacentHTML('beforeend', '<div class="row-actions">' +
+        '<button type="button" class="row-jump" title="画像の画面のその行へ">jump</button>' +
+        '<button type="button" class="row-close" title="この行の表示を閉じる">閉じる</button></div>');
+}
+
+// 左の表の場所だけに重ねる大きい画像（元の画像）: 簡易表示のサムネイルを押すと出し、簡易表示の画像が変われば一緒に変える。
+// 大きい画像のクリック・Esc・サムネイルをもう一度押す・閉じる・jump で閉じる
+function renderBigImage(shown) {
+    const box = $('dictBigImage');
+    box.hidden = !(dict.big && shown);
+    if (box.hidden) return;
+    const img = box.querySelector('img');
+    const src = `/image/${encodeURIComponent(shown['サムネイル'])}`;
+    if (img.getAttribute('src') !== src) img.src = src;
+}
+
+function setBigImage(on) {
+    dict.big = on;
+    renderBigImage(shownRow());
+}
+
+// 簡易表示の「閉じる」: 簡易表示と大きい画像を閉じる（説明に戻る）
+function closeRowView() {
+    dict.preview = null;
+    dict.big = false;
+    renderRowView();
 }
 
 // 右上の画像のクリック: 簡易表示に出す
@@ -290,8 +327,8 @@ function jumpToImage(index) {
 // kind の仲間の語句: 一覧の語句と、前後の決まりに合う辞書の語句（同じキー）
 const kindMembers = g => [...new Set([...g.phrases, ...state.phrases.filter(p => p.key === g.key && followsRule(g, p.phrase)).map(p => p.phrase)])];
 
-// 右下: 全部の kind の表（キー・名称（印）・排他制限・改名と消す・タグ（仲間の語句））。語句をクリックすると左の表のその行へ。
-// 消すは1秒長押し。kind が無いときだけ説明を出す
+// 右下: 全部の kind の表（キー・名称（印）・排他制限・改名と消す・タグ（仲間の語句））。行を押すとその kind の印で、タグを押すと
+// そのタグで、左上を検索する。消すは1秒長押し。kind が無いときだけ説明を出す
 function renderDictKinds() {
     const note = $('dictKindsNote');
     note.textContent = state.groups.length ? '' : 'kind はまだありません（左の表で語句を選び、「kindを付与する」）';
@@ -314,18 +351,6 @@ function kindMemberHtml(g, phrase) {
     const title = rule ? ` title="${escapeHtml(`決まり（「${g.name}」で${g.affix === 'suffix' ? '終わる' : '始まる'}）に合う語句`)}"` : '';
     return `<button type="button" class="kind-member${rule ? ' rule' : ''}" data-key="${escapeHtml(g.key)}" ` +
         `data-text="${escapeHtml(phrase)}"${title}>${escapeHtml(phrase)}</button>`;
-}
-
-// 左の表のその語句の行へ（検索で見えなければ検索を外す）。その行だけを選ぶので、右上の画像もその語句の
-function jumpToEntry(key, text) {
-    const id = JSON.stringify(['phrase', key, text]);
-    if (!dict.rows.some(r => r.id === id)) resetDictFilter();
-    const tr = [...$('dictBody').rows].find(row => row.dataset.id === id);
-    if (!tr) return setStatus(`${key}: ${text} は、どこにも使っていない語句です（表にありません）`, 'warn');
-    dict.selected = new Set([id]);
-    dict.anchor = dict.focus = id;
-    paintDictSelection();
-    tr.scrollIntoView({block: 'center'});
 }
 
 const selectedDictRows = () => dict.rows.filter(r => dict.selected.has(r.id));
@@ -615,8 +640,7 @@ function wireDictionary() {
         const badge = event.target.closest('.group-badge');
         if (badge) guarded(renameGroup)(badge.closest('tr'));
     });
-    // 右上の画像: クリックで画像の画面のその行へ / 右下の kind: 語句で左の表のその行へ、改名で窓
-    // 右上の画像: クリックで簡易表示に出し、ダブルクリックで画像の画面のその行へ。簡易表示のサムネイルのクリックでも画像の画面へ
+    // 右上の画像: クリックで簡易表示に出し、ダブルクリックで画像の画面のその行へ
     $('dictImageList').addEventListener('click', event => {
         const thumb = event.target.closest('.dict-thumb');
         if (thumb) previewImage(Number(thumb.dataset.index));
@@ -625,15 +649,34 @@ function wireDictionary() {
         const thumb = event.target.closest('.dict-thumb');
         if (thumb) jumpToImage(Number(thumb.dataset.index));
     });
+    // 簡易表示: サムネイルで大きい画像を出す（もう一度で閉じる）、jump で画像の画面のその行へ、閉じるで簡易表示を閉じる
     $('dictRowView').addEventListener('click', event => {
-        const img = event.target.closest('td.thumb img');
-        if (img) jumpToImage(Number(img.closest('tr').dataset.index));
+        const tr = event.target.closest('tbody tr');
+        if (!tr) return;
+        if (event.target.closest('.row-jump')) {
+            setBigImage(false);
+            return jumpToImage(Number(tr.dataset.index));
+        }
+        if (event.target.closest('.row-close')) return closeRowView();
+        if (event.target.closest('td.thumb img')) setBigImage(!dict.big);
     });
+    // 大きい画像: クリックか Esc で閉じる（窓が開いているときの Esc は窓を閉じるだけ）
+    $('dictBigImage').addEventListener('click', () => setBigImage(false));
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && state.view === 'dictionary' && !$('dictBigImage').hidden && !document.querySelector('dialog[open]')) {
+            setBigImage(false);
+        }
+    });
+    // 右下の kind: 行を押すとその kind の印で、タグ（仲間の語句）を押すとそのタグで、左上を検索する（検索ボタンと同じ）。改名で窓。
+    // 排他制限のチェックと消すでは検索しない
     $('dictKindList').addEventListener('click', event => {
         const member = event.target.closest('.kind-member');
-        if (member) return jumpToEntry(member.dataset.key, member.dataset.text);
+        if (member) return setDictSearch(member.dataset.text, true);
         const edit = event.target.closest('.kind-edit');
-        if (edit) guarded(renameKind)(Number(edit.closest('.dict-kind').dataset.i));
+        if (edit) return guarded(renameKind)(Number(edit.closest('.dict-kind').dataset.i));
+        if (event.target.closest('input, button')) return;
+        const kind = event.target.closest('.dict-kind');
+        if (kind) setDictSearch(groupLabel(state.groups[Number(kind.dataset.i)], Number(kind.dataset.i)), true);
     });
     $('dictKindList').addEventListener('change', event => {
         const box = event.target.closest('input.kind-exclusive');
