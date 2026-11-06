@@ -549,10 +549,12 @@ function withWordTail(ctx) {
 function accept(item) {
     const {el} = state.suggest;
     if (item.kind === 'name') {
-        // kind の窓の名前: 欄の文字を、選んだ名前（kind の名前か辞書のタグ）にする（続けて候補は出さない）
+        // kind の窓の名前: 欄の文字を、選んだ名前（kind の名前か辞書のタグ）にする（続けて候補は出さない）。
+        // 今ある kind なら chosen で、その kind の前後の決まりと排他制限も窓に入れる
         el.value = item.name;
         el.setSelectionRange(el.value.length, el.value.length);
         hideSuggestions();
+        item.chosen?.();
         return;
     }
     const ctx = withWordTail(state.suggest.ctx);

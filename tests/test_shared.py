@@ -368,6 +368,38 @@ def test_shared_file_with_an_old_postfix_kind_reads_it_as_suffix_and_saves_suffi
     assert json.loads(path.read_text(encoding="utf-8"))["groups"][0]["affix"] == "suffix"
 
 
+def test_delete_group_removes_a_kind_by_its_key_and_label_and_keeps_its_phrases(api, tmp_path):
+    # kind を消す（キー・名前・前後の決まりで決める）。語句は辞書と入力にそのまま。無い kind なら断る
+    load_scenes(api, movies(tmp_path), COUPLES)
+    assert api.post("/group_phrases", {"key": "looks", "phrases": ["standing", "sitting"], "name": "posture", "affix": ""})["success"]
+    assert api.post("/group_phrases", {"key": "body", "phrases": ["red/long hair"], "name": "hiar", "affix": "suffix"})["success"]
+    res = api.post("/delete_group", {"key": "looks", "name": "posture", "affix": ""})
+    assert res["success"], res
+    assert [g["name"] for g in api.dictionary()["groups"]] == ["hiar"]
+    assert any(p["key"] == "looks" and p["phrase"] == "standing" for p in api.dictionary()["phrases"])
+    res = api.post("/delete_group", {"key": "looks", "name": "posture", "affix": ""})
+    assert not res["success"] and res["message"] == "その kind はありません"
+
+
+def test_orphan_kinds_are_removed_at_startup(api, base_dir, tmp_path):
+    # 起動時: 仲間の語句が1つも無い kind（一覧の語句も決まりに合う語句も、どの保存済みのプロジェクトでも使っておらず、共用辞書にも無い）
+    # を消して保存する
+    load_scenes(api, movies(tmp_path), COUPLES)
+    api.save()
+    path = base_dir / "data_work" / "shared.json"
+    kept = [{"key": "looks", "phrases": ["standing"], "name": "posture"},  # 保存済みのプロジェクトで使っている
+            {"key": "body", "phrases": [], "name": " hair", "affix": "suffix"},  # 決まりに合う語句（red/long hair など）を使っている
+            {"key": "place", "phrases": ["ship deck"], "name": "ship"}]  # 共用辞書に入っている
+    orphans = [{"key": "body", "phrases": [], "name": "hiar", "affix": "suffix"},  # 決まりに合う語句が無い
+               {"key": "looks", "phrases": ["kneeling"], "name": "pose"}]  # どこにも無い語句だけ
+    path.write_text(json.dumps({"phrases": [{"section": "picture", "key": "place", "phrase": "ship deck"}], "words": [],
+                                "groups": kept + orphans}), encoding="utf-8")
+    fresh = pictag.CaptionTool(base_dir=base_dir)
+    assert fresh.drop_orphan_kinds() == ["._hiar", ".pose"]  # 消した kind の印（ログに出す）
+    assert fresh.shared["groups"] == kept
+    assert json.loads(path.read_text(encoding="utf-8"))["groups"] == kept
+
+
 def test_shared_file_without_the_girl_template_gets_it_and_keeps_its_own(base_dir):
     # girl の組（face）ができる前の共用辞書: ファイルに無い組は既定から補い、ファイルにある組はそのまま
     (base_dir / "data_work").mkdir()

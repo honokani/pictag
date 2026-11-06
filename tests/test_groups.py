@@ -1,8 +1,8 @@
 """共用辞書の管理（登録・削除・改名）と排他制限のグループ（関数単体）"""
 import pytest
 
-from groups import blocked_by, clean_groups, group_of, normalize_groups
-from words import (check_phrase, empty_shared, group_phrases, move_phrases, move_registered, name_group, register_phrases,
+from groups import blocked_by, clean_groups, drop_orphan_groups, group_of, normalize_groups
+from words import (check_phrase, delete_group, empty_shared, group_phrases, move_phrases, move_registered, name_group, register_phrases,
                    register_words, rename_phrase, rename_registered, replace_phrases, replace_registered, ungroup_phrases,
                    unregister_phrases, unregister_words)
 
@@ -70,6 +70,46 @@ def test_clean_groups_reads_an_old_postfix_as_suffix():
     # 0.5.36 までの共用辞書の postfix は、suffix として読む（決まりだけで仲間を持つ kind も消さない）
     old = {"key": "face", "phrases": [], "name": " face", "affix": "postfix"}
     assert clean_groups([old]) == [{**old, "affix": "suffix"}]
+
+
+def test_kinds_with_the_same_label_in_a_key_are_merged():
+    # 同じキーで名前と前後の決まりが同じ kind（印が同じ）は、仲間の語句が重ならなくても1つにまとめる（先の kind の位置と排他制限）。
+    # キーが違う kind、前後の決まりが違う kind は別のまま
+    first = {"key": "body", "phrases": ["ponytail"], "name": "hair"}
+    second = {"key": "body", "phrases": ["braids"], "name": "hair", "exclusive": False}
+    other_key = {"key": "looks", "phrases": ["bun"], "name": "hair"}
+    suffix = {"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "suffix"}
+    assert normalize_groups([first, second, other_key, suffix]) == [
+        {"key": "body", "phrases": ["ponytail", "braids"], "name": "hair"}, other_key, suffix]
+
+
+def test_renaming_a_kind_to_the_label_of_another_merges_them():
+    # .hair があるときに作った ._hair を .hair にすると、1つにまとまる（仲間の語句が重ならなくても）
+    shared = {**empty_shared(), "groups": [{"key": "body", "phrases": ["ponytail"], "name": "hair"},
+                                            {"key": "body", "phrases": ["wavy hair"], "name": "hair", "affix": "suffix"}]}
+    assert name_group(shared, "body", "wavy hair", "hair", "", True)["groups"] == [
+        {"key": "body", "phrases": ["ponytail", "wavy hair"], "name": "hair"}]
+
+
+def test_delete_group_removes_only_the_kind_with_that_key_and_label():
+    # キー・名前・前後の決まりで決めた kind だけを消す（仲間の語句が無い kind も消せる）
+    groups = [{"key": "body", "phrases": [], "name": "hiar", "affix": "suffix"},
+              {"key": "body", "phrases": ["ponytail"], "name": "hiar"},
+              {"key": "looks", "phrases": [], "name": "hiar", "affix": "suffix"}]
+    shared = {**empty_shared(), "groups": groups}
+    assert delete_group(shared, "body", "hiar", "suffix")["groups"] == groups[1:]
+    assert delete_group(shared, "body", "hiar", "")["groups"] == [groups[0], groups[2]]
+
+
+def test_drop_orphan_groups_removes_kinds_without_any_member():
+    # 仲間の語句が1つも無い kind（一覧の語句も、前後の決まりに合う語句も、ある語句の中に無い）を除く。キーも見る
+    phrases = {("looks", "standing"), ("body", "red/long hair"), ("face", "smile")}
+    kept = [{"key": "looks", "phrases": ["standing", "kneeling"], "name": "posture"},  # 1つでもあれば残す
+            {"key": "body", "phrases": [], "name": " hair", "affix": "suffix"}]  # 決まりに合う語句がある
+    orphans = [{"key": "body", "phrases": [], "name": "hiar", "affix": "suffix"},
+               {"key": "looks", "phrases": ["kneeling"], "name": "pose"},
+               {"key": "looks", "phrases": ["smile"], "name": "smile"}]  # 別のキーの語句は仲間でない
+    assert drop_orphan_groups(kept + orphans, phrases) == kept
 
 
 def test_group_phrases_with_a_name_and_name_group():

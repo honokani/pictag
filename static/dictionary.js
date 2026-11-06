@@ -290,14 +290,17 @@ function jumpToImage(index) {
 // kind の仲間の語句: 一覧の語句と、前後の決まりに合う辞書の語句（同じキー）
 const kindMembers = g => [...new Set([...g.phrases, ...state.phrases.filter(p => p.key === g.key && followsRule(g, p.phrase)).map(p => p.phrase)])];
 
-// 右下: 全部の kind（印・キー・排他制限・改名と、仲間の語句。語句をクリックすると左の表のその行へ）
+// 右下: 全部の kind（印・キー・排他制限・改名・消すと、仲間の語句。語句をクリックすると左の表のその行へ。消すは1秒長押し）
 function renderDictKinds() {
     $('dictKindsNote').textContent = state.groups.length ? `kind ${state.groups.length} 件（語句をクリックすると、左の表のその行へ）`
         : 'kind はまだありません（左の表で語句を選び、「kindを付与する」）';
     $('dictKindList').innerHTML = state.groups.map((g, i) => `<div class="dict-kind" data-i="${i}">${groupBadge(i, false)} ` +
         `<span class="key-help">${escapeHtml(g.key)}</span> <label class="key-help"><input type="checkbox" class="kind-exclusive"` +
-        `${exclusiveKind(g) ? ' checked' : ''}> 排他制限</label> <button type="button" class="kind-edit">改名</button>` +
+        `${exclusiveKind(g) ? ' checked' : ''}> 排他制限</label> <button type="button" class="kind-edit">改名</button> ` +
+        `<button type="button" class="kind-delete hold" title="1秒長押しで、この kind を消す（語句はそのまま）">消す</button>` +
         `<div class="kind-members">${kindMembers(g).map(p => kindMemberHtml(g, p)).join('')}</div></div>`).join('');
+    $('dictKindList').querySelectorAll('.kind-delete').forEach(button => holdToRun(button,
+        () => deleteKind(Number(button.closest('.dict-kind').dataset.i)), '1秒長押しすると、この kind を消します（語句はそのまま）'));
 }
 
 // kind の仲間の語句のボタン。suffix・prefix の決まりに合う語句は色を付ける（合わないが付与した語句は白のまま）
@@ -398,6 +401,21 @@ async function toggleExclusive(i, on) {
     if (!done) renderDictKinds();
 }
 
+// 右下の kind の「消す」（1秒長押し）: その kind を消す（キー・名前・前後の決まりで決めるので、仲間の語句が無い kind も消せる。
+// 語句は辞書と入力にそのまま）
+async function deleteKind(i) {
+    const g = state.groups[i];
+    if (!g) return;
+    await changeDictionary('/delete_group', {key: g.key, name: g.name || '', affix: g.affix || ''},
+        `kind ${groupLabel(g, i)} を消しました（語句はそのまま）`);
+}
+
+// 名前の候補で今ある kind を選んだとき: その kind の前後の決まりと排他制限も窓に入れる（同じ印になり、同じキーなら1つにまとまる）
+function applyKindTraits(g) {
+    $('groupDialog').querySelector(`input[name="groupAffix"][value="${g.affix || ''}"]`).checked = true;
+    $('groupExclusive').checked = exclusiveKind(g);
+}
+
 // ---- kind の窓の名前の候補（過去タグ: 今ある kind の名前を先に、後ろに辞書のタグ（語句と単語）） ----
 
 const KIND_FIRST = 1000;  // kind の名前は、合えばいつも辞書のタグより先
@@ -415,10 +433,12 @@ function tagCandidates() {
     return [...tags.values()].map(tag => ({...tag, bonus: Math.log1p(tag.count)}));
 }
 
-// kind は印の形（.posture・._ face）で見せ、選ぶと名前だけを入れる（同じ名前の kind は1つ）
+// kind は印の形（.posture・._ face）で見せ、選ぶと名前を入れ、前後の決まりと排他制限も窓に入れる（同じ印の kind は1つ）
+const sameTraits = (a, b) => a.name === b.name && (a.affix || '') === (b.affix || '');
 CANDIDATE_SOURCES.kindName = () => [
-    ...state.groups.map((g, i) => [g, i]).filter(([g], at, all) => named(g) && all.findIndex(([x]) => x.name === g.name) === at)
-        .map(([g, i]) => ({kind: 'name', label: groupLabel(g, i), match: g.name, name: g.name, bonus: KIND_FIRST})),
+    ...state.groups.map((g, i) => [g, i]).filter(([g], at, all) => named(g) && all.findIndex(([x]) => sameTraits(x, g)) === at)
+        .map(([g, i]) => ({kind: 'name', label: groupLabel(g, i), match: g.name, name: g.name, bonus: KIND_FIRST,
+            chosen: () => applyKindTraits(g)})),
     ...tagCandidates(),
 ];
 

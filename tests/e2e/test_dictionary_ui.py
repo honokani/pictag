@@ -483,10 +483,28 @@ def test_the_kind_list_turns_the_exclusive_restriction_on_and_off(page, movies):
     expect(badge).to_have_attribute("title", re.compile("（排他制限）"))
 
 
+def test_the_kind_list_deletes_a_kind_with_a_long_press(page, movies):
+    # 右下の kind の「消す」: 短く押すと説明だけ、1秒長押しで kind を消す（語句は表と入力にそのまま）
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    delete = page.locator("#dictKindList .dict-kind").first.locator(".kind-delete")
+    delete.click()
+    expect(page.locator("#status")).to_have_text("1秒長押しすると、この kind を消します（語句はそのまま）")
+    expect(page.locator("#dictKindList .dict-kind")).to_have_count(1)
+    hold(page, delete)
+    expect(page.locator("#status")).to_have_text("kind .posture を消しました（語句はそのまま）")
+    expect(page.locator("#dictKindList .dict-kind")).to_have_count(0)
+    expect(dict_row(page, "looks", "standing").locator(".group-badge")).to_have_count(0)
+    show_images(page)
+    expect(line_of(page, "titanic.png", "looks")).to_have_text("looks: standing, eyes closed, smile")
+
+
 def test_the_kind_name_field_suggests_kind_names_and_tags(page, movies):
     # kind の窓の名前の欄: ダブルクリックで過去タグ（今ある kind の名前を先に、後ろに辞書の語句と単語）を出し、打つと fzf のように絞る。
     # 候補は欄の右に出す（欄の下の選択を覆わない）。Enter で入れるのは、ダブルクリックで出した一覧か ↑↓ で選んだとき（クリックでも入る）。
-    # 打った名前のままの Enter は窓の「決める」。kind は印の形で見せ、名前だけを入れる。Esc は候補だけを閉じる（窓は閉じない）
+    # 打った名前のままの Enter は窓の「決める」。kind は印の形で見せ、名前だけを入れる。Esc は候補だけを閉じる（窓は閉じない）。
+    # 今ある kind を選ぶと、その kind の前後の決まり（suffix など）と排他制限も窓に入る（辞書のタグを選んだときは、窓の設定はそのまま）
     open_movies(page)
     group_postures(page)
     show_dictionary(page)
@@ -495,6 +513,8 @@ def test_the_kind_name_field_suggests_kind_names_and_tags(page, movies):
     page.click("#dictGroupButton")
     name = page.locator("#groupName")
     items = page.locator("#groupDialog .suggestions li")
+    expect(page.locator('#groupDialog input[name="groupAffix"][value="suffix"]')).to_be_checked()  # 初めは suffix
+    page.uncheck("#groupExclusive")
     name.dblclick()
     expect(items.first).to_have_text(".posture")  # kind の名前が先
     assert items.count() > 1  # 後ろに辞書のタグ
@@ -502,6 +522,8 @@ def test_the_kind_name_field_suggests_kind_names_and_tags(page, movies):
     assert box["x"] >= field["x"] + field["width"] and abs(box["y"] - field["y"]) <= 1  # 欄の右
     page.keyboard.press("Enter")
     expect(name).to_have_value("posture")
+    expect(page.locator('#groupDialog input[name="groupAffix"][value=""]')).to_be_checked()  # .posture は前後の決まりなし
+    expect(page.locator("#groupExclusive")).to_be_checked()  # .posture は排他制限あり
     expect(page.locator("#groupDialog")).to_be_visible()
 
     name.fill("dres")
@@ -517,12 +539,13 @@ def test_the_kind_name_field_suggests_kind_names_and_tags(page, movies):
     name.fill("yel")
     items.first.click()
     expect(name).to_have_value("yellow dress")
+    expect(page.locator('#groupDialog input[name="groupAffix"][value=""]')).to_be_checked()  # 辞書のタグでは変えない
 
     name.fill("hair")  # 打った名前のままの Enter は、候補を入れずに「決める」
     expect(items.first).to_be_visible()
     page.keyboard.press("Enter")
     expect(page.locator("#groupDialog")).to_be_hidden()
-    expect(dict_row(page, "clothes", "long dress").locator(".group-badge")).to_have_text("._hair")
+    expect(dict_row(page, "clothes", "long dress").locator(".group-badge")).to_have_text(".hair")
 
 
 def test_the_kind_list_shows_every_kind_and_jumps_to_its_phrases(page, movies):
