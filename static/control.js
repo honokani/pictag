@@ -943,7 +943,7 @@ function resume() {
     if (!row) return;
     const tr = rowElement(row.index);
     if (!tr || tr.getBoundingClientRect().height === 0) {
-        setStatus(`${row['サムネイル']}（最後に書き換えた行）は、絞り込みか「削除済み画像を表示」で隠れています`, 'warn');
+        setStatus(`${row['サムネイル']}（最後に書き換えた行）は、絞り込みか「削除済み表示」で隠れています`, 'warn');
         return;
     }
     showRowBelowHead(row.index, 0);
@@ -1514,6 +1514,7 @@ function updateSelectionInfo() {
     $('selectionInfo').textContent = `選択 ${state.selected.size} 行`;
     $('bulkForm').classList.toggle('idle', state.selected.size === 0);  // 行を選んでいる間だけ、一括入力と選択解除を出す
     $('deselectButton').hidden = state.selected.size === 0;
+    $('deleteImagesButton').disabled = state.selected.size === 0;  // 画像削除は場所を取ったまま、押せなくする（帯がずれない）
 }
 
 // ---- 操作 ----
@@ -1713,6 +1714,21 @@ async function removeDead() {
     state.dirty = false;
     await refreshTable();
     setStatus(res.message, 'ok');
+}
+
+// 画像削除（2段目の左端。1秒長押し）: 選んだ行の画像をごみ箱へ移し、その行を削除済みにする（入力は残る）。
+// 削除済みにした行は選択から外す。Qwen が書いている間は止める
+async function deleteImages() {
+    if (!state.selected.size) return;
+    if (state.qwenBusy.size) return setStatus('Qwen が書き終わってから削除してください', 'error');
+    commitEdit();
+    await settled();
+    const res = await postJson('/delete_images', {names: [...state.selected].map(i => state.byIndex.get(i)['サムネイル'])});
+    if (!res.success) return setStatus(res.message, 'error');
+    const deleted = new Set(res.deleted);
+    state.selected = new Set([...state.selected].filter(i => !deleted.has(state.byIndex.get(i)['サムネイル'])));
+    await refreshTable();
+    setStatus(res.message, res.failed.length ? 'warn' : 'ok');
 }
 
 function toggleDead() {
@@ -1997,7 +2013,7 @@ function keyPhraseContext(el, key) {
 
 const autoMarkContext = el => keyPhraseContext(el, $('autoMarkKey').value);
 
-// ---- キーを移す（帯の「共用辞書に入れる」の右。段落（A, B も）のキーの語句を、ほかのキーへ。開いているプロジェクトの全行と共用辞書） ----
+// ---- キーを移す（帯の「共用辞書へ」の右。段落（A, B も）のキーの語句を、ほかのキーへ。開いているプロジェクトの全行と共用辞書） ----
 
 function fillMoveSections() {
     fillOptions($('moveSection'), baseSections());
@@ -2273,6 +2289,7 @@ function wire() {
     document.querySelectorAll('.clear-marks .hold').forEach(button =>
         holdToRun(button, () => clearMarks(button.dataset.column), '1秒長押しすると、全行のマークを消します'));
     holdToRun($('deselectButton'), deselectAll, '1秒長押しすると、選択を解除します');
+    holdToRun($('deleteImagesButton'), deleteImages, '1秒長押しすると、選んだ行の画像をごみ箱へ移します（行は削除済みになり、入力は残ります）');
     document.addEventListener('keydown', handleMarkKey);
 
     $('gridBody').addEventListener('click', event => {
