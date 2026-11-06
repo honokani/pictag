@@ -135,7 +135,8 @@
         </label>
     </section>
 
-    <!-- 共用辞書の画面: 左半分に表（改名の列の右端が真ん中）、右半分の上に最後に選んだ語句の画像、下に全部の kind -->
+    <!-- 共用辞書の画面: 左 40% に表（改名の列の右端が境目）、右 60% の上に最後に選んだ語句の画像、真ん中に簡易表示、下に全部の kind。
+         大きい画像は左の表の場所に重ねる -->
     <main id="dictView" hidden>
         <div id="dictLeft" class="dict-pane">
         <table id="dictGrid">
@@ -153,18 +154,21 @@
         </table>
         <p id="dictEmpty" hidden>表示する語句がありません。画像の画面で入力するか、上の欄で語句を足してください。</p>
         </div>
+        <!-- 大きい画像: 簡易表示のサムネイルを押すと、元の画像を左の表の場所だけに重ねる（クリックか Esc で閉じる） -->
+        <div id="dictBigImage" hidden title="クリックか Esc で閉じる"><img alt=""></div>
         <div id="dictRight">
             <!-- 最後に選んだ語句を使っている、開いているプロジェクトの画像（クリックで下に画像の画面の行、ダブルクリックで画像の画面のその行へ） -->
             <section id="dictImages" class="dict-pane dict-side" aria-label="語句を使っている画像">
                 <p id="dictImagesNote" class="key-help"></p>
                 <div id="dictImageList" class="dict-thumbs"></div>
             </section>
-            <!-- 簡易表示: クリックした画像の、画像の画面の行のサムネイルと段落の欄（見るだけ。サムネイルのクリックで画像の画面のその行へ） -->
+            <!-- 簡易表示: クリックした画像の、画像の画面の行のサムネイルと段落の欄（見るだけ。サムネイルで大きい画像、その下の jump で
+                 画像の画面のその行へ、閉じるで消す） -->
             <section id="dictRowView" class="dict-pane dict-side" aria-label="画像の画面の行">
                 <p id="dictRowNote" class="key-help"></p>
                 <table id="dictRowTable" hidden><thead><tr></tr></thead><tbody></tbody></table>
             </section>
-            <!-- 全部の kind: 印・キー・排他制限・改名と、仲間の語句（クリックで左の表のその行へ） -->
+            <!-- 全部の kind: キー・名称（印）・排他制限・改名と消す・タグ（仲間の語句）。行で kind の印を、タグでそのタグを左上で検索 -->
             <section id="dictKinds" class="dict-pane dict-side" aria-label="kind の一覧">
                 <p id="dictKindsNote" class="key-help"></p>
                 <div id="dictKindList"></div>
