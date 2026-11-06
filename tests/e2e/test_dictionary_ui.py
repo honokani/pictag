@@ -373,7 +373,7 @@ def test_naming_a_kind_with_a_suffix_takes_in_phrases_that_end_with_it(page, mov
 
 
 def test_dictionary_table_takes_the_left_40_percent_and_the_right_shows_images_a_row_and_kinds(page, movies):
-    # 表は左 40%（改名の列の右端が境目。語句の列が残りの幅、段落は 120px でキーの左、ほかの列は中身の幅）。
+    # 表は左 40%（改名の列の右端が境目。語句の列が残りの幅、段落は 60px でキーの左、ほかの列は中身の幅）。
     # 右 60% の上に画像、真ん中に画像の画面の行（簡易表示）、下に kind。
     # 見出しは「段落」「回数▲▼（▲▼）」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す。
     # 回数（4（0）など）は折り返さない
@@ -386,7 +386,7 @@ def test_dictionary_table_takes_the_left_40_percent_and_the_right_shows_images_a
     expect(heads).to_have_text(["", "段落", "キー▲▼", "kind▲▼", "語句▲▼", "回数▲▼（▲▼）", "辞書", ""])
     expect(page.locator("#dictBody tr").first.locator("td").nth(1)).to_have_class("dict-sections")  # 行の中も同じ並び
     widths = heads.evaluate_all("ths => ths.map(th => th.getBoundingClientRect().width)")
-    assert widths[0] <= 30 and abs(widths[1] - 120) <= 1  # チェックが入る分だけ / 段落は 120px
+    assert widths[0] <= 30 and abs(widths[1] - 60) <= 1  # チェックが入る分だけ / 段落は 60px
     assert widths[2] <= 130 and widths[3] <= 110 and widths[4] == max(widths)  # キーと kind は中身の幅、語句の列が残りの幅
     assert widths[5] <= 130 and widths[6] <= 50 and widths[7] <= 64  # 回数（見出しの ▲▼（▲▼））、「辞書」と、改名のボタンが入る幅
     assert page.locator("#dictBody td.num").evaluate_all("""tds => tds.every(td => {
