@@ -375,19 +375,22 @@ def test_naming_a_kind_with_a_suffix_takes_in_phrases_that_end_with_it(page, mov
 def test_dictionary_table_takes_the_left_40_percent_and_the_right_shows_images_a_row_and_kinds(page, movies):
     # 表は左 40%（改名の列の右端が境目。語句の列が残りの幅、段落は 120px でキーの左、ほかの列は中身の幅）。
     # 右 60% の上に画像、真ん中に画像の画面の行（簡易表示）、下に kind。
-    # 見出しは「段落」「回数」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す
+    # 見出しは「段落」「回数▲▼（▲▼）」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す。
+    # 回数（4（0）など）は折り返さない
     page.set_viewport_size({"width": 1800, "height": 800})
     open_movies(page)
     show_dictionary(page)
     expect(page.locator("#dictBody .dict-key", has_text="action").first).to_be_visible()  # 行を描くまで待つ
     expect(page.locator("#dictBody .dict-key", has_text="（キーなし）")).to_have_count(0)
     heads = page.locator("#dictGrid thead th")
-    expect(heads).to_have_text(["", "段落", "キー▲▼", "kind▲▼", "語句▲▼", "回数", "辞書", ""])
+    expect(heads).to_have_text(["", "段落", "キー▲▼", "kind▲▼", "語句▲▼", "回数▲▼（▲▼）", "辞書", ""])
     expect(page.locator("#dictBody tr").first.locator("td").nth(1)).to_have_class("dict-sections")  # 行の中も同じ並び
     widths = heads.evaluate_all("ths => ths.map(th => th.getBoundingClientRect().width)")
     assert widths[0] <= 30 and abs(widths[1] - 120) <= 1  # チェックが入る分だけ / 段落は 120px
     assert widths[2] <= 130 and widths[3] <= 110 and widths[4] == max(widths)  # キーと kind は中身の幅、語句の列が残りの幅
-    assert widths[5] <= 64 and widths[6] <= 50 and widths[7] <= 64  # 回数（4（0）など）、「辞書」と、改名のボタンが入る幅
+    assert widths[5] <= 130 and widths[6] <= 50 and widths[7] <= 64  # 回数（見出しの ▲▼（▲▼））、「辞書」と、改名のボタンが入る幅
+    assert page.locator("#dictBody td.num").evaluate_all("""tds => tds.every(td => {
+        const range = document.createRange(); range.selectNodeContents(td); return range.getClientRects().length === 1; })""")
     rename = heads.nth(7).bounding_box()
     assert abs(rename["x"] + rename["width"] - 720) <= 20  # 境目（左の縦のスクロールバーの分だけ手前）
     images, shown, kinds = (page.locator(s).bounding_box() for s in ("#dictImages", "#dictRowView", "#dictKinds"))
@@ -591,6 +594,29 @@ def test_dictionary_rows_sort_and_search_tags_and_kinds_together(page, movies):
     page.select_option("#dictFilterMode", "out")
     expect(page.locator("#dictBody tr .group-badge")).to_have_count(0)
     expect(page.locator("#dictBody tr").first).to_be_visible()
+
+
+def test_dictionary_rows_sort_by_the_count_of_this_project_and_of_the_others(page, movies, tmp_path):
+    # 回数の見出しの ▲▼（▲▼）: 前の ▲▼ は開いているプロジェクトの回数、括弧の中はほかのプロジェクトの回数で並べる
+    # （▲ は少ない順、▼ は多い順。同じ数は元の並び。同じものをもう一度押すと元の並び）
+    other = Api(pictag.app.test_client())
+    load_scenes(other, tmp_path / "imgs" / "others", ["titanic.png"])
+    other.save()
+    open_movies(page)
+    show_dictionary(page)
+    expect(dict_row(page, "looks", "standing").locator(".num")).to_have_text("4（2）")
+    texts = lambda: page.locator("#dictBody tr").evaluate_all("rows => rows.map(r => r.dataset.text)")
+    counts = lambda at: [int(re.findall(r"\d+", t)[at])
+                         for t in page.locator("#dictBody td.num").evaluate_all("tds => tds.map(td => td.textContent)")]
+    default = texts()
+    page.click('#dictGrid button.sort[data-sort="here"][data-dir="-1"]')
+    assert counts(0) == sorted(counts(0), reverse=True) and counts(0)[0] == 4
+    page.click('#dictGrid button.sort[data-sort="others"][data-dir="-1"]')
+    assert counts(1) == sorted(counts(1), reverse=True) and texts()[0] == "standing"  # ほかのプロジェクトで2回
+    page.click('#dictGrid button.sort[data-sort="others"][data-dir="1"]')
+    assert counts(1) == sorted(counts(1)) and texts()[-1] == "standing"
+    page.click('#dictGrid button.sort[data-sort="others"][data-dir="1"]')
+    assert texts() == default
 
 
 def test_a_kind_from_one_phrase_that_is_not_exclusive_marks_no_conflict(page, movies):
