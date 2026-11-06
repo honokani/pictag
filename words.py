@@ -11,7 +11,7 @@ from collections import Counter
 from functools import reduce
 
 from caption_format import parse_line, phrases_of, with_line
-from groups import group_of, normalize_groups
+from groups import group_of, naming, normalize_groups
 
 RESERVED_SECTIONS = {'サムネイル', 'is_dead', 'mark', 'marks', 'edited_at'}  # 表の固定列と同じ名前は使えない
 
@@ -110,6 +110,12 @@ def name_group(shared, key, phrase, name, affix, exclusive=True):
     renamed = [{'key': g['key'], 'phrases': g['phrases'], 'name': name, 'affix': affix, 'exclusive': exclusive} if g is target else g
                for g in shared['groups']]
     return {**shared, 'groups': normalize_groups(renamed)}
+
+
+def delete_group(shared, key, name, affix):
+    """キー・名前・前後の決まり（印）で決めた kind を消す（仲間の語句は辞書と入力にそのまま。仲間の語句が無い kind も消せる）"""
+    wanted = naming({'name': name, 'affix': affix})
+    return {**shared, 'groups': [g for g in shared['groups'] if not (g['key'] == key and naming(g) == wanted)]}
 
 
 def unregister_phrases(shared, pairs):
