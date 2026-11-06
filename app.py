@@ -686,7 +686,7 @@ class CaptionTool:
 
     def group(self, key, phrases, name='', affix='', exclusive=True):
         """同じキーの語句に kind を付与する（語句1つでもよい。共用辞書に無い語句は、使っている段落で入れる）。名前・前後の決まり
-        （prefix / postfix）・排他制限を付けられる（今ある kind とまとまるときは、その kind の名前と排他制限のまま）"""
+        （prefix / suffix）・排他制限を付けられる（今ある kind とまとまるときは、その kind の名前と排他制限のまま）"""
         def change(shared):
             k = check_key(key)
             if not k:
@@ -722,7 +722,7 @@ class CaptionTool:
         keys = ({k for keys in shared['templates'].values() for k in keys} | {t[1] for t in phrase_usage}
                 | {p['key'] for p in shared['phrases']})
         if not affix and name.strip() in keys - {''}:
-            raise ValueError(f'「.{name.strip()}」はキーと同じ名前なので、kind の名前に使えません（postfix か prefix にするか、ほかの名前に）')
+            raise ValueError(f'「.{name.strip()}」はキーと同じ名前なので、kind の名前に使えません（suffix か prefix にするか、ほかの名前に）')
         return name, affix, exclusive
 
     def ungroup(self, pairs):
@@ -1542,14 +1542,14 @@ def apply_verb_forms_route():
 
 @app.route('/group_phrases', methods=['POST'])
 def group_phrases_api():
-    """同じキーの語句に kind を付与する（{key, phrases, name, affix: prefix / postfix / 空, exclusive: 排他制限（無ければ真）}）"""
+    """同じキーの語句に kind を付与する（{key, phrases, name, affix: prefix / suffix / 空, exclusive: 排他制限（無ければ真）}）"""
     data = request.get_json() or {}
     grouped = caption_tool.group(data.get('key'), data.get('phrases'), data.get('name'), data.get('affix'), data.get('exclusive'))
     return dictionary_result(grouped, 'kind を付与しました')
 
 @app.route('/name_group', methods=['POST'])
 def name_group_api():
-    """kind の名前・前後の決まり・排他制限を変える（{key, phrase: 仲間の語句, name, affix: prefix / postfix / 空, exclusive}）"""
+    """kind の名前・前後の決まり・排他制限を変える（{key, phrase: 仲間の語句, name, affix: prefix / suffix / 空, exclusive}）"""
     data = request.get_json() or {}
     named = caption_tool.name_group(data.get('key'), data.get('phrase'), data.get('name'), data.get('affix'), data.get('exclusive'))
     return dictionary_result(named, 'kind を変えました')

@@ -287,15 +287,15 @@ def test_bulk_add_skips_rows_that_have_a_group_mate(api, tmp_path):
     assert girl["singin_rain.png"] == "looks: sitting"
 
 
-def test_group_with_a_postfix_takes_in_phrases_that_end_with_it(api, tmp_path):
-    # 名前と postfix を付けたグループは、名前で終わる同じキーの語句もいつも仲間（一括入力で足さない）。仲間の語句で選んで名前を変えられる
+def test_group_with_a_suffix_takes_in_phrases_that_end_with_it(api, tmp_path):
+    # 名前と suffix を付けたグループは、名前で終わる同じキーの語句もいつも仲間（一括入力で足さない）。仲間の語句で選んで名前を変えられる
     rows = load_scenes(api, movies(tmp_path), COUPLES)
     for name, text in [("titanic.png", "face: smiling face"), ("roman_holiday.png", "face: surprised face"),
                        ("lalaland.png", "face: crying face")]:
         api.write(rows[name], text)
-    res = api.post("/group_phrases", {"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "postfix"})
+    res = api.post("/group_phrases", {"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "suffix"})
     assert res["success"], res
-    assert api.dictionary()["groups"] == [{"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "postfix"}]
+    assert api.dictionary()["groups"] == [{"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "suffix"}]
     res = api.bulk_add(list(rows.values()), "face: smiling face")
     assert res["success"] and res["skipped"] == 2, res  # surprised face と crying face（決まりで仲間）の行には足さない
     res = api.post("/name_group", {"key": "face", "phrase": "crying face", "name": "", "affix": ""})  # 決まりの仲間で選んでも同じグループ
@@ -305,23 +305,23 @@ def test_group_with_a_postfix_takes_in_phrases_that_end_with_it(api, tmp_path):
 def test_a_kind_can_have_one_phrase_and_need_not_be_exclusive(api, tmp_path):
     # kind は語句1つでも付与できる。排他制限でない kind の仲間がある行にも、一括入力で足す。あとから排他制限にもできる
     rows = load_scenes(api, movies(tmp_path), COUPLES)
-    res = api.post("/group_phrases", {"key": "body", "phrases": ["red/long hair"], "name": "hair", "affix": "postfix", "exclusive": False})
+    res = api.post("/group_phrases", {"key": "body", "phrases": ["red/long hair"], "name": "hair", "affix": "suffix", "exclusive": False})
     assert res["success"], res
     res = api.bulk_add(list(rows.values()), "body: wavy hair")
     assert res["success"] and res["skipped"] == 0, res
-    res = api.post("/name_group", {"key": "body", "phrase": "wavy hair", "name": "hair", "affix": "postfix", "exclusive": True})
+    res = api.post("/name_group", {"key": "body", "phrase": "wavy hair", "name": "hair", "affix": "suffix", "exclusive": True})
     assert res["success"], res
-    assert api.dictionary()["groups"] == [{"key": "body", "phrases": ["red/long hair"], "name": "hair", "affix": "postfix"}]
+    assert api.dictionary()["groups"] == [{"key": "body", "phrases": ["red/long hair"], "name": "hair", "affix": "suffix"}]
     res = api.post("/group_phrases", {"key": "body", "phrases": ["red/long hair"], "exclusive": "yes"})
     assert not res["success"] and res["message"], res
 
 
-def test_a_kind_named_like_a_key_needs_a_prefix_or_postfix(api, tmp_path):
+def test_a_kind_named_like_a_key_needs_a_prefix_or_suffix(api, tmp_path):
     # 前後の決まりの無い kind の名前は、キー（.looks のような、キーの kind）と同じにできない。._looks・.looks_ はよい
     load_scenes(api, movies(tmp_path), ["titanic.png"])
     res = api.post("/group_phrases", {"key": "looks", "phrases": ["smile"], "name": "looks", "affix": ""})
     assert not res["success"] and "キー" in res["message"], res
-    res = api.post("/group_phrases", {"key": "looks", "phrases": ["smile"], "name": "looks", "affix": "postfix"})
+    res = api.post("/group_phrases", {"key": "looks", "phrases": ["smile"], "name": "looks", "affix": "suffix"})
     assert res["success"], res
     res = api.post("/name_group", {"key": "looks", "phrase": "smile", "name": "body", "affix": ""})
     assert not res["success"] and "キー" in res["message"], res
@@ -331,10 +331,10 @@ def test_group_rejects_a_bad_name_or_rule(api, tmp_path):
     rows = load_scenes(api, movies(tmp_path), ["titanic.png", "roman_holiday.png"])
     api.write(rows["titanic.png"], "face: smiling face")
     api.write(rows["roman_holiday.png"], "face: surprised face")
-    for naming in [{"name": " face", "affix": "middle"}, {"name": "a\nface", "affix": "postfix"}]:  # 決まりの種類・改名の入った名前
+    for naming in [{"name": " face", "affix": "middle"}, {"name": "a\nface", "affix": "suffix"}]:  # 決まりの種類・改名の入った名前
         res = api.post("/group_phrases", {"key": "face", "phrases": ["smiling face", "surprised face"], **naming})
         assert not res["success"] and res["message"], naming
-    res = api.post("/name_group", {"key": "face", "phrase": "smiling face", "name": "face", "affix": "postfix"})
+    res = api.post("/name_group", {"key": "face", "phrase": "smiling face", "name": "face", "affix": "suffix"})
     assert not res["success"] and res["message"], res  # グループに入っていない語句
     assert api.dictionary()["groups"] == []
 
@@ -354,6 +354,18 @@ def test_shared_file_without_groups_still_loads(base_dir):
     fresh = pictag.CaptionTool(base_dir=base_dir)
     assert fresh.shared["groups"] == []
     assert fresh.shared["phrases"] == [{"section": "girl", "key": "looks", "phrase": "standing"}]
+
+
+def test_shared_file_with_an_old_postfix_kind_reads_it_as_suffix_and_saves_suffix(base_dir):
+    # 0.5.36 までの共用辞書: kind の postfix は suffix として読み、次に共用辞書を保存すると suffix で書く（手で直さなくてよい）
+    (base_dir / "data_work").mkdir()
+    path = base_dir / "data_work" / "shared.json"
+    path.write_text(json.dumps({"phrases": [], "words": [], "groups": [
+        {"key": "face", "phrases": ["smiling face"], "name": " face", "affix": "postfix"}]}), encoding="utf-8")
+    fresh = pictag.CaptionTool(base_dir=base_dir)
+    assert fresh.shared["groups"] == [{"key": "face", "phrases": ["smiling face"], "name": " face", "affix": "suffix"}]
+    fresh.save_shared()
+    assert json.loads(path.read_text(encoding="utf-8"))["groups"][0]["affix"] == "suffix"
 
 
 def test_shared_file_without_the_girl_template_gets_it_and_keeps_its_own(base_dir):
