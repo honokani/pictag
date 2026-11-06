@@ -36,12 +36,12 @@ def test_group_of_and_blocked_by():
     assert blocked_by(groups, "clothes: standing", "looks", "lying") is None  # 別のキーの行
 
 
-FACES = {"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "postfix"}
+FACES = {"key": "face", "phrases": ["smiling face", "surprised face"], "name": " face", "affix": "suffix"}
 EYES = {"key": "eyes", "phrases": ["eyes closed", "eyes open"], "name": "eyes ", "affix": "prefix"}
 
 
-def test_a_group_with_a_postfix_or_prefix_takes_in_every_phrase_that_has_it():
-    # postfix は名前で終わる語句、prefix は名前で始まる語句（同じキー）をいつも仲間にする。名前の空白もそのまま比べる
+def test_a_group_with_a_suffix_or_prefix_takes_in_every_phrase_that_has_it():
+    # suffix は名前で終わる語句、prefix は名前で始まる語句（同じキー）をいつも仲間にする。名前の空白もそのまま比べる
     groups = [FACES, EYES]
     assert group_of(groups, "face", "crying face") == FACES
     assert group_of(groups, "face", "smileface") is None  # 「 face」で終わらない
@@ -57,7 +57,7 @@ def test_normalize_keeps_the_first_name_and_groups_with_a_rule():
               {"key": "face", "phrases": ["crying face", "pout"]},  # 決まり（ face で終わる）で1つ目と重なる
               {"key": "eyes", "phrases": ["eyes closed"], "name": "eyes ", "affix": "prefix"}]  # 決まりがあれば語句が1つでも残す
     assert normalize_groups(groups) == [
-        {"key": "face", "phrases": ["smiling face", "surprised face", "grin", "crying face", "pout"], "name": " face", "affix": "postfix"},
+        {"key": "face", "phrases": ["smiling face", "surprised face", "grin", "crying face", "pout"], "name": " face", "affix": "suffix"},
         {"key": "eyes", "phrases": ["eyes closed"], "name": "eyes ", "affix": "prefix"}]
 
 
@@ -66,15 +66,21 @@ def test_clean_groups_keeps_only_a_valid_name_and_rule():
     assert clean_groups(loaded) == [FACES, {"key": "body", "phrases": ["x", "y"]}]
 
 
+def test_clean_groups_reads_an_old_postfix_as_suffix():
+    # 0.5.36 までの共用辞書の postfix は、suffix として読む（決まりだけで仲間を持つ kind も消さない）
+    old = {"key": "face", "phrases": [], "name": " face", "affix": "postfix"}
+    assert clean_groups([old]) == [{**old, "affix": "suffix"}]
+
+
 def test_group_phrases_with_a_name_and_name_group():
-    shared = group_phrases(empty_shared(), "face", ["smiling face", "surprised face"], " face", "postfix")
+    shared = group_phrases(empty_shared(), "face", ["smiling face", "surprised face"], " face", "suffix")
     assert shared["groups"] == [FACES]
     shared = group_phrases(shared, "face", ["crying face", "pout"])  # 今あるグループ（決まりで重なる）に足すと、名前はそのまま
     phrases = ["smiling face", "surprised face", "crying face", "pout"]
     assert shared["groups"] == [{**FACES, "phrases": phrases}]
     shared = name_group(shared, "face", "pout", "mouth", "")  # 仲間の語句でグループを選び、名前を変える（前後の決まりなし）
     assert shared["groups"] == [{"key": "face", "phrases": phrases, "name": "mouth"}]
-    assert name_group(shared, "face", "pout", "  ", "postfix")["groups"] == [{"key": "face", "phrases": phrases}]  # 空白だけなら番号
+    assert name_group(shared, "face", "pout", "  ", "suffix")["groups"] == [{"key": "face", "phrases": phrases}]  # 空白だけなら番号
 
 
 def test_register_adds_only_new_entries():
@@ -197,10 +203,10 @@ def test_a_kind_that_is_not_exclusive_blocks_nothing():
 
 
 def test_group_phrases_and_name_group_set_whether_a_kind_is_exclusive():
-    shared = group_phrases(empty_shared(), "body", ["long hair"], "hair", "postfix", False)  # 語句1つでも kind にできる
-    assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "postfix", "exclusive": False}]
-    shared = name_group(shared, "body", "black hair", "hair", "postfix", True)  # 決まりの仲間で選び、排他制限にする
-    assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "postfix"}]
+    shared = group_phrases(empty_shared(), "body", ["long hair"], "hair", "suffix", False)  # 語句1つでも kind にできる
+    assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "suffix", "exclusive": False}]
+    shared = name_group(shared, "body", "black hair", "hair", "suffix", True)  # 決まりの仲間で選び、排他制限にする
+    assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "suffix"}]
 
 
 @pytest.mark.parametrize("key, phrase, message", [

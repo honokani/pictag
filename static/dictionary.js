@@ -242,22 +242,25 @@ function renderDictImages() {
 
 const GRID_VARS = ['--picture-width', '--action-extra', '--thumb-size', '--lend'];  // 画像の画面の列の幅（control.js が #grid に置く）
 
-// 右の真ん中（簡易表示）: 右上でクリックした画像の、画像の画面の行をそのまま（hint の列を除く。列の幅も画像の画面と同じ）。
-// 見るだけで、サムネイルのクリックで画像の画面のその行へ。別の語句を選んでも残し、ほかのプロジェクトを開いたら出さない
+// 右の真ん中（簡易表示）: 右上でクリックした画像の、画像の画面の行のサムネイルと段落の欄をそのまま（token・🤖・マーク・hint の列は
+// 出さない。列の幅も画像の画面と同じ）。見るだけで、サムネイルのクリックで画像の画面のその行へ。別の語句を選んでも残し、
+// ほかのプロジェクトを開いたら出さない
 function renderRowView() {
     const shown = dict.preview && dict.preview.project === state.projectName
         ? state.rows.find(r => r['サムネイル'] === dict.preview.name) : null;
     const table = $('dictRowTable');
     $('dictRowNote').textContent = shown ? `${shown['サムネイル']}（サムネイルのクリックで、画像の画面のその行へ）`
-        : '右上の画像をクリックすると、画像の画面のその行（hint の列を除く）をここに出します';
+        : '右上の画像をクリックすると、画像の画面のその行（サムネイルと段落の欄）をここに出します';
     table.hidden = !shown;
     if (!shown) return;
     GRID_VARS.forEach(name => table.style.setProperty(name, $('grid').style.getPropertyValue(name)));
-    table.tHead.rows[0].innerHTML = headHtml();
-    table.tHead.querySelector('th.hint-head')?.remove();
     table.tBodies[0].innerHTML = rowHtml(shown);
+    table.tHead.rows[0].innerHTML = headHtml();
     const tr = table.tBodies[0].rows[0];
-    tr.querySelector('td.hint')?.remove();
+    // 見出しと行は同じ並び（サムネイル・token・🤖・マーク・段落…・hint）なので、行で残す列を決めて、見出しも同じ位置を残す
+    const keep = [...tr.cells].map(td => td.classList.contains('thumb') || td.classList.contains('cell'));
+    [...table.tHead.rows[0].cells].forEach((th, i) => keep[i] || th.remove());
+    [...tr.cells].forEach((td, i) => keep[i] || td.remove());
     tr.classList.remove('filtered', 'selected');  // 画像の画面の絞り込みと選択には左右されない
 }
 
@@ -292,10 +295,10 @@ function renderDictKinds() {
         `<div class="kind-members">${kindMembers(g).map(p => kindMemberHtml(g, p)).join('')}</div></div>`).join('');
 }
 
-// kind の仲間の語句のボタン。postfix・prefix の決まりに合う語句は色を付ける（合わないが付与した語句は白のまま）
+// kind の仲間の語句のボタン。suffix・prefix の決まりに合う語句は色を付ける（合わないが付与した語句は白のまま）
 function kindMemberHtml(g, phrase) {
     const rule = followsRule(g, phrase);
-    const title = rule ? ` title="${escapeHtml(`決まり（「${g.name}」で${g.affix === 'postfix' ? '終わる' : '始まる'}）に合う語句`)}"` : '';
+    const title = rule ? ` title="${escapeHtml(`決まり（「${g.name}」で${g.affix === 'suffix' ? '終わる' : '始まる'}）に合う語句`)}"` : '';
     return `<button type="button" class="kind-member${rule ? ' rule' : ''}" data-key="${escapeHtml(g.key)}" ` +
         `data-text="${escapeHtml(phrase)}"${title}>${escapeHtml(phrase)}</button>`;
 }
@@ -357,7 +360,7 @@ async function groupSelected() {
 }
 
 // kind の窓: 名前（前後の空白もそのまま）・前後の決まり・排他制限を聞く。決めたら {name, affix, exclusive}、やめたら null
-function askGroupName(name = '', affix = 'postfix', exclusive = true) {
+function askGroupName(name = '', affix = 'suffix', exclusive = true) {
     const dialog = $('groupDialog');
     $('groupName').value = name;
     dialog.querySelector(`input[name="groupAffix"][value="${affix}"]`).checked = true;
@@ -373,7 +376,7 @@ function askGroupName(name = '', affix = 'postfix', exclusive = true) {
 async function renameKind(i, phrase = kindMembers(state.groups[i])[0]) {
     const g = state.groups[i];
     if (!g || phrase === undefined) return;
-    const naming = await askGroupName(named(g) ? g.name : '', named(g) ? g.affix || '' : 'postfix', exclusiveKind(g));
+    const naming = await askGroupName(named(g) ? g.name : '', named(g) ? g.affix || '' : 'suffix', exclusiveKind(g));
     if (!naming) return;
     if (!named(naming)) return setStatus('kind の名前は外せません（名前を入れてください）', 'error');
     await changeDictionary('/name_group', {key: g.key, phrase, ...naming}, `kind を ${groupLabel(naming, i)} にしました`);

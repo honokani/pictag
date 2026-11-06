@@ -281,7 +281,7 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 .dict-kind { padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
 .kind-members { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .kind-member { padding: 0 6px; border: 1px solid #ccc; border-radius: 3px; background: #fff; font-size: 12px; cursor: pointer; }
-.kind-member.rule { background: #e3effd; border-color: #a9c8ee; }  /* postfix・prefix の決まりに合う語句（合わないが付与した語句は白） */
+.kind-member.rule { background: #e3effd; border-color: #a9c8ee; }  /* suffix・prefix の決まりに合う語句（合わないが付与した語句は白） */
 /* 共用辞書の表は左の枠いっぱい。語句と段落は幅を決めて折り返し、ほかの列は中身の幅 */
 #dictGrid { width: 100%; min-width: 0; }
 #dictGrid td { width: 1%; }  /* 語句の列のほかは中身の幅に縮め、語句の列が残りの幅を取る（段落は 120px） */

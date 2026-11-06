@@ -270,8 +270,8 @@ const named = g => typeof g.name === 'string' && g.name.trim() !== '';
 // 排他制限の kind か（書いていなければ排他制限あり）
 const exclusiveKind = g => g.exclusive !== false;
 
-// 前後の決まりに合うか（postfix は名前で終わる、prefix は名前で始まる。名前の空白もそのまま比べる）
-const followsRule = (g, phrase) => named(g) && (g.affix === 'postfix' ? phrase.endsWith(g.name) : g.affix === 'prefix' && phrase.startsWith(g.name));
+// 前後の決まりに合うか（suffix は名前で終わる、prefix は名前で始まる。名前の空白もそのまま比べる）
+const followsRule = (g, phrase) => named(g) && (g.affix === 'suffix' ? phrase.endsWith(g.name) : g.affix === 'prefix' && phrase.startsWith(g.name));
 
 // kind の仲間か（同じキーで、語句の一覧に入っているか、前後の決まりに合う）
 const inGroup = (g, key, phrase) => g.key === key && (g.phrases.includes(phrase) || followsRule(g, phrase));
@@ -287,12 +287,12 @@ function blockedIn(byKey, key, phrase) {
 // 語句のうち2つ以上が仲間の排他制限の kind（ぶつかっている）
 const conflictOf = (key, phrases) => state.groups.find(g => exclusiveKind(g) && phrases.filter(p => inGroup(g, key, p)).length >= 2);
 
-// kind の印（kind はいつも「.」で始まる）: postfix は ._名前、prefix は .名前_、決まりなしは .名前。名前が無ければ .K1, .K2 …（i は並びの位置）
-const groupLabel = (g, i) => `.${!named(g) ? `K${i + 1}` : g.affix === 'postfix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name}`;
+// kind の印（kind はいつも「.」で始まる）: suffix は ._名前、prefix は .名前_、決まりなしは .名前。名前が無ければ .K1, .K2 …（i は並びの位置）
+const groupLabel = (g, i) => `.${!named(g) ? `K${i + 1}` : g.affix === 'suffix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name}`;
 
 // kind の説明（印と ⚠ の title）: 印、前後の決まりと排他制限、一覧の語句
 function groupTitle(g, i) {
-    const rule = !named(g) ? '' : g.affix === 'postfix' ? `「${g.name}」で終わる語句も` : g.affix === 'prefix' ? `「${g.name}」で始まる語句も` : '';
+    const rule = !named(g) ? '' : g.affix === 'suffix' ? `「${g.name}」で終わる語句も` : g.affix === 'prefix' ? `「${g.name}」で始まる語句も` : '';
     const notes = [rule, exclusiveKind(g) ? '排他制限' : ''].filter(Boolean).join('。');
     return `kind ${groupLabel(g, i)}${notes ? `（${notes}）` : ''}: ${g.phrases.join(' / ')}`;
 }

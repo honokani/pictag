@@ -158,7 +158,7 @@
                 <p id="dictImagesNote" class="key-help"></p>
                 <div id="dictImageList" class="dict-thumbs"></div>
             </section>
-            <!-- 簡易表示: クリックした画像の、画像の画面の行（hint の列を除く。見るだけ。サムネイルのクリックで画像の画面のその行へ） -->
+            <!-- 簡易表示: クリックした画像の、画像の画面の行のサムネイルと段落の欄（見るだけ。サムネイルのクリックで画像の画面のその行へ） -->
             <section id="dictRowView" class="dict-pane dict-side" aria-label="画像の画面の行">
                 <p id="dictRowNote" class="key-help"></p>
                 <table id="dictRowTable" hidden><thead><tr></tr></thead><tbody></tbody></table>
@@ -208,14 +208,14 @@
         </form>
     </dialog>
 
-    <!-- kind: 新しく付与するときと、印をダブルクリックしたときに開く。postfix / prefix を選ぶと、名前で終わる / 始まる同じキーの語句も
+    <!-- kind: 新しく付与するときと、印をダブルクリックしたときに開く。suffix / prefix を選ぶと、名前で終わる / 始まる同じキーの語句も
          いつも仲間になる（名前の前後の空白もそのまま比べる）。名前が空なら番号（K1 …）。排他制限なら、1枚の画像の1段落に仲間を1つだけ -->
     <dialog id="groupDialog" aria-label="kind">
         <form method="dialog" class="group-form">
             <label for="groupName">kind の名前（空なら番号。前後の空白もそのまま比べる）</label>
             <input id="groupName" type="text" autocomplete="off" spellcheck="false">
             <p class="group-affix">
-                <label><input type="radio" name="groupAffix" value="postfix" checked> postfix（後ろが共通。印は _名前）</label>
+                <label><input type="radio" name="groupAffix" value="suffix" checked> suffix（後ろが共通。印は _名前）</label>
                 <label><input type="radio" name="groupAffix" value="prefix"> prefix（前が共通。印は 名前_）</label>
                 <label><input type="radio" name="groupAffix" value=""> そのまま（前後の決まりなし）</label>
             </p>
