@@ -278,8 +278,11 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 .dict-thumb { padding: 0; border: 1px solid #ddd; background: #fff; cursor: pointer; }
 .dict-thumb.dead { opacity: .4; }
 .dict-thumb img { display: block; width: 96px; height: 96px; object-fit: contain; }
-.dict-kind { padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
-.kind-members { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+/* 右下の kind の表: キー・名称・排他制限・改名と消すは中身の幅（折り返さない）、タグの列が残りの幅 */
+.kind-table td { width: 1%; white-space: nowrap; }
+.kind-table td.kind-tags { width: auto; white-space: normal; }
+.kind-table td.kind-key { color: #555; }
+.kind-members { display: flex; flex-wrap: wrap; gap: 4px; }
 .kind-member { padding: 0 6px; border: 1px solid #ccc; border-radius: 3px; background: #fff; font-size: 12px; cursor: pointer; }
 .kind-member.rule { background: #e3effd; border-color: #a9c8ee; }  /* suffix・prefix の決まりに合う語句（合わないが付与した語句は白） */
 /* 共用辞書の表は左の枠いっぱい。語句と段落は幅を決めて折り返し、ほかの列は中身の幅 */
@@ -293,6 +296,7 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 #dictGrid td.dict-key { color: #555; white-space: nowrap; }
 #dictGrid td.dict-phrase { width: auto; }
 #dictGrid td.dict-phrase input { width: 100%; }
+#dictGrid .dict-rename { white-space: nowrap; }  /* 窓が狭くても「改名」を2行に割らない */
 #dictGrid td.dict-sections { width: 60px; color: #666; font-size: 12px; }
 #dictGrid td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }  /* 4（2）を折り返さない */
 .shared-mark { color: #2e7d32; font-weight: 700; }

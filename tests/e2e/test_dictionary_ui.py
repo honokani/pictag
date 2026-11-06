@@ -549,11 +549,18 @@ def test_the_kind_name_field_suggests_kind_names_and_tags(page, movies):
 
 
 def test_the_kind_list_shows_every_kind_and_jumps_to_its_phrases(page, movies):
-    # 右下に全部の kind（印・仲間の語句・改名）。語句をクリックすると左の表のその行を選ぶ（検索で見えなければ検索を外す）。改名で窓が出る
+    # 右下に全部の kind を表で（キー・名称（印）・排他制限・改名と消す・タグ（仲間の語句））。kind の数の説明は出さない
+    # （kind が無いときだけ説明を出す）。語句をクリックすると左の表のその行を選ぶ（検索で見えなければ検索を外す）。改名で窓が出る
     open_movies(page)
+    show_dictionary(page)
+    expect(page.locator("#dictKindsNote")).to_have_text("kind はまだありません（左の表で語句を選び、「kindを付与する」）")
     group_postures(page)
     show_dictionary(page)
+    expect(page.locator("#dictKindsNote")).to_be_hidden()
+    expect(page.locator("#dictKindList thead th")).to_have_text(["キー", "名称", "排他制限", "", "タグ"])
     kind = page.locator("#dictKindList .dict-kind").first
+    expect(kind.locator("td")).to_have_count(5)
+    expect(kind.locator("td").first).to_have_text("looks")
     expect(kind.locator(".group-badge")).to_have_text(".posture")
     expect(kind.locator(".kind-member")).to_have_text(["sitting", "standing"])
     page.fill("#dictFilter", ".body")
@@ -565,6 +572,19 @@ def test_the_kind_list_shows_every_kind_and_jumps_to_its_phrases(page, movies):
     page.fill("#groupName", "pose")
     page.click('#groupDialog button[value="ok"]')
     expect(kind.locator(".group-badge")).to_have_text(".pose")
+
+
+def test_rename_and_delete_buttons_do_not_wrap_in_a_narrow_window(page, movies):
+    # 窓が狭くても、左の表の「改名」と、右下の kind の表の「改名」「消す」は折り返さない
+    page.set_viewport_size({"width": 1280, "height": 800})
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    expect(page.locator("#dictBody .dict-rename").first).to_be_visible()
+    one_line = """els => els.length > 0 && els.every(el => {
+        const range = document.createRange(); range.selectNodeContents(el); return range.getClientRects().length === 1; })"""
+    assert page.locator("#dictBody .dict-rename").evaluate_all(one_line)
+    assert page.locator("#dictKindList .kind-edit, #dictKindList .kind-delete").evaluate_all(one_line)
 
 
 def test_click_selects_one_row_and_ctrl_or_shift_select_more(page, movies):
