@@ -294,7 +294,7 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 #dictGrid td.dict-phrase { width: auto; }
 #dictGrid td.dict-phrase input { width: 100%; }
 #dictGrid td.dict-sections { width: 120px; color: #666; font-size: 12px; }
-#dictGrid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+#dictGrid td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }  /* 4（2）を折り返さない */
 .shared-mark { color: #2e7d32; font-weight: 700; }
 .group-badge { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 12px; color: #fff; background: #6a1b9a; }
 .group-badge.g1 { background: #00796b; }

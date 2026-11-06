@@ -146,7 +146,8 @@
                 <th>キー<button type="button" class="sort" data-sort="key" data-dir="1" title="キーの昇順">▲</button><button type="button" class="sort" data-sort="key" data-dir="-1" title="キーの降順">▼</button></th>
                 <th>kind<button type="button" class="sort" data-sort="kind" data-dir="1" title="kind の昇順（kind の無い行は後ろ）">▲</button><button type="button" class="sort" data-sort="kind" data-dir="-1" title="kind の降順（kind の無い行は後ろ）">▼</button></th>
                 <th>語句<button type="button" class="sort" data-sort="text" data-dir="1" title="語句の昇順">▲</button><button type="button" class="sort" data-sort="text" data-dir="-1" title="語句の降順">▼</button></th>
-                <th>回数</th><th>辞書</th><th></th>
+                <!-- 回数の ▲▼（▲▼）: 前は開いているプロジェクトの回数（開く前は合計）、括弧の中はほかのプロジェクトの回数で並べ替える -->
+                <th>回数<button type="button" class="sort" data-sort="here" data-dir="1" title="開いているプロジェクトの回数の少ない順（開く前は合計）">▲</button><button type="button" class="sort" data-sort="here" data-dir="-1" title="開いているプロジェクトの回数の多い順（開く前は合計）">▼</button>（<button type="button" class="sort" data-sort="others" data-dir="1" title="ほかのプロジェクトの回数の少ない順">▲</button><button type="button" class="sort" data-sort="others" data-dir="-1" title="ほかのプロジェクトの回数の多い順">▼</button>）</th><th>辞書</th><th></th>
             </tr></thead>
             <tbody id="dictBody"></tbody>
         </table>

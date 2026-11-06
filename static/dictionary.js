@@ -91,19 +91,24 @@ function resetDictFilter() {
     renderDictionary();
 }
 
-// 並べ替え（見出しの ▲▼）の比べる文字: キーは表示の名前、kind は印の文字（kind の無い行は向きによらず後ろ）、語句。同じなら元の並び
+// 並べ替え（見出しの ▲▼）の比べるもの: キーは表示の名前、kind は印の文字（kind の無い行は向きによらず後ろ）、語句、
+// 回数は開いているプロジェクトの回数（開く前は合計）と、ほかのプロジェクトの回数（開く前は合計。欄の書き方と同じ）。同じなら元の並び
 const SORT_TEXT = {
     key: row => dictKeyLabel(row),
     kind: row => (rowKind(row) < 0 ? null : groupLabel(state.groups[rowKind(row)], rowKind(row))),
     text: row => row.text,
+    here: row => (state.projectName ? row.here : row.count),
+    others: row => (state.projectName ? row.count - row.here : row.count),
 };
+
+const compareSortKeys = (a, b) => (typeof a === 'number' ? a - b : a.localeCompare(b, undefined, {sensitivity: 'base'}));
 
 function sortedRows(rows) {
     if (!dict.sort) return rows;
     const text = SORT_TEXT[dict.sort.by];
     return rows.map((row, i) => ({row, i, t: text(row)}))
         .sort((a, b) => (a.t === null) - (b.t === null)
-            || (a.t === null ? 0 : dict.sort.dir * a.t.localeCompare(b.t, undefined, {sensitivity: 'base'})) || a.i - b.i)
+            || (a.t === null ? 0 : dict.sort.dir * compareSortKeys(a.t, b.t)) || a.i - b.i)
         .map(x => x.row);
 }
 
