@@ -69,7 +69,7 @@ uv run pytest -m "not e2e"    # ブラウザを使うテストを除く
 app.py             # Flask サーバー本体（表・保存・API）
 caption_format.py  # 段落の入力 → キャプション
 words.py           # 使用中の語句（辞書）、共用辞書の登録・削除・改名、一括入力の足し引き
-groups.py          # kind（名前・前後の決まり・1つだけ）
+groups.py          # kind（名前・前後の決まり・排他制限）
 subjects.py        # 人物などの段落の自動命名、characters、view の選択肢
 marks.py           # マーキング
 tokens.py          # トークン数（Qwen3-VL のトークナイザー）

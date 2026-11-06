@@ -1,4 +1,4 @@
-"""共用辞書の管理（登録・削除・改名）と「1つだけ」のグループ（関数単体）"""
+"""共用辞書の管理（登録・削除・改名）と排他制限のグループ（関数単体）"""
 import pytest
 
 from groups import blocked_by, clean_groups, group_of, normalize_groups
@@ -188,18 +188,18 @@ def test_ungroup_keeps_a_kind_with_one_phrase_and_drops_an_empty_one():
 
 
 def test_a_kind_that_is_not_exclusive_blocks_nothing():
-    # 「1つだけ」でない kind（分類だけ）は、同じ行に仲間があってもぶつからない。「1つだけ」は kind ごと（書いていなければ 1つだけ）
+    # 排他制限でない kind（分類だけ）は、同じ行に仲間があってもぶつからない。排他制限は kind ごと（書いていなければ排他制限あり）
     hair = {"key": "body", "phrases": ["long hair", "black hair"], "exclusive": False}
     assert blocked_by([hair], "body: long hair", "body", "black hair") is None
     assert blocked_by([{"key": "body", "phrases": ["long hair", "black hair"]}], "body: long hair", "body", "black hair") == "long hair"
     assert clean_groups([hair, {"key": "looks", "phrases": ["a", "b"], "exclusive": "no"}]) == [
-        hair, {"key": "looks", "phrases": ["a", "b"]}]  # 形の正しくない値は 1つだけ のまま
+        hair, {"key": "looks", "phrases": ["a", "b"]}]  # 形の正しくない値は排他制限のまま
 
 
 def test_group_phrases_and_name_group_set_whether_a_kind_is_exclusive():
     shared = group_phrases(empty_shared(), "body", ["long hair"], "hair", "postfix", False)  # 語句1つでも kind にできる
     assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "postfix", "exclusive": False}]
-    shared = name_group(shared, "body", "black hair", "hair", "postfix", True)  # 決まりの仲間で選び、1つだけにする
+    shared = name_group(shared, "body", "black hair", "hair", "postfix", True)  # 決まりの仲間で選び、排他制限にする
     assert shared["groups"] == [{"key": "body", "phrases": ["long hair"], "name": "hair", "affix": "postfix"}]
 
 
