@@ -282,6 +282,7 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 .kind-table td { width: 1%; white-space: nowrap; }
 .kind-table td.kind-tags { width: auto; white-space: normal; }
 .kind-table td.kind-key { color: #555; }
+.kind-table td.kind-actions button { padding-top: 0; padding-bottom: 0; line-height: 20px; }  /* 改名・消すは、ふつうのボタン（31px）の 7 割の 22px。文字の大きさと横幅はそのまま */
 .kind-members { display: flex; flex-wrap: wrap; gap: 4px; }
 .kind-member { padding: 0 6px; border: 1px solid #ccc; border-radius: 3px; background: #fff; font-size: 12px; cursor: pointer; }
 .kind-member.rule { background: #e3effd; border-color: #a9c8ee; }  /* suffix・prefix の決まりに合う語句（合わないが付与した語句は白） */

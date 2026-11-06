@@ -587,6 +587,22 @@ def test_rename_and_delete_buttons_do_not_wrap_in_a_narrow_window(page, movies):
     assert page.locator("#dictKindList .kind-edit, #dictKindList .kind-delete").evaluate_all(one_line)
 
 
+def test_the_kind_list_buttons_are_70_percent_as_high_as_a_normal_button(page, movies):
+    # 右下の kind の表の「改名」「消す」は、ふつうのボタン（左の表の「改名」）の 7 割の高さ。文字の大きさはそのまま
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    normal = page.locator("#dictBody .dict-rename").first
+    expect(normal).to_be_visible()
+    size = "el => [el.getBoundingClientRect().height, getComputedStyle(el).fontSize]"
+    normal_height, normal_font = normal.evaluate(size)
+    kind = page.locator("#dictKindList .dict-kind").first
+    for button in (kind.locator(".kind-edit"), kind.locator(".kind-delete")):
+        height, font = button.evaluate(size)
+        assert abs(height - 0.7 * normal_height) < 1, (height, normal_height)
+        assert font == normal_font
+
+
 def test_click_selects_one_row_and_ctrl_or_shift_select_more(page, movies):
     # ふつうのクリックはその行だけを選ぶ。Ctrl（と左端のチェック）で足し引き、Shift で範囲を足す。
     # 選んである行をふつうにクリックしても選択はそのままで、最後に選んだ行（右に画像を出す行）がその行になる
