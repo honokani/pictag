@@ -1,7 +1,7 @@
 """kind（画面での呼び名。中の名前は groups）: 同じキーの語句をまとめる2階のタグ（例: looks の standing / sitting / lying）
 
 kind は {key, phrases}。名前（name）を付けられ、前後の決まり（affix: postfix / prefix）があれば、名前で終わる / 始まる同じキーの語句も
-いつも仲間にする（「 face」の postfix なら crying face も）。「1つだけ」（exclusive。書いていなければ真）の kind は、1枚の画像の1段落に
+いつも仲間にする（「 face」の postfix なら crying face も）。排他制限（exclusive。書いていなければ真）の kind は、1枚の画像の1段落に
 仲間を1つだけ置ける（候補に出さない・一括入力で足さない・⚠）。1つの語句が入る kind は、キーごとに1つまで（重なれば1つにまとめる）
 """
 from functools import reduce
@@ -20,12 +20,12 @@ def naming(group):
 
 
 def is_exclusive(group):
-    """「1つだけ」の kind か（書いていなければ真。偽と書いたときだけ、分類だけの kind）"""
+    """排他制限の kind か（書いていなければ真。偽と書いたときだけ、分類だけの kind）"""
     return group.get('exclusive') is not False
 
 
 def traits(group):
-    """kind の名前・前後の決まりと、「1つだけ」でないこと（「1つだけ」は偽のときだけ書く）"""
+    """kind の名前・前後の決まりと、排他制限でないこと（排他制限は偽のときだけ書く）"""
     return {**naming(group), **({} if is_exclusive(group) else {'exclusive': False})}
 
 
@@ -47,7 +47,7 @@ def overlaps(a, b):
 
 
 def normalize_groups(groups):
-    """重なる kind を1つにまとめ（先に出た kind の位置へ。名前は先にあった方、「1つだけ」は一番先の kind）、語句も前後の決まりも無い kind を除く"""
+    """重なる kind を1つにまとめ（先に出た kind の位置へ。名前は先にあった方、排他制限は一番先の kind）、語句も前後の決まりも無い kind を除く"""
     def merge(merged, group):
         new = {'key': group['key'], 'phrases': list(dict.fromkeys(group['phrases'])), **traits(group)}
         hits = [i for i, g in enumerate(merged) if overlaps(g, new)]
@@ -75,7 +75,7 @@ def group_of(groups, key, phrase):
 
 
 def blocked_by(groups, text, key, phrase):
-    """入力の key の行に、phrase と同じ「1つだけ」の kind の別の語句があればそれを返す（無ければ None）"""
+    """入力の key の行に、phrase と同じ排他制限の kind の別の語句があればそれを返す（無ければ None）"""
     group = group_of(groups, key, phrase)
     if group is None or not is_exclusive(group):
         return None

@@ -686,7 +686,7 @@ class CaptionTool:
 
     def group(self, key, phrases, name='', affix='', exclusive=True):
         """同じキーの語句に kind を付与する（語句1つでもよい。共用辞書に無い語句は、使っている段落で入れる）。名前・前後の決まり
-        （prefix / postfix）・「1つだけ」を付けられる（今ある kind とまとまるときは、その kind の名前と「1つだけ」のまま）"""
+        （prefix / postfix）・排他制限を付けられる（今ある kind とまとまるときは、その kind の名前と排他制限のまま）"""
         def change(shared):
             k = check_key(key)
             if not k:
@@ -707,7 +707,7 @@ class CaptionTool:
         return self.update_shared(change)
 
     def name_group(self, key, phrase, name, affix, exclusive=True):
-        """phrase（一覧か前後の決まりで仲間の語句）の入っている kind の名前・前後の決まり・「1つだけ」を変える（名前が空白だけなら番号に戻す）"""
+        """phrase（一覧か前後の決まりで仲間の語句）の入っている kind の名前・前後の決まり・排他制限を変える（名前が空白だけなら番号に戻す）"""
         def change(shared):
             k = check_key(key)
             named = self.check_kind_name(shared, *check_group_traits(name, affix, exclusive))
@@ -717,7 +717,7 @@ class CaptionTool:
         return self.update_shared(change)
 
     def check_kind_name(self, shared, name, affix, exclusive):
-        """前後の決まりの無い kind の名前は、キーと同じにできない（.looks はキー looks の kind になる）。(名前, 決まり, 1つだけ) を返す"""
+        """前後の決まりの無い kind の名前は、キーと同じにできない（.looks はキー looks の kind になる）。(名前, 決まり, 排他制限) を返す"""
         phrase_usage, _ = self.usage()
         keys = ({k for keys in shared['templates'].values() for k in keys} | {t[1] for t in phrase_usage}
                 | {p['key'] for p in shared['phrases']})
@@ -962,7 +962,7 @@ class CaptionTool:
         return True
 
     def add_to_rows(self, rows, section, text):
-        """一括入力で語句を足す。1つだけの kind の別の語句がある行には、その語句を足さない
+        """一括入力で語句を足す。排他制限の kind の別の語句がある行には、その語句を足さない
 
         足さなかった語句のある行の数を返す（失敗は None）
         """
@@ -1071,7 +1071,7 @@ class CaptionTool:
         """行の ①〜⑯ を押す: 単語のマーク（番号 index）の語句（word_mark_phrase）を、その段落のそのキーに足す（キーなしは文の行）
 
         入れる段落は、その段落（A, B を除いた名前）のうち、その行で入力のあるものが1つならそれ、ほかは表で先のもの
-        （Qwen の答えの当て方と同じ）。付いている行と、1つだけの kind の別の語句がある行には入れない。
+        （Qwen の答えの当て方と同じ）。付いている行と、排他制限の kind の別の語句がある行には入れない。
         1行だけに入れたときは、その行の書き換えとして時刻を付ける。(入れた語句, 入れなかった行の数) を返す（失敗は False）
         """
         self.last_error = ''
@@ -1542,14 +1542,14 @@ def apply_verb_forms_route():
 
 @app.route('/group_phrases', methods=['POST'])
 def group_phrases_api():
-    """同じキーの語句に kind を付与する（{key, phrases, name, affix: prefix / postfix / 空, exclusive: 1つだけ（無ければ真）}）"""
+    """同じキーの語句に kind を付与する（{key, phrases, name, affix: prefix / postfix / 空, exclusive: 排他制限（無ければ真）}）"""
     data = request.get_json() or {}
     grouped = caption_tool.group(data.get('key'), data.get('phrases'), data.get('name'), data.get('affix'), data.get('exclusive'))
     return dictionary_result(grouped, 'kind を付与しました')
 
 @app.route('/name_group', methods=['POST'])
 def name_group_api():
-    """kind の名前・前後の決まり・「1つだけ」を変える（{key, phrase: 仲間の語句, name, affix: prefix / postfix / 空, exclusive}）"""
+    """kind の名前・前後の決まり・排他制限を変える（{key, phrase: 仲間の語句, name, affix: prefix / postfix / 空, exclusive}）"""
     data = request.get_json() or {}
     named = caption_tool.name_group(data.get('key'), data.get('phrase'), data.get('name'), data.get('affix'), data.get('exclusive'))
     return dictionary_result(named, 'kind を変えました')
@@ -1666,7 +1666,7 @@ def add_word_mark():
 def add_phrase_to_rows():
     """複数行への一括入力（{rows, section, text}。text は「キー: 語句, 語句」かキーなしの文）
 
-    1つだけの kind の別の語句がある行には足さない（skipped: 足さなかった語句のある行の数）
+    排他制限の kind の別の語句がある行には足さない（skipped: 足さなかった語句のある行の数）
     """
     data = request.get_json() or {}
     rows = data.get('rows')

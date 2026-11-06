@@ -246,7 +246,7 @@ def test_replace_phrases_rejects_the_same_phrase_unknown_phrases_or_bad_names(ap
     assert girl_texts(api)["titanic.png"].startswith("looks: standing, eyes closed, smile\n")
 
 
-# ---- 「1つだけ」のグループ ----
+# ---- 排他制限のグループ ----
 
 def test_group_registers_its_phrases_and_is_listed(api, tmp_path, base_dir):
     load_scenes(api, movies(tmp_path), ["titanic.png", "roman_holiday.png", "lady_and_tramp.png"])
@@ -303,7 +303,7 @@ def test_group_with_a_postfix_takes_in_phrases_that_end_with_it(api, tmp_path):
 
 
 def test_a_kind_can_have_one_phrase_and_need_not_be_exclusive(api, tmp_path):
-    # kind は語句1つでも付与できる。「1つだけ」でない kind の仲間がある行にも、一括入力で足す。あとから「1つだけ」にもできる
+    # kind は語句1つでも付与できる。排他制限でない kind の仲間がある行にも、一括入力で足す。あとから排他制限にもできる
     rows = load_scenes(api, movies(tmp_path), COUPLES)
     res = api.post("/group_phrases", {"key": "body", "phrases": ["red/long hair"], "name": "hair", "affix": "postfix", "exclusive": False})
     assert res["success"], res

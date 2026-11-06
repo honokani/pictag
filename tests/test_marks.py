@@ -289,7 +289,7 @@ def test_a_word_mark_goes_to_the_section_with_input_in_each_row(api, imgs):
 
 
 def test_a_word_mark_is_not_put_where_another_phrase_of_its_group_is(api, imgs):
-    # 「1つだけ」のグループの別の語句がある行には入れない（一括入力と同じ）。入れなかった行の数を返す
+    # 排他制限のグループの別の語句がある行には入れない（一括入力と同じ）。入れなかった行の数を返す
     api.load(imgs)
     a, b, c = (api.row_index(n) for n in ("a.png", "b.png", "c.png"))
     api.write(a, "looks: frown")
