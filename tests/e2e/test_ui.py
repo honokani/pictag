@@ -333,6 +333,29 @@ def test_phrase_chosen_inside_a_line_is_separated_by_commas(page, imgs):
         assert editor.input_value() == "looks: cool, short hair, 40 yo"
 
 
+def test_a_click_right_after_a_word_chosen_by_double_click_adds_the_candidate_after_it(page, imgs):
+    # 語（smile）をダブルクリックすると語が選ばれて全部の候補が出て、選ぶと置き換える。そのあと語のすぐ右をクリックすると、選んだ範囲は
+    # 外れてカーソルは語のすぐ右。ここで候補を選ぶと、置き換えずに後ろに足す（smile, wink）
+    load_dir(page, imgs)
+    write(page, "b.png", "face: wink")
+    wait_for_phrase(page, "wink")
+    open_editor(page, "a.png")
+    face = field(page, "a.png", "face")
+    face.fill("smile")
+    face.dblclick(position={"x": 12, "y": 10})
+    expect(page.locator("#suggestions:visible li", has_text="wink")).to_be_visible()
+    assert face.evaluate("el => [el.selectionStart, el.selectionEnd]") == [0, 5]
+    end_x = face.evaluate("""el => { const s = getComputedStyle(el), c = document.createElement('canvas').getContext('2d');
+        c.font = s.font; return parseFloat(s.paddingLeft) + parseFloat(s.borderLeftWidth) + c.measureText(el.value).width; }""")
+    face.click(position={"x": end_x + 1, "y": 10})  # 選んだ範囲は、クリックの後で外れる
+    page.wait_for_function("() => state.suggest && state.suggest.ctx.queryStart === 5")  # 外れた後のカーソルの位置で出し直す
+    assert face.evaluate("el => [el.selectionStart, el.selectionEnd]") == [5, 5]
+    page.locator("#suggestions:visible li", has_text="wink").click()
+    assert face.input_value() == "smile, wink, "
+    page.evaluate("document.activeElement.blur()")
+    expect(filled(page, "a.png")).to_have_text(["face: smile, wink"])
+
+
 def test_choosing_a_candidate_replaces_the_selected_text(page, imgs):
     # 範囲を選んだ状態で候補を選ぶと、選んだ文字と置き換える（区切りは行の途中で選んだときと同じ）
     load_dir(page, imgs)
