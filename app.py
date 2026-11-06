@@ -16,7 +16,7 @@ import pandas as pd
 from PIL import Image
 
 from caption_format import parse_line, phrases_of, render_caption, with_line
-from groups import blocked_by, clean_groups, group_of
+from groups import blocked_by, clean_groups, drop_orphan_groups, group_of, label
 from public_samples import SCENES
 from qwen import (DEFAULT_URL, SAMPLE_COUNT, SENTENCE_EXAMPLE, SENTENCE_EXAMPLES, characters_note, clear_drafts, fill_section,
                   generate, jpeg_of, keep_word_marks, match_section, parse_caption, pick_random_samples, pick_samples,
@@ -28,7 +28,8 @@ from marks import (AUTO, AUTO_COUNT, MANY, ONE, auto_marks_from_file, auto_marks
 from tokens import TOKEN_LIMIT, TokenCounter
 from verbs import PRESENT, PROGRESSIVE, convert, count_forms, majority, survey
 from words import (AUTO_KEYS, add_phrase, check_group_traits, check_key, check_phrase, check_section_name, count_sentence_words,
-                   count_words, empty_shared, freeze, group_phrases, move_phrases, move_registered, name_group, phrase_entries, register_phrases,
+                   count_words, delete_group, empty_shared, freeze, group_phrases, move_phrases, move_registered, name_group, phrase_entries,
+                   register_phrases,
                    register_words, remove_phrase, rename_phrase, rename_registered, replace_phrases, replace_registered,
                    set_choice, ungroup_phrases, unregister_phrases, unregister_words, word_entries)
 
@@ -728,6 +729,31 @@ class CaptionTool:
     def ungroup(self, pairs):
         """語句を kind から外す（語句も前後の決まりも無くなった kind は消える）"""
         return self.update_shared(lambda shared: ungroup_phrases(shared, pairs_of(pairs)))
+
+    def delete_group(self, key, name, affix):
+        """キー・名前・前後の決まり（印）で決めた kind を消す（仲間の語句は辞書と入力にそのまま。仲間の語句が無い kind も消せる）"""
+        def change(shared):
+            k = check_key(key)
+            if not isinstance(name, str) or not isinstance(affix, str):
+                raise ValueError('kind の指定が正しくありません')
+            kept = delete_group(shared, k, name, affix)
+            if len(kept['groups']) == len(shared['groups']):
+                raise ValueError('その kind はありません')
+            return kept
+        return self.update_shared(change)
+
+    def drop_orphan_kinds(self):
+        """起動時: 仲間の語句が1つも無い kind（一覧の語句も決まりに合う語句も、どの保存済みのプロジェクトでも使っておらず、共用辞書にも無い）
+        を消して保存する。消した kind の印を返す"""
+        phrase_usage, _ = self.usage()
+        phrases = {(k, p) for _, k, p in phrase_usage} | {(p['key'], p['phrase']) for p in self.shared['phrases']}
+        kept = drop_orphan_groups(self.shared['groups'], phrases)
+        dropped = [label(g) for g in self.shared['groups'] if g not in kept]
+        if dropped:
+            self.shared = {**self.shared, 'groups': kept}
+            self.save_shared()
+            logger.info(f"Removed orphan kinds: {', '.join(dropped)}")
+        return dropped
 
     def separate_same_stems(self, alive, taken):
         """拡張子だけ違う画像の名前を変える（separated_names）: 画像とサムネイルの名前を変え、hint（画像と同じ名前の .txt）は
@@ -1560,6 +1586,12 @@ def ungroup_phrases_api():
     data = request.get_json() or {}
     return dictionary_result(caption_tool.ungroup(data.get('phrases', [])), 'kind から外しました')
 
+@app.route('/delete_group', methods=['POST'])
+def delete_group_api():
+    """kind を消す（{key, name, affix: prefix / suffix / 空}。仲間の語句は辞書と入力にそのまま）"""
+    data = request.get_json() or {}
+    return dictionary_result(caption_tool.delete_group(data.get('key'), data.get('name'), data.get('affix')), 'kind を消しました')
+
 @app.route('/freeze', methods=['POST'])
 def freeze_dictionary():
     """使用中の語句・単語を共用辞書に入れる"""
@@ -1743,7 +1775,9 @@ def qwen_url(argv):
 if __name__ == '__main__':
     app.config['QWEN_URL'] = qwen_url(sys.argv[1:])
     options = server_options(os.environ)
-    # トークナイザーは裏で取得する。debug のリローダーでは親プロセスで取得しない（子プロセスと二重になるため）
+    # トークナイザーは裏で取得し、仲間の語句が1つも無い kind（オーファン）は消す。debug のリローダーでは親プロセスでしない
+    # （子プロセスと二重になるため）
     if not options['debug'] or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         token_counter.start_once(caption_tool.data_work_dir / TOKENIZER_FILE)
+        caption_tool.drop_orphan_kinds()
     app.run(**options)

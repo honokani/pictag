@@ -49,11 +49,29 @@ def overlaps(a, b):
     return any(in_group(a, b['key'], p) for p in b['phrases']) or any(in_group(b, a['key'], p) for p in a['phrases'])
 
 
+def same_label(a, b):
+    """2つの kind が同じ印か（同じキーで、名前と前後の決まりが同じ。名前の無い kind はどれとも違う）"""
+    return a['key'] == b['key'] and bool(naming(a)) and naming(a) == naming(b)
+
+
+def label(group):
+    """kind の印（.名前・._名前（suffix）・.名前_（prefix）。画面の groupLabel と同じ。名前の無い kind は .K）"""
+    named = naming(group)
+    name, affix = named.get('name', 'K'), named.get('affix')
+    return f".{'_' + name if affix == 'suffix' else name + '_' if affix == 'prefix' else name}"
+
+
+def drop_orphan_groups(groups, phrases):
+    """仲間の語句が1つも無い kind を除く（一覧の語句も、前後の決まりに合う語句も、phrases（(キー, 語句) の集まり）に無いもの）"""
+    return [g for g in groups if any(in_group(g, key, phrase) for key, phrase in phrases)]
+
+
 def normalize_groups(groups):
-    """重なる kind を1つにまとめ（先に出た kind の位置へ。名前は先にあった方、排他制限は一番先の kind）、語句も前後の決まりも無い kind を除く"""
+    """重なる kind と、同じキーで同じ印の kind を1つにまとめ（先に出た kind の位置へ。名前は先にあった方、排他制限は一番先の kind）、
+    語句も前後の決まりも無い kind を除く"""
     def merge(merged, group):
         new = {'key': group['key'], 'phrases': list(dict.fromkeys(group['phrases'])), **traits(group)}
-        hits = [i for i, g in enumerate(merged) if overlaps(g, new)]
+        hits = [i for i, g in enumerate(merged) if overlaps(g, new) or same_label(g, new)]
         if not hits:
             return [*merged, new]
         named = next((merged[i] for i in hits if naming(merged[i])), new)
