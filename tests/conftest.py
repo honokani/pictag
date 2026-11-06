@@ -1,7 +1,19 @@
+import shutil
+from pathlib import Path
+
 import pytest
 
 import app as pictag
 from helpers import Api
+
+
+@pytest.fixture(autouse=True)
+def trash(tmp_path, monkeypatch):
+    """画像削除のごみ箱の代わり（テストでは本物のごみ箱を使わない）。ごみ箱へ移したファイルは tmp_path/trash に入る"""
+    d = tmp_path / "trash"
+    d.mkdir()
+    monkeypatch.setattr(pictag, "trash", lambda path: shutil.move(path, d / Path(path).name))
+    return d
 
 
 @pytest.fixture

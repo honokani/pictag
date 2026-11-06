@@ -31,13 +31,18 @@
     </header>
 
     <section id="tools" class="bar tools" hidden>
+        <!-- 画像を消す組（左端）: 画像削除（1秒長押しで、選んだ行の画像をごみ箱へ移し、その行を削除済みに。行を選んでいないときは押せない）・
+             削除済み画像の表示・削除済みの行を表から消す。その右はタグの組（段落を追加・共用辞書へ・キーを移す・一括入力・📍） -->
+        <span class="group">
+            <button id="deleteImagesButton" type="button" class="hold" disabled title="1秒長押しで、選んだ行の画像をごみ箱へ移す（行は削除済みになり、入力は残る）">画像削除</button>
+            <label class="group"><input id="showDead" type="checkbox" checked> 削除済み表示</label>
+            <button id="removeDeadButton" type="button" title="元フォルダから消えた画像の行を、表から完全に消す（あわせて保存）">削除済みを消す</button>
+        </span>
         <form id="sectionForm" class="group">
             <input id="sectionName" type="text" placeholder="段落を追加（例: dog）" autocomplete="off">
             <button type="submit">追加</button>
         </form>
-        <label class="group"><input id="showDead" type="checkbox" checked> 削除済み画像を表示</label>
-        <button id="removeDeadButton" type="button" title="元フォルダから消えた画像の行を、表から完全に消す（あわせて保存）">削除済みを消す</button>
-        <button id="freezeButton" type="button" title="今使っている語句・単語を共用辞書に入れます（使われなくなっても候補に残ります）">共用辞書に入れる</button>
+        <button id="freezeButton" type="button" title="今使っている語句・単語を共用辞書に入れます（使われなくなっても候補に残ります）">共用辞書へ</button>
         <!-- キーを移す: 段落（girl A・girl B も）のキーの語句を、ほかのキーへ（開いているプロジェクトの全行と共用辞書）。移す先が同じキーなら置換 -->
         <form id="moveForm" class="group" title="段落（A, B も）のキーの語句を、ほかのキーへ移します。移す先に同じキーを選ぶと、ほかの語句に置き換えます（開いているプロジェクトの全行と共用辞書。保存はまだ）">
             <select id="moveSection" aria-label="移す段落"></select>

@@ -1098,6 +1098,37 @@ def test_dead_rows_toggle_and_remove(page, imgs):
     expect(row(page, "a.png")).to_have_count(0)
 
 
+def test_delete_images_at_the_left_end_of_the_second_row_sends_the_selected_images_to_the_trash(page, imgs, trash):
+    # 2段目は左から 画像削除・削除済み表示・削除済みを消す、その右に 段落を追加の欄・追加・共用辞書へ・キーを移す・
+    # 一括入力・📍（窓の幅 1440px で1段）。画像削除は行を選んでいないときは押せず、1秒長押しで選んだ行の画像をごみ箱へ移して、
+    # その行を削除済みにする（短く押すと説明だけ）。削除済みにした行は選択から外す
+    page.set_viewport_size({"width": 1440, "height": 800})
+    load_dir(page, imgs)
+    order = ["#deleteImagesButton", "#showDead", "#removeDeadButton", "#sectionName", "#sectionForm button",
+             "#freezeButton", "#moveForm", "#bulkForm", "#resumeButton"]
+    boxes = [page.locator(s).bounding_box() for s in order]
+    assert [b["x"] for b in boxes] == sorted(b["x"] for b in boxes)
+    assert all(b["y"] < boxes[0]["y"] + boxes[0]["height"] for b in boxes)  # 下の段に落ちない
+    button = page.locator("#deleteImagesButton")
+    expect(button).to_have_text("画像削除")
+    expect(button).to_be_disabled()
+    row(page, "a.png").locator("td.meta").click()
+    row(page, "c.png").locator("td.meta").click(modifiers=["Control"])
+    expect(button).to_be_enabled()
+    button.click()
+    expect(page.locator("#status")).to_have_text("1秒長押しすると、選んだ行の画像をごみ箱へ移します（行は削除済みになり、入力は残ります）")
+    button.hover()
+    page.mouse.down()
+    page.wait_for_timeout(1300)
+    page.mouse.up()
+    expect(page.locator("#status")).to_have_text("2 枚の画像をごみ箱へ移しました（行は削除済み。入力は残ります）")
+    expect(row(page, "a.png")).to_have_class(re.compile(r"\bdead\b"))
+    expect(row(page, "c.png")).to_have_class(re.compile(r"\bdead\b"))
+    expect(page.locator("#gridBody tr.selected")).to_have_count(0)
+    expect(button).to_be_disabled()
+    assert sorted(p.name for p in trash.iterdir()) == ["a.png", "c.png"]
+
+
 def test_image_dialog_shows_original(page, imgs):
     load_dir(page, imgs)
     row(page, "c.png").locator("td.thumb img").click()
