@@ -374,6 +374,13 @@ function contextOf(el) {
     return {...base, mode: 'start', key: null, query: rest, queryStart: lineStart + prefix};
 }
 
+// 選んだ範囲をクリックで外したときの文脈: カーソルが語の終わり（後ろが空白・カンマ・行末など）なら、前の語を打ちかけと見ず、
+// 全部の候補を出してカーソルの位置に足す（ABC| で XXX を選ぶと ABC, XXX）。語の途中と、キーの無い文はふだんどおり
+const appendAtCaret = contextFor => el => {
+    const ctx = contextFor(el);
+    return ctx.mode === 'phrase' && !/^[^\s,:.]/.test(ctx.after) ? {...ctx, query: '', queryStart: el.selectionStart} : ctx;
+};
+
 // 開いた入力欄の文脈: キーの欄はいつもそのキーの語句（カンマと改行で区切る）。「その他」の欄と1つだけの欄は contextOf と同じ
 // その欄にもう入っている語句（cellPhrases）は全部の欄から見る。打っている欄の選んだ範囲は、無いものとして見る
 function editorContext(el) {
@@ -1371,7 +1378,17 @@ function startEdit(td) {
         el.addEventListener('keyup', event => {
             if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) showSuggestions(el, section, editorContext);
         });
-        el.addEventListener('click', () => showSuggestions(el, section, editorContext));
+        el.addEventListener('click', () => {
+            showSuggestions(el, section, editorContext);
+            // 選んだ範囲の中をクリックすると、範囲はクリックの後で外れる。外れたら、カーソルの位置で候補を出し直す（語の終わりなら後ろに足す）
+            if (el.selectionStart !== el.selectionEnd) {
+                setTimeout(() => {
+                    if (el.selectionStart === el.selectionEnd && document.activeElement === el) {
+                        showSuggestions(el, section, appendAtCaret(editorContext));
+                    }
+                }, 0);
+            }
+        });
         autosize(el);
     });
     // 欄を移っても確定しない（前の欄の候補はしまう）。欄の外へフォーカスが出たら確定する
