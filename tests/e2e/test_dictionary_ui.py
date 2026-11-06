@@ -332,8 +332,8 @@ def test_face_rows_come_right_after_looks_rows(page, movies):
     assert keys.index("face") == keys.index("looks") + 1 and keys.index("clothes") == keys.index("face") + 1
 
 
-def test_naming_a_kind_with_a_postfix_takes_in_phrases_that_end_with_it(page, movies):
-    # kind を付与すると窓が出る（やめると付与しない。名前は必ず要る）。postfix の「 face」なら印は「._ face」で、
+def test_naming_a_kind_with_a_suffix_takes_in_phrases_that_end_with_it(page, movies):
+    # kind を付与すると窓が出る（やめると付与しない。名前は必ず要る）。suffix の「 face」なら印は「._ face」で、
     # 「 face」で終わる語句（crying face）もいつも仲間。印をダブルクリックすると名前などを変えられる（名前は外せない）
     for name, text in [("titanic.png", "face: smiling face, crying face"), ("roman_holiday.png", "face: surprised face")]:
         movies.write(movies.row_index(name), text)
@@ -352,7 +352,7 @@ def test_naming_a_kind_with_a_postfix_takes_in_phrases_that_end_with_it(page, mo
     expect(page.locator("#dictBody .group-badge")).to_have_count(0)
 
     page.click("#dictGroupButton")
-    expect(page.locator('#groupDialog input[value="postfix"]')).to_be_checked()  # 初めは postfix
+    expect(page.locator('#groupDialog input[value="suffix"]')).to_be_checked()  # 初めは suffix
     page.fill("#groupName", " face")
     page.click('#groupDialog button[value="ok"]')
     for text in ["smiling face", "surprised face", "crying face"]:
@@ -375,19 +375,22 @@ def test_naming_a_kind_with_a_postfix_takes_in_phrases_that_end_with_it(page, mo
 def test_dictionary_table_takes_the_left_40_percent_and_the_right_shows_images_a_row_and_kinds(page, movies):
     # 表は左 40%（改名の列の右端が境目。語句の列が残りの幅、段落は 120px でキーの左、ほかの列は中身の幅）。
     # 右 60% の上に画像、真ん中に画像の画面の行（簡易表示）、下に kind。
-    # 見出しは「段落」「回数」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す
+    # 見出しは「段落」「回数▲▼（▲▼）」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す。
+    # 回数（4（0）など）は折り返さない
     page.set_viewport_size({"width": 1800, "height": 800})
     open_movies(page)
     show_dictionary(page)
     expect(page.locator("#dictBody .dict-key", has_text="action").first).to_be_visible()  # 行を描くまで待つ
     expect(page.locator("#dictBody .dict-key", has_text="（キーなし）")).to_have_count(0)
     heads = page.locator("#dictGrid thead th")
-    expect(heads).to_have_text(["", "段落", "キー▲▼", "kind▲▼", "語句▲▼", "回数", "辞書", ""])
+    expect(heads).to_have_text(["", "段落", "キー▲▼", "kind▲▼", "語句▲▼", "回数▲▼（▲▼）", "辞書", ""])
     expect(page.locator("#dictBody tr").first.locator("td").nth(1)).to_have_class("dict-sections")  # 行の中も同じ並び
     widths = heads.evaluate_all("ths => ths.map(th => th.getBoundingClientRect().width)")
     assert widths[0] <= 30 and abs(widths[1] - 120) <= 1  # チェックが入る分だけ / 段落は 120px
     assert widths[2] <= 130 and widths[3] <= 110 and widths[4] == max(widths)  # キーと kind は中身の幅、語句の列が残りの幅
-    assert widths[5] <= 64 and widths[6] <= 50 and widths[7] <= 64  # 回数（4（0）など）、「辞書」と、改名のボタンが入る幅
+    assert widths[5] <= 130 and widths[6] <= 50 and widths[7] <= 64  # 回数（見出しの ▲▼（▲▼））、「辞書」と、改名のボタンが入る幅
+    assert page.locator("#dictBody td.num").evaluate_all("""tds => tds.every(td => {
+        const range = document.createRange(); range.selectNodeContents(td); return range.getClientRects().length === 1; })""")
     rename = heads.nth(7).bounding_box()
     assert abs(rename["x"] + rename["width"] - 720) <= 20  # 境目（左の縦のスクロールバーの分だけ手前）
     images, shown, kinds = (page.locator(s).bounding_box() for s in ("#dictImages", "#dictRowView", "#dictKinds"))
@@ -397,7 +400,8 @@ def test_dictionary_table_takes_the_left_40_percent_and_the_right_shows_images_a
 
 def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_image(page, movies):
     # 語句の行を選ぶと、開いているプロジェクトでその語句を使っている画像を右上に出す（最後に選んだ行の画像）。
-    # 画像をクリックすると、右上と右下の間に、画像の画面のその行を hint の列を除いてそのまま出す（別の語句を選んでも残す）。
+    # 画像をクリックすると、右上と右下の間に、画像の画面のその行のサムネイルと段落の欄をそのまま出す（token・🤖・マーク・hint の列は
+    # 出さない。別の語句を選んでも残す）。
     # 画像のダブルクリックか、出した行のサムネイルのクリックで、画像の画面のその行へ
     open_movies(page)
     show_dictionary(page)
@@ -418,8 +422,10 @@ def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_ima
     expect(page.locator("#dictView")).to_be_visible()  # クリックでは画面を変えない
     shown = view.locator('tbody tr[data-name="roman_holiday.png"]')
     expect(shown.locator('td.cell[data-section="girl"]')).to_contain_text("looks: sitting, smile")
-    expect(view.locator("thead th")).to_contain_text(["サムネイル", "token", "マーク", "picture", "action", "girl", "guy"])
-    expect(view.locator("td.hint, th.hint-head")).to_have_count(0)  # hint の列は出さない
+    expect(view.locator("thead th")).to_have_count(5)  # サムネイルと、段落4つ
+    expect(view.locator("thead th")).to_contain_text(["サムネイル", "picture", "action", "girl", "guy"])
+    expect(shown.locator("td")).to_have_count(5)
+    expect(view.locator("td.meta, td.marks, td.hint, th.hint-head")).to_have_count(0)  # token・マーク・hint の列は出さない
 
     dict_row(page, "looks", "dancing").locator(".dict-phrase").click()  # 別の語句を選んでも残す
     expect(thumbs).to_have_count(1)
@@ -429,7 +435,7 @@ def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_ima
     expect(page.locator('#gridBody tr[data-name="roman_holiday.png"]')).to_be_in_viewport()
     widths = lambda scope: page.locator(f'{scope} tr[data-name="roman_holiday.png"] td').evaluate_all(
         "tds => tds.map(td => [td.className, Math.round(td.getBoundingClientRect().width)])")
-    in_grid = [w for w in widths("#gridBody") if not w[0].startswith("hint")]
+    in_grid = [w for w in widths("#gridBody") if w[0].split()[0] in ("thumb", "cell")]
 
     show_dictionary(page)
     assert widths("#dictRowView tbody") == in_grid  # 列の幅も画像の画面と同じ
@@ -439,7 +445,7 @@ def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_ima
 
 
 def test_the_kind_list_colors_the_phrases_that_follow_the_rule(page, movies):
-    # 右下の kind の仲間の語句: postfix・prefix の決まりに合う語句（closed eyes）には色を付け、合わないが付与した語句（wink eye）は今のまま
+    # 右下の kind の仲間の語句: suffix・prefix の決まりに合う語句（closed eyes）には色を付け、合わないが付与した語句（wink eye）は今のまま
     movies.write(movies.row_index("titanic.png"), "face: closed eyes, wink eye")
     movies.save()
     open_movies(page)
@@ -448,7 +454,7 @@ def test_the_kind_list_colors_the_phrases_that_follow_the_rule(page, movies):
     dict_row(page, "face", "closed eyes").locator(".dict-phrase").click()
     dict_row(page, "face", "wink eye").locator(".dict-phrase").click(modifiers=["Control"])
     page.click("#dictGroupButton")
-    page.fill("#groupName", " eyes")  # postfix（初め）
+    page.fill("#groupName", " eyes")  # suffix（初め）
     page.click('#groupDialog button[value="ok"]')
     members = page.locator("#dictKindList .dict-kind").first.locator(".kind-member")
     expect(members).to_have_text(["closed eyes", "wink eye"])
@@ -588,6 +594,29 @@ def test_dictionary_rows_sort_and_search_tags_and_kinds_together(page, movies):
     page.select_option("#dictFilterMode", "out")
     expect(page.locator("#dictBody tr .group-badge")).to_have_count(0)
     expect(page.locator("#dictBody tr").first).to_be_visible()
+
+
+def test_dictionary_rows_sort_by_the_count_of_this_project_and_of_the_others(page, movies, tmp_path):
+    # 回数の見出しの ▲▼（▲▼）: 前の ▲▼ は開いているプロジェクトの回数、括弧の中はほかのプロジェクトの回数で並べる
+    # （▲ は少ない順、▼ は多い順。同じ数は元の並び。同じものをもう一度押すと元の並び）
+    other = Api(pictag.app.test_client())
+    load_scenes(other, tmp_path / "imgs" / "others", ["titanic.png"])
+    other.save()
+    open_movies(page)
+    show_dictionary(page)
+    expect(dict_row(page, "looks", "standing").locator(".num")).to_have_text("4（2）")
+    texts = lambda: page.locator("#dictBody tr").evaluate_all("rows => rows.map(r => r.dataset.text)")
+    counts = lambda at: [int(re.findall(r"\d+", t)[at])
+                         for t in page.locator("#dictBody td.num").evaluate_all("tds => tds.map(td => td.textContent)")]
+    default = texts()
+    page.click('#dictGrid button.sort[data-sort="here"][data-dir="-1"]')
+    assert counts(0) == sorted(counts(0), reverse=True) and counts(0)[0] == 4
+    page.click('#dictGrid button.sort[data-sort="others"][data-dir="-1"]')
+    assert counts(1) == sorted(counts(1), reverse=True) and texts()[0] == "standing"  # ほかのプロジェクトで2回
+    page.click('#dictGrid button.sort[data-sort="others"][data-dir="1"]')
+    assert counts(1) == sorted(counts(1)) and texts()[-1] == "standing"
+    page.click('#dictGrid button.sort[data-sort="others"][data-dir="1"]')
+    assert texts() == default
 
 
 def test_a_kind_from_one_phrase_that_is_not_exclusive_marks_no_conflict(page, movies):

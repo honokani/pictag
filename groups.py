@@ -1,22 +1,25 @@
 """kind（画面での呼び名。中の名前は groups）: 同じキーの語句をまとめる2階のタグ（例: looks の standing / sitting / lying）
 
-kind は {key, phrases}。名前（name）を付けられ、前後の決まり（affix: postfix / prefix）があれば、名前で終わる / 始まる同じキーの語句も
-いつも仲間にする（「 face」の postfix なら crying face も）。排他制限（exclusive。書いていなければ真）の kind は、1枚の画像の1段落に
+kind は {key, phrases}。名前（name）を付けられ、前後の決まり（affix: suffix / prefix）があれば、名前で終わる / 始まる同じキーの語句も
+いつも仲間にする（「 face」の suffix なら crying face も）。排他制限（exclusive。書いていなければ真）の kind は、1枚の画像の1段落に
 仲間を1つだけ置ける（候補に出さない・一括入力で足さない・⚠）。1つの語句が入る kind は、キーごとに1つまで（重なれば1つにまとめる）
 """
 from functools import reduce
 
 from caption_format import phrases_of
 
-AFFIXES = ('prefix', 'postfix')
+AFFIXES = ('prefix', 'suffix')
+OLD_AFFIXES = {'postfix': 'suffix'}  # 0.5.36 までの共用辞書の名前（読むときに直し、次に共用辞書を保存すると新しい名前で書く）
 
 
 def naming(group):
-    """kind の名前と前後の決まり（名前が文字列でない・空白だけなら無し。決まりは prefix / postfix のときだけ）"""
+    """kind の名前と前後の決まり（名前が文字列でない・空白だけなら無し。決まりは prefix / suffix のときだけ。前の postfix は suffix）"""
     name = group.get('name')
     if not isinstance(name, str) or not name.strip():
         return {}
-    return {'name': name, **({'affix': group['affix']} if group.get('affix') in AFFIXES else {})}
+    affix = group.get('affix')
+    affix = OLD_AFFIXES.get(affix, affix) if isinstance(affix, str) else affix
+    return {'name': name, **({'affix': affix} if affix in AFFIXES else {})}
 
 
 def is_exclusive(group):
@@ -30,10 +33,10 @@ def traits(group):
 
 
 def follows_rule(group, phrase):
-    """phrase が kind の前後の決まりに合うか（postfix は名前で終わる、prefix は名前で始まる。名前の空白もそのまま比べる）"""
+    """phrase が kind の前後の決まりに合うか（suffix は名前で終わる、prefix は名前で始まる。名前の空白もそのまま比べる）"""
     named = naming(group)
     affix = named.get('affix')
-    return (affix == 'postfix' and phrase.endswith(named['name'])) or (affix == 'prefix' and phrase.startswith(named['name']))
+    return (affix == 'suffix' and phrase.endswith(named['name'])) or (affix == 'prefix' and phrase.startswith(named['name']))
 
 
 def in_group(group, key, phrase):

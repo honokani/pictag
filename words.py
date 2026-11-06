@@ -99,7 +99,7 @@ def ungroup_phrases(shared, pairs):
 
 def group_phrases(shared, key, phrases, name='', affix='', exclusive=True):
     """同じキーの語句に kind を付与する（語句1つでもよい。重なる kind があれば、それとまとめる。名前と排他制限は先にあった方）。
-    名前と前後の決まり（affix: prefix / postfix）があれば、名前で始まる / 終わる同じキーの語句もいつも仲間にする。exclusive は排他制限"""
+    名前と前後の決まり（affix: prefix / suffix）があれば、名前で始まる / 終わる同じキーの語句もいつも仲間にする。exclusive は排他制限"""
     group = {'key': key, 'phrases': list(phrases), 'name': name, 'affix': affix, 'exclusive': exclusive}
     return {**shared, 'groups': normalize_groups([*shared['groups'], group])}
 
@@ -178,14 +178,14 @@ def check_key(key):
 
 
 def check_group_traits(name, affix, exclusive):
-    """kind の名前（前後の空白もそのまま使う。空白だけなら番号）・前後の決まり（prefix / postfix / 空）・排他制限（真偽。無ければ真）を検証する"""
+    """kind の名前（前後の空白もそのまま使う。空白だけなら番号）・前後の決まり（prefix / suffix / 空）・排他制限（真偽。無ければ真）を検証する"""
     name, affix = name or '', affix or ''
     if not isinstance(name, str) or any(ord(ch) < 32 for ch in name):
         raise ValueError('kind の名前に改行やタブは使えません')
     if len(name) > 40:
         raise ValueError('kind の名前は 40 文字までです')
-    if affix not in ('', 'prefix', 'postfix'):
-        raise ValueError('前後の決まりは prefix か postfix を選んでください')
+    if affix not in ('', 'prefix', 'suffix'):
+        raise ValueError('前後の決まりは prefix か suffix を選んでください')
     if exclusive is not None and not isinstance(exclusive, bool):
         raise ValueError('排他制限の指定が正しくありません')
     return name, affix, exclusive is not False
