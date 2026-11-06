@@ -131,7 +131,9 @@
         </label>
     </section>
 
+    <!-- 共用辞書の画面: 左半分に表（改名の列の右端が真ん中）、右半分の上に最後に選んだ語句の画像、下に全部の kind -->
     <main id="dictView" hidden>
+        <div id="dictLeft" class="dict-pane">
         <table id="dictGrid">
             <thead><tr>
                 <th><input id="dictAll" type="checkbox" aria-label="表示中をすべて選択"></th>
@@ -144,6 +146,19 @@
             <tbody id="dictBody"></tbody>
         </table>
         <p id="dictEmpty" hidden>表示する語句がありません。画像の画面で入力するか、上の欄で語句を足してください。</p>
+        </div>
+        <div id="dictRight">
+            <!-- 最後に選んだ語句を使っている、開いているプロジェクトの画像（クリックで画像の画面のその行へ） -->
+            <section id="dictImages" class="dict-pane dict-side" aria-label="語句を使っている画像">
+                <p id="dictImagesNote" class="key-help"></p>
+                <div id="dictImageList" class="dict-thumbs"></div>
+            </section>
+            <!-- 全部の kind: 印・キー・1つだけ・改名と、仲間の語句（クリックで左の表のその行へ） -->
+            <section id="dictKinds" class="dict-pane dict-side" aria-label="kind の一覧">
+                <p id="dictKindsNote" class="key-help"></p>
+                <div id="dictKindList"></div>
+            </section>
+        </div>
     </main>
 
     <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
