@@ -94,13 +94,17 @@
 
     <!-- 共用辞書の画面（タブで切り替え）。語句は「キー: 語句」で1行（段落をまたいでまとめる） -->
     <section id="dictTools" class="bar tools" hidden>
-        <!-- 検索: 空白で区切った語の全部が、語句・キー（.looks）・kind（._face など）のどれかにあいまいに合う行（以外を表示なら合わない行） -->
+        <!-- 検索: 空白で区切った語の全部が合う行（以外を表示なら合わない行）。「.」で始まる語は kind（キーの .looks・kind の ._face など）の名前とだけ、
+             ほかの語は語句と kind の名前のどれかと比べる。打っている間はあいまい、検索か Enter で文字どおり（また打つとあいまいに戻る）。
+             リセットは、検索の文字・対象 / 以外・共用辞書を初めに戻す -->
         <span class="group">
+            <button type="button" id="dictResetButton" title="検索の文字を消し、「対象を表示」と「共用辞書: すべて」に戻す">リセット</button>
             <input id="dictFilter" type="text" placeholder="検索（例: .looks stand）" autocomplete="off" aria-label="語句・キー・kind で検索">
             <select id="dictFilterMode" aria-label="検索に合う行を出すか、合わない行を出すか">
                 <option value="in">対象を表示</option>
                 <option value="out">以外を表示</option>
             </select>
+            <button type="button" id="dictSearchButton" title="打った語がそのまま入っている行だけに絞る（Enter でも。また打つと、あいまいな検索に戻る）">検索</button>
             <select id="dictShared" aria-label="共用辞書に入っているかで絞り込み">
                 <option value="">共用辞書: すべて</option>
                 <option value="in">共用辞書にある</option>
@@ -121,7 +125,7 @@
         <span id="dictSelForm" class="group bulk" hidden>
             <span id="dictSelInfo">選択 0 件</span>
             <button type="button" id="dictRegisterButton">共用辞書に入れる</button>
-            <button type="button" id="dictGroupButton" title="同じキーの語句に kind（2階のタグ）を付与する。名前・前後の決まり・1つだけを選べる">kindを付与する</button>
+            <button type="button" id="dictGroupButton" title="同じキーの語句に kind（2階のタグ）を付与する。名前・前後の決まり・排他制限を選べる">kindを付与する</button>
             <button type="button" id="dictUngroupButton">kindから外す</button>
             <button type="button" id="dictUnregisterButton" class="hold" title="1秒長押しで、選んだ語句を共用辞書から消す（入力はそのまま）">共用辞書から消す</button>
             <button type="button" id="dictDeselectButton">選択を外す</button>
@@ -137,23 +141,29 @@
         <table id="dictGrid">
             <thead><tr>
                 <th><input id="dictAll" type="checkbox" aria-label="表示中をすべて選択"></th>
-                <!-- キー・kind・語句は ▲（昇順）▼（降順）で並べ替える。同じものをもう一度押すと元の並び -->
+                <!-- 段落: その語句を候補に出す段落。キー・kind・語句は ▲（昇順）▼（降順）で並べ替える。同じものをもう一度押すと元の並び -->
+                <th>段落</th>
                 <th>キー<button type="button" class="sort" data-sort="key" data-dir="1" title="キーの昇順">▲</button><button type="button" class="sort" data-sort="key" data-dir="-1" title="キーの降順">▼</button></th>
                 <th>kind<button type="button" class="sort" data-sort="kind" data-dir="1" title="kind の昇順（kind の無い行は後ろ）">▲</button><button type="button" class="sort" data-sort="kind" data-dir="-1" title="kind の降順（kind の無い行は後ろ）">▼</button></th>
                 <th>語句<button type="button" class="sort" data-sort="text" data-dir="1" title="語句の昇順">▲</button><button type="button" class="sort" data-sort="text" data-dir="-1" title="語句の降順">▼</button></th>
-                <th>使っている段落</th><th>回数</th><th>辞書</th><th></th>
+                <th>回数</th><th>辞書</th><th></th>
             </tr></thead>
             <tbody id="dictBody"></tbody>
         </table>
         <p id="dictEmpty" hidden>表示する語句がありません。画像の画面で入力するか、上の欄で語句を足してください。</p>
         </div>
         <div id="dictRight">
-            <!-- 最後に選んだ語句を使っている、開いているプロジェクトの画像（クリックで画像の画面のその行へ） -->
+            <!-- 最後に選んだ語句を使っている、開いているプロジェクトの画像（クリックで下に画像の画面の行、ダブルクリックで画像の画面のその行へ） -->
             <section id="dictImages" class="dict-pane dict-side" aria-label="語句を使っている画像">
                 <p id="dictImagesNote" class="key-help"></p>
                 <div id="dictImageList" class="dict-thumbs"></div>
             </section>
-            <!-- 全部の kind: 印・キー・1つだけ・改名と、仲間の語句（クリックで左の表のその行へ） -->
+            <!-- 簡易表示: クリックした画像の、画像の画面の行（hint の列を除く。見るだけ。サムネイルのクリックで画像の画面のその行へ） -->
+            <section id="dictRowView" class="dict-pane dict-side" aria-label="画像の画面の行">
+                <p id="dictRowNote" class="key-help"></p>
+                <table id="dictRowTable" hidden><thead><tr></tr></thead><tbody></tbody></table>
+            </section>
+            <!-- 全部の kind: 印・キー・排他制限・改名と、仲間の語句（クリックで左の表のその行へ） -->
             <section id="dictKinds" class="dict-pane dict-side" aria-label="kind の一覧">
                 <p id="dictKindsNote" class="key-help"></p>
                 <div id="dictKindList"></div>
@@ -199,7 +209,7 @@
     </dialog>
 
     <!-- kind: 新しく付与するときと、印をダブルクリックしたときに開く。postfix / prefix を選ぶと、名前で終わる / 始まる同じキーの語句も
-         いつも仲間になる（名前の前後の空白もそのまま比べる）。名前が空なら番号（K1 …）。1つだけなら、1枚の画像の1段落に仲間を1つだけ -->
+         いつも仲間になる（名前の前後の空白もそのまま比べる）。名前が空なら番号（K1 …）。排他制限なら、1枚の画像の1段落に仲間を1つだけ -->
     <dialog id="groupDialog" aria-label="kind">
         <form method="dialog" class="group-form">
             <label for="groupName">kind の名前（空なら番号。前後の空白もそのまま比べる）</label>
@@ -209,7 +219,7 @@
                 <label><input type="radio" name="groupAffix" value="prefix"> prefix（前が共通。印は 名前_）</label>
                 <label><input type="radio" name="groupAffix" value=""> そのまま（前後の決まりなし）</label>
             </p>
-            <label class="group-affix"><input id="groupExclusive" type="checkbox" checked> 1つだけ（1枚の画像の1段落に、仲間を1つだけ）</label>
+            <label class="group-affix"><input id="groupExclusive" type="checkbox" checked> 排他制限</label>
             <p class="rename-actions">
                 <button type="submit" value="ok" class="primary">決める</button>
                 <button type="submit" value="cancel">やめる</button>

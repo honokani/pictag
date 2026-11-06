@@ -1,4 +1,6 @@
 """共用辞書の画面（Playwright）。入力は映画の有名なシーン（tests/scenes.py）"""
+import re
+
 import pytest
 
 import app as pictag
@@ -65,7 +67,7 @@ def hold(page, button):
 
 
 def group_postures(page):
-    """共用辞書の画面で looks の standing と sitting に kind .posture（前後の決まりなし・1つだけ）を付与して、画像の画面へ戻る"""
+    """共用辞書の画面で looks の standing と sitting に kind .posture（前後の決まりなし・排他制限）を付与して、画像の画面へ戻る"""
     show_dictionary(page)
     page.fill("#dictFilter", ".looks")
     dict_row(page, "looks", "standing").locator(".dict-phrase").click()
@@ -89,7 +91,7 @@ def test_tab_switches_between_images_and_dictionary(page, movies):
 
     standing = dict_row(page, "looks", "standing")  # 段落をまたいで1行
     expect(standing.locator(".dict-sections")).to_have_text("girl, guy")
-    expect(standing.locator(".num")).to_have_text("4")
+    expect(standing.locator(".num")).to_have_text("4（0）")  # 開いているプロジェクトの回数（ほかのプロジェクトの回数）
     expect(standing.locator(".dict-shared")).to_have_text("")
     expect(dict_row(page, "", "spread")).to_have_attribute("data-kind", "word")
 
@@ -112,6 +114,64 @@ def test_filter_by_text_key_and_shared(page, movies):
     expect(page.locator("#dictEmpty")).to_be_visible()
 
 
+def test_search_button_and_enter_narrow_to_rows_with_the_words_as_typed(page, movies):
+    # 打っている間は、あいまいに合う行（fzf のよう）。「対象を表示」の右の「検索」か Enter で、打った語がそのまま入っている行だけ
+    # （大文字と小文字は区別しない。「以外を表示」なら入っていない行）。また打つと、あいまいに戻る
+    open_movies(page)
+    show_dictionary(page)
+    rows = page.locator("#dictBody tr")
+    expect(rows.first).to_be_visible()
+    total = rows.count()
+    xs = [page.locator(s).bounding_box()["x"]
+          for s in ("#dictResetButton", "#dictFilter", "#dictFilterMode", "#dictSearchButton", "#dictShared")]
+    assert xs == sorted(xs)  # 左から リセット・検索の欄・対象を表示・検索・共用辞書
+
+    page.fill("#dictFilter", "SS")
+    fuzzy = rows.count()
+    assert fuzzy > 2  # standing（.looks の s）など
+    page.click("#dictSearchButton")
+    expect(page.locator("#dictBody .dict-phrase")).to_have_text(["long dress", "yellow dress"])
+    page.select_option("#dictFilterMode", "out")
+    expect(rows).to_have_count(total - 2)
+    page.select_option("#dictFilterMode", "in")
+
+    page.fill("#dictFilter", "ss")
+    expect(rows).to_have_count(fuzzy)
+    page.press("#dictFilter", "Enter")
+    expect(page.locator("#dictBody .dict-phrase")).to_have_text(["long dress", "yellow dress"])
+
+
+def test_a_word_that_starts_with_a_dot_looks_only_at_kind_names(page, movies):
+    # 「.」で始まる語は、kind（キーを含む）の名前とだけ比べる（語句の中の「.」とは比べない）。「.」の無い語は、語句と kind の名前の両方
+    movies.write(movies.row_index("titanic.png"), "girl waves. guy smiles.", section="action")
+    movies.save()
+    open_movies(page)
+    show_dictionary(page)
+    expect(dict_row(page, "", "girl waves. guy smiles.")).to_be_visible()  # 辞書を読むまで待つ
+    page.fill("#dictFilter", ".smiles")
+    expect(page.locator("#dictBody tr")).to_have_count(0)
+    page.fill("#dictFilter", ".action smiles")
+    expect(page.locator("#dictBody .dict-phrase")).to_have_text(["girl waves. guy smiles."])
+
+
+def test_reset_puts_the_search_the_mode_and_the_shared_filter_back(page, movies):
+    # 検索の欄の左の「リセット」: 検索の文字を消し、「対象を表示」と「共用辞書: すべて」に戻す
+    open_movies(page)
+    show_dictionary(page)
+    rows = page.locator("#dictBody tr")
+    expect(rows.first).to_be_visible()
+    total = rows.count()
+    page.fill("#dictFilter", "stand")
+    page.select_option("#dictFilterMode", "out")
+    page.select_option("#dictShared", "in")
+    expect(rows).to_have_count(0)
+    page.click("#dictResetButton")
+    expect(page.locator("#dictFilter")).to_have_value("")
+    expect(page.locator("#dictFilterMode")).to_have_value("in")
+    expect(page.locator("#dictShared")).to_have_value("")
+    expect(rows).to_have_count(total)
+
+
 def test_register_selected_rows_and_unregister_with_a_long_press(page, movies):
     open_movies(page)
     show_dictionary(page)
@@ -129,7 +189,7 @@ def test_register_selected_rows_and_unregister_with_a_long_press(page, movies):
     hold(page, unregister)
     expect(page.locator("#status")).to_have_text("1 件を共用辞書から消しました（入力はそのまま）")
     expect(dict_row(page, "looks", "standing").locator(".shared-mark")).to_have_count(0)
-    expect(dict_row(page, "looks", "standing").locator(".num")).to_have_text("4")  # 使っているので一覧に残る
+    expect(dict_row(page, "looks", "standing").locator(".num")).to_have_text("4（0）")  # 使っているので一覧に残る
 
 
 def test_add_a_new_phrase_by_hand(page, movies):
@@ -140,7 +200,7 @@ def test_add_a_new_phrase_by_hand(page, movies):
     page.fill("#dictAddText", "kneeling")
     page.click("#dictAddForm button[type=submit]")
     kneeling = dict_row(page, "looks", "kneeling")
-    expect(kneeling.locator(".num")).to_have_text("0")
+    expect(kneeling.locator(".num")).to_have_text("0（0）")
     expect(kneeling.locator(".shared-mark")).to_be_visible()
     expect(page.locator("#dictAddText")).to_have_value("")
 
@@ -156,6 +216,25 @@ def test_dictionary_works_before_opening_a_project(page):
     expect(dict_row(page, "place", "ship bow").locator(".shared-mark")).to_be_visible()
 
 
+def test_count_shows_this_project_and_the_other_projects(page, movies, tmp_path):
+    # 回数: プロジェクトを開いているときは「開いているプロジェクトの回数（ほかのプロジェクトの回数）」（候補と同じ書き方）
+    other = Api(pictag.app.test_client())
+    load_scenes(other, tmp_path / "imgs" / "others", ["titanic.png"])
+    other.save()
+    open_movies(page)
+    show_dictionary(page)
+    expect(dict_row(page, "looks", "standing").locator(".num")).to_have_text("4（2）")
+    expect(dict_row(page, "looks", "sitting").locator(".num")).to_have_text("2（0）")
+    expect(dict_row(page, "", "spread").locator(".num")).to_have_text("1（1）")  # キーなしの文の単語も
+
+
+def test_count_before_opening_a_project_is_the_total(page, movies):
+    # プロジェクトを開く前は、今までどおり全部のプロジェクトの回数だけ
+    page.goto(page.base_url)
+    show_dictionary(page)
+    expect(dict_row(page, "looks", "standing").locator(".num")).to_have_text("4")
+
+
 def test_rename_replaces_the_inputs_of_the_open_project(page, movies):
     open_movies(page)
     show_dictionary(page)
@@ -163,7 +242,7 @@ def test_rename_replaces_the_inputs_of_the_open_project(page, movies):
     editor = page.locator("#dictBody .rename-input")
     editor.fill("shawl")
     editor.press("Enter")
-    expect(dict_row(page, "clothes", "shawl").locator(".num")).to_have_text("1")
+    expect(dict_row(page, "clothes", "shawl").locator(".num")).to_have_text("1（0）")
     expect(dict_row(page, "clothes", "cardigan")).to_have_count(0)
     expect(page.locator("#status")).to_have_text(
         "「cardigan」を「shawl」にしました（開いているプロジェクトの 1 行を置き換えました。保存はまだです）")
@@ -231,14 +310,14 @@ def test_group_hides_mates_from_suggestions_and_marks_conflicts(page, movies):
     page.keyboard.press("Escape")
     page.keyboard.press("Escape")
 
-    # 1つだけの kind の語句が2つある行には ⚠（kind の語句を title に出す）
+    # 排他制限の kind の語句が2つある行には ⚠（kind の語句を title に出す）
     cell(page, "lalaland.png").click()
     lalaland = looks_field(page, "lalaland.png")
     lalaland.fill("standing, sitting, dancing")
     lalaland.evaluate("el => el.blur()")
     conflict = cell(page, "lalaland.png").locator(".ln.conflict")
     expect(conflict).to_have_text("looks: standing, sitting, dancing")
-    expect(conflict).to_have_attribute("title", "kind .posture（1つだけ）: sitting / standing")  # 一覧の並び（abc 順）
+    expect(conflict).to_have_attribute("title", "kind .posture（排他制限）: sitting / standing")  # 一覧の並び（abc 順）
     expect(page.locator("#gridBody .ln.conflict")).to_have_count(1)
 
 
@@ -281,7 +360,7 @@ def test_naming_a_kind_with_a_postfix_takes_in_phrases_that_end_with_it(page, mo
 
     show_images(page)
     expect(cell(page, "titanic.png").locator(".ln.conflict")).to_have_attribute(
-        "title", "kind ._ face（「 face」で終わる語句も。1つだけ）: smiling face / surprised face")
+        "title", "kind ._ face（「 face」で終わる語句も。排他制限）: smiling face / surprised face")
 
     show_dictionary(page)
     dict_row(page, "face", "crying face").locator(".group-badge").dblclick()
@@ -293,29 +372,33 @@ def test_naming_a_kind_with_a_postfix_takes_in_phrases_that_end_with_it(page, mo
     expect(dict_row(page, "face", "crying face").locator(".group-badge")).to_have_count(0)  # 決まりが無くなれば仲間でない
 
 
-def test_dictionary_table_takes_the_left_half_and_the_right_half_shows_images_and_kinds(page, movies):
-    # 表は左半分（改名の列の右端が真ん中。語句の列が残りの幅、使っている段落は 120px、ほかの列は中身の幅）。右半分の上に画像、下に kind。
-    # 見出しは「回数」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す
+def test_dictionary_table_takes_the_left_40_percent_and_the_right_shows_images_a_row_and_kinds(page, movies):
+    # 表は左 40%（改名の列の右端が境目。語句の列が残りの幅、段落は 120px でキーの左、ほかの列は中身の幅）。
+    # 右 60% の上に画像、真ん中に画像の画面の行（簡易表示）、下に kind。
+    # 見出しは「段落」「回数」「辞書」、kind はキーと語句の間。action だけで使うキーなしの文は、キーの列に action と出す
     page.set_viewport_size({"width": 1800, "height": 800})
     open_movies(page)
     show_dictionary(page)
     expect(page.locator("#dictBody .dict-key", has_text="action").first).to_be_visible()  # 行を描くまで待つ
     expect(page.locator("#dictBody .dict-key", has_text="（キーなし）")).to_have_count(0)
     heads = page.locator("#dictGrid thead th")
-    expect(heads).to_have_text(["", "キー▲▼", "kind▲▼", "語句▲▼", "使っている段落", "回数", "辞書", ""])
+    expect(heads).to_have_text(["", "段落", "キー▲▼", "kind▲▼", "語句▲▼", "回数", "辞書", ""])
+    expect(page.locator("#dictBody tr").first.locator("td").nth(1)).to_have_class("dict-sections")  # 行の中も同じ並び
     widths = heads.evaluate_all("ths => ths.map(th => th.getBoundingClientRect().width)")
-    assert widths[0] <= 30 and widths[1] <= 130 and widths[2] <= 110  # チェックが入る分だけ / キーと kind は中身の幅
-    assert widths[3] > 400 and abs(widths[4] - 120) <= 1  # 語句の列が残りの幅
-    assert max(widths[5], widths[6]) <= 50 and widths[7] <= 64  # 「回数」「辞書」と、改名のボタンが入る幅
+    assert widths[0] <= 30 and abs(widths[1] - 120) <= 1  # チェックが入る分だけ / 段落は 120px
+    assert widths[2] <= 130 and widths[3] <= 110 and widths[4] == max(widths)  # キーと kind は中身の幅、語句の列が残りの幅
+    assert widths[5] <= 64 and widths[6] <= 50 and widths[7] <= 64  # 回数（4（0）など）、「辞書」と、改名のボタンが入る幅
     rename = heads.nth(7).bounding_box()
-    assert abs(rename["x"] + rename["width"] - 900) <= 20  # 真ん中（左半分の縦のスクロールバーの分だけ手前）
-    images, kinds = page.locator("#dictImages").bounding_box(), page.locator("#dictKinds").bounding_box()
-    assert abs(images["x"] - 900) <= 2 and abs(kinds["x"] - 900) <= 2 and images["y"] < kinds["y"]  # 右半分の上と下
+    assert abs(rename["x"] + rename["width"] - 720) <= 20  # 境目（左の縦のスクロールバーの分だけ手前）
+    images, shown, kinds = (page.locator(s).bounding_box() for s in ("#dictImages", "#dictRowView", "#dictKinds"))
+    assert all(abs(box["x"] - 720) <= 2 for box in (images, shown, kinds))
+    assert images["y"] < shown["y"] < kinds["y"]  # 右の上・真ん中・下
 
 
-def test_choosing_a_phrase_shows_its_images_and_clicking_one_opens_its_row(page, movies):
+def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_image(page, movies):
     # 語句の行を選ぶと、開いているプロジェクトでその語句を使っている画像を右上に出す（最後に選んだ行の画像）。
-    # 画像をクリックすると、画像の画面のその行へ
+    # 画像をクリックすると、右上と右下の間に、画像の画面のその行を hint の列を除いてそのまま出す（別の語句を選んでも残す）。
+    # 画像のダブルクリックか、出した行のサムネイルのクリックで、画像の画面のその行へ
     open_movies(page)
     show_dictionary(page)
     page.fill("#dictFilter", ".looks")
@@ -329,9 +412,111 @@ def test_choosing_a_phrase_shows_its_images_and_clicking_one_opens_its_row(page,
     dict_row(page, "looks", "smile").locator(".dict-phrase").click()  # 選んである行: 選択はそのままで、画像はその行の
     expect(thumbs).to_have_count(2)
     expect(page.locator("#dictBody tr.selected")).to_have_count(2)
+
+    view = page.locator("#dictRowView")
     page.locator('#dictImageList .dict-thumb[title="roman_holiday.png"]').click()
+    expect(page.locator("#dictView")).to_be_visible()  # クリックでは画面を変えない
+    shown = view.locator('tbody tr[data-name="roman_holiday.png"]')
+    expect(shown.locator('td.cell[data-section="girl"]')).to_contain_text("looks: sitting, smile")
+    expect(view.locator("thead th")).to_contain_text(["サムネイル", "token", "マーク", "picture", "action", "girl", "guy"])
+    expect(view.locator("td.hint, th.hint-head")).to_have_count(0)  # hint の列は出さない
+
+    dict_row(page, "looks", "dancing").locator(".dict-phrase").click()  # 別の語句を選んでも残す
+    expect(thumbs).to_have_count(1)
+    expect(shown).to_be_visible()
+    shown.locator("td.thumb img").click()  # 出した行のサムネイル → 画像の画面のその行へ
     expect(page.locator("#imagesView")).to_be_visible()
     expect(page.locator('#gridBody tr[data-name="roman_holiday.png"]')).to_be_in_viewport()
+    widths = lambda scope: page.locator(f'{scope} tr[data-name="roman_holiday.png"] td').evaluate_all(
+        "tds => tds.map(td => [td.className, Math.round(td.getBoundingClientRect().width)])")
+    in_grid = [w for w in widths("#gridBody") if not w[0].startswith("hint")]
+
+    show_dictionary(page)
+    assert widths("#dictRowView tbody") == in_grid  # 列の幅も画像の画面と同じ
+    page.locator('#dictImageList .dict-thumb[title="lalaland.png"]').dblclick()  # 一覧のダブルクリックでも
+    expect(page.locator("#imagesView")).to_be_visible()
+    expect(page.locator('#gridBody tr[data-name="lalaland.png"]')).to_be_in_viewport()
+
+
+def test_the_kind_list_colors_the_phrases_that_follow_the_rule(page, movies):
+    # 右下の kind の仲間の語句: postfix・prefix の決まりに合う語句（closed eyes）には色を付け、合わないが付与した語句（wink eye）は今のまま
+    movies.write(movies.row_index("titanic.png"), "face: closed eyes, wink eye")
+    movies.save()
+    open_movies(page)
+    show_dictionary(page)
+    page.fill("#dictFilter", ".face")
+    dict_row(page, "face", "closed eyes").locator(".dict-phrase").click()
+    dict_row(page, "face", "wink eye").locator(".dict-phrase").click(modifiers=["Control"])
+    page.click("#dictGroupButton")
+    page.fill("#groupName", " eyes")  # postfix（初め）
+    page.click('#groupDialog button[value="ok"]')
+    members = page.locator("#dictKindList .dict-kind").first.locator(".kind-member")
+    expect(members).to_have_text(["closed eyes", "wink eye"])
+    expect(members.first).to_have_class(re.compile(r"\brule\b"))
+    expect(members.nth(1)).not_to_have_class(re.compile(r"\brule\b"))
+    colors = members.evaluate_all("els => els.map(e => getComputedStyle(e).backgroundColor)")
+    assert colors[0] != colors[1]
+
+
+def test_the_kind_list_turns_the_exclusive_restriction_on_and_off(page, movies):
+    # 右下の kind の一覧の「排他制限」のチェックで、その kind の排他制限を付け外しする（名前と前後の決まりはそのまま）
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    check = page.locator("#dictKindList .dict-kind").first.locator("input.kind-exclusive")
+    badge = dict_row(page, "looks", "standing").locator(".group-badge")
+    expect(check).to_be_checked()
+    expect(badge).to_have_attribute("title", re.compile("（排他制限）"))
+    check.uncheck()
+    expect(page.locator("#status")).to_have_text("kind .posture の排他制限を外しました")
+    expect(badge).not_to_have_attribute("title", re.compile("排他制限"))
+    expect(badge).to_have_text(".posture")
+    expect(check).not_to_be_checked()
+    check.check()
+    expect(page.locator("#status")).to_have_text("kind .posture に排他制限を付けました")
+    expect(badge).to_have_attribute("title", re.compile("（排他制限）"))
+
+
+def test_the_kind_name_field_suggests_kind_names_and_tags(page, movies):
+    # kind の窓の名前の欄: ダブルクリックで過去タグ（今ある kind の名前を先に、後ろに辞書の語句と単語）を出し、打つと fzf のように絞る。
+    # 候補は欄の右に出す（欄の下の選択を覆わない）。Enter で入れるのは、ダブルクリックで出した一覧か ↑↓ で選んだとき（クリックでも入る）。
+    # 打った名前のままの Enter は窓の「決める」。kind は印の形で見せ、名前だけを入れる。Esc は候補だけを閉じる（窓は閉じない）
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    page.fill("#dictFilter", ".clothes")
+    dict_row(page, "clothes", "long dress").locator(".dict-phrase").click()
+    page.click("#dictGroupButton")
+    name = page.locator("#groupName")
+    items = page.locator("#groupDialog .suggestions li")
+    name.dblclick()
+    expect(items.first).to_have_text(".posture")  # kind の名前が先
+    assert items.count() > 1  # 後ろに辞書のタグ
+    box, field = page.locator("#groupDialog .suggestions").bounding_box(), name.bounding_box()
+    assert box["x"] >= field["x"] + field["width"] and abs(box["y"] - field["y"]) <= 1  # 欄の右
+    page.keyboard.press("Enter")
+    expect(name).to_have_value("posture")
+    expect(page.locator("#groupDialog")).to_be_visible()
+
+    name.fill("dres")
+    expect(items).to_contain_text(["long dress", "yellow dress"])
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    expect(name).to_have_value("yellow dress")
+    name.fill("dres")
+    expect(items.first).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(items.first).to_be_hidden()
+    expect(page.locator("#groupDialog")).to_be_visible()  # Esc は候補だけを閉じる
+    name.fill("yel")
+    items.first.click()
+    expect(name).to_have_value("yellow dress")
+
+    name.fill("hair")  # 打った名前のままの Enter は、候補を入れずに「決める」
+    expect(items.first).to_be_visible()
+    page.keyboard.press("Enter")
+    expect(page.locator("#groupDialog")).to_be_hidden()
+    expect(dict_row(page, "clothes", "long dress").locator(".group-badge")).to_have_text("._hair")
 
 
 def test_the_kind_list_shows_every_kind_and_jumps_to_its_phrases(page, movies):
@@ -406,7 +591,7 @@ def test_dictionary_rows_sort_and_search_tags_and_kinds_together(page, movies):
 
 
 def test_a_kind_from_one_phrase_that_is_not_exclusive_marks_no_conflict(page, movies):
-    # 語句1つでも kind を付与できる。「1つだけ」を外した kind は、同じ行に仲間が2つあっても ⚠ を付けない
+    # 語句1つでも kind を付与できる。排他制限を外した kind は、同じ行に仲間が2つあっても ⚠ を付けない
     movies.write(movies.row_index("titanic.png"), "body: red/long hair, wavy hair")
     movies.save()
     open_movies(page)
@@ -414,7 +599,8 @@ def test_a_kind_from_one_phrase_that_is_not_exclusive_marks_no_conflict(page, mo
     page.fill("#dictFilter", ".body")
     dict_row(page, "body", "red/long hair").locator(".dict-phrase").click()
     page.click("#dictGroupButton")
-    expect(page.locator("#groupExclusive")).to_be_checked()  # 初めは 1つだけ
+    expect(page.locator("#groupExclusive")).to_be_checked()  # 初めは排他制限あり
+    expect(page.locator("#groupDialog label:has(#groupExclusive)")).to_have_text("排他制限")
     page.fill("#groupName", "hair")
     page.uncheck("#groupExclusive")
     page.click('#groupDialog button[value="ok"]')
@@ -431,7 +617,7 @@ def test_bulk_add_reports_rows_skipped_by_a_group(page, movies):
     page.select_option("#bulkKey", "looks")
     page.fill("#bulkText", "sitting")
     page.click('#bulkForm button[value="add"]')
-    expect(page.locator("#status")).to_have_text("3 行に追加しました（2 行は、1つだけの kind の別の語句があるので足していません）")
+    expect(page.locator("#status")).to_have_text("3 行に追加しました（2 行は、排他制限の kind の別の語句があるので足していません）")
     expect(line_of(page, "titanic.png", "looks")).to_have_text("looks: standing, eyes closed, smile")
     expect(line_of(page, "roman_holiday.png", "looks")).to_have_text("looks: sitting, smile")
 

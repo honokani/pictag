@@ -262,12 +262,12 @@ function phrasesByKey(text) {
     return byKey;
 }
 
-// ---- kind（groups.py と同じ規則。「1つだけ」の kind は、1枚の画像の1段落に仲間を1つだけ） ----
+// ---- kind（groups.py と同じ規則。排他制限の kind は、1枚の画像の1段落に仲間を1つだけ） ----
 
 // 名前があるか（空白だけは無し）。前後の決まりは名前があるときだけ
 const named = g => typeof g.name === 'string' && g.name.trim() !== '';
 
-// 「1つだけ」の kind か（書いていなければ 1つだけ）
+// 排他制限の kind か（書いていなければ排他制限あり）
 const exclusiveKind = g => g.exclusive !== false;
 
 // 前後の決まりに合うか（postfix は名前で終わる、prefix は名前で始まる。名前の空白もそのまま比べる）
@@ -278,22 +278,22 @@ const inGroup = (g, key, phrase) => g.key === key && (g.phrases.includes(phrase)
 
 const groupOf = (key, phrase) => state.groups.find(g => inGroup(g, key, phrase));
 
-// 同じ「1つだけ」の kind の別の語句が、もう入っているか（入っていれば候補に出さない）
+// 同じ排他制限の kind の別の語句が、もう入っているか（入っていれば候補に出さない）
 function blockedIn(byKey, key, phrase) {
     const group = groupOf(key, phrase);
     return Boolean(group) && exclusiveKind(group) && (byKey[key] || []).some(p => p !== phrase && inGroup(group, key, p));
 }
 
-// 語句のうち2つ以上が仲間の「1つだけ」の kind（ぶつかっている）
+// 語句のうち2つ以上が仲間の排他制限の kind（ぶつかっている）
 const conflictOf = (key, phrases) => state.groups.find(g => exclusiveKind(g) && phrases.filter(p => inGroup(g, key, p)).length >= 2);
 
 // kind の印（kind はいつも「.」で始まる）: postfix は ._名前、prefix は .名前_、決まりなしは .名前。名前が無ければ .K1, .K2 …（i は並びの位置）
 const groupLabel = (g, i) => `.${!named(g) ? `K${i + 1}` : g.affix === 'postfix' ? `_${g.name}` : g.affix === 'prefix' ? `${g.name}_` : g.name}`;
 
-// kind の説明（印と ⚠ の title）: 印、前後の決まりと 1つだけ、一覧の語句
+// kind の説明（印と ⚠ の title）: 印、前後の決まりと排他制限、一覧の語句
 function groupTitle(g, i) {
     const rule = !named(g) ? '' : g.affix === 'postfix' ? `「${g.name}」で終わる語句も` : g.affix === 'prefix' ? `「${g.name}」で始まる語句も` : '';
-    const notes = [rule, exclusiveKind(g) ? '1つだけ' : ''].filter(Boolean).join('。');
+    const notes = [rule, exclusiveKind(g) ? '排他制限' : ''].filter(Boolean).join('。');
     return `kind ${groupLabel(g, i)}${notes ? `（${notes}）` : ''}: ${g.phrases.join(' / ')}`;
 }
 
@@ -409,7 +409,7 @@ function kindOf(section) {
 
 const sameKind = (a, b) => kindOf(a) === kindOf(b);
 
-// キーのある行: 同じ種類の段落でそのキーに使われた語句（打っていなくても使用回数の多い順に出す）。同じ「1つだけ」の kind の語句が入っていれば出さない
+// キーのある行: 同じ種類の段落でそのキーに使われた語句（打っていなくても使用回数の多い順に出す）。同じ排他制限の kind の語句が入っていれば出さない
 function phraseCandidates(section, ctx) {
     return keepBest(state.phrases
         .filter(p => p.key === ctx.key && sameKind(p.section, section) && !ctx.current.includes(p.phrase)
@@ -548,6 +548,13 @@ function withWordTail(ctx) {
 
 function accept(item) {
     const {el} = state.suggest;
+    if (item.kind === 'name') {
+        // kind の窓の名前: 欄の文字を、選んだ名前（kind の名前か辞書のタグ）にする（続けて候補は出さない）
+        el.value = item.name;
+        el.setSelectionRange(el.value.length, el.value.length);
+        hideSuggestions();
+        return;
+    }
     const ctx = withWordTail(state.suggest.ctx);
     const field = item.key && el.dataset.key === '' ? state.editor.fields.find(f => f.dataset.key === item.key) : null;
     if (field && (item.kind === 'keyed' || item.kind === 'key')) {
@@ -1128,7 +1135,7 @@ const choiceGroup = group => (group === 'pov' ? state.viewChoices.pov.map(c => c
 
 // 欄の表示: 確定タグのキーを並びどおりに、入力欄と同じくキーの名前の下に値を出す。値の無いキーは名前だけ薄く、自動のキー（characters）は自動の値
 // ほかの行（キーの無い文・確定タグに無いキー）は、あれば「その他:」の下に（最後のキーの値の続きに見えないように）。確定タグの無い段落（action・else）は行をそのまま
-// 「1つだけ」の kind の語句が2つ以上ある行には ⚠（CSS）
+// 排他制限の kind の語句が2つ以上ある行には ⚠（CSS）
 function cellHtml(section, row) {
     const keys = templateKeys(section);
     const byKey = phrasesByKey(row.texts[section]);
@@ -1527,7 +1534,7 @@ async function bulkEdit(op) {
     setDirty(true);
     refreshWords();
     const done = `${rows.length} 行${op === 'add' ? 'に追加' : 'から削除'}しました`;
-    if (res.skipped) return setStatus(`${done}（${res.skipped} 行は、1つだけの kind の別の語句があるので足していません）`, 'warn');
+    if (res.skipped) return setStatus(`${done}（${res.skipped} 行は、排他制限の kind の別の語句があるので足していません）`, 'warn');
     setStatus(done, 'ok');
 }
 
@@ -1837,7 +1844,7 @@ function clickMark(button) {
 }
 
 // 行の ①〜⑯: その番号の語句を行に入れる（選択中の行の中で押すと選択中の全行）。* を含む語句は、合う語句のうち件数が最も多いもの
-// （サーバーが決める）。付いている行と、1つだけの kind の別の語句がある行には入れない（付いている行だけなら何もしない）
+// （サーバーが決める）。付いている行と、排他制限の kind の別の語句がある行には入れない（付いている行だけなら何もしない）
 async function putWordMark(span) {
     const i = Number(span.dataset.mark);
     const label = state.markChoices.auto[i];
@@ -1850,11 +1857,11 @@ async function putWordMark(span) {
     if (!res.success) return setStatus(res.message, 'error');
     res.rows.forEach(replaceRow);
     const put = rows.length - res.skipped;
-    if (!put) return setStatus(`${label}: 入れられる行がありませんでした（付いているか、1つだけの kind の別の語句があります）`, 'warn');
+    if (!put) return setStatus(`${label}: 入れられる行がありませんでした（付いているか、排他制限の kind の別の語句があります）`, 'warn');
     setDirty(true);
     refreshWords();
     const done = `${put} 行に「${res.phrase}」を入れました`;
-    setStatus(res.skipped ? `${done}（${res.skipped} 行は、付いているか1つだけの kind の別の語句があるので入れていません）` : done,
+    setStatus(res.skipped ? `${done}（${res.skipped} 行は、付いているか排他制限の kind の別の語句があるので入れていません）` : done,
         res.skipped ? 'warn' : 'ok');
 }
 

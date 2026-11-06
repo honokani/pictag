@@ -262,12 +262,15 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 #dictAddSection, #dictAddKey { max-width: 120px; }
 #dictFilter, #dictAddText { width: 170px; }
 .rename-option { margin-left: auto; color: #555; font-size: 12px; }
-/* 共用辞書の画面: 左半分に表、右半分の上に画像・下に kind（それぞれの中で縦に流す） */
-#dictView:not([hidden]) { display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; }
+/* 共用辞書の画面: 左 40% に表、右 60% の上に画像・真ん中に画像の画面の行（簡易表示）・下に kind（それぞれの中で流す） */
+#dictView:not([hidden]) { display: grid; grid-template-columns: 2fr 3fr; overflow: hidden; }
 #dictView .dict-pane { overflow: auto; min-height: 0; }
 #dictLeft { padding-bottom: 24px; }
-#dictRight { display: grid; grid-template-rows: 1fr 1fr; min-height: 0; border-left: 1px solid #ddd; }
-#dictKinds { border-top: 1px solid #ddd; }
+#dictRight { display: grid; grid-template-rows: 1fr auto 1fr; min-width: 0; min-height: 0; border-left: 1px solid #ddd; }
+#dictRowView, #dictKinds { border-top: 1px solid #ddd; }
+#dictRowView { max-height: 45vh; }  /* 行が高くても、上と下の欄を残す（入り切らない分は中で流す） */
+#dictRowTable { pointer-events: none; }  /* 見るだけ（サムネイルのクリックだけで画像の画面へ） */
+#dictRowTable td.thumb img { pointer-events: auto; cursor: pointer; }
 .dict-side { padding: 6px 8px; }
 .dict-side > .key-help { margin: 0 0 6px; }
 #dictEmpty { padding: 24px; color: #777; }
@@ -278,9 +281,10 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 .dict-kind { padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
 .kind-members { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .kind-member { padding: 0 6px; border: 1px solid #ccc; border-radius: 3px; background: #fff; font-size: 12px; cursor: pointer; }
-/* 共用辞書の表は列の幅の合計（画面の幅いっぱいに広げない）。語句と使っている段落は幅を決めて折り返し、ほかの列は中身の幅 */
+.kind-member.rule { background: #e3effd; border-color: #a9c8ee; }  /* postfix・prefix の決まりに合う語句（合わないが付与した語句は白） */
+/* 共用辞書の表は左の枠いっぱい。語句と段落は幅を決めて折り返し、ほかの列は中身の幅 */
 #dictGrid { width: 100%; min-width: 0; }
-#dictGrid td { width: 1%; }  /* 語句の列のほかは中身の幅に縮め、語句の列が残りの幅を取る（使っている段落は 120px） */
+#dictGrid td { width: 1%; }  /* 語句の列のほかは中身の幅に縮め、語句の列が残りの幅を取る（段落は 120px） */
 #dictGrid tbody tr { cursor: pointer; }
 #dictGrid th:first-child, #dictGrid td:first-child { padding-left: 2px; padding-right: 2px; }  /* チェックが入る分だけ */
 #dictGrid th { white-space: nowrap; }
@@ -317,6 +321,7 @@ tr.dead img { opacity: .5; }
     border: 1px solid #aaa;
     box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
 }
+dialog .suggestions { position: fixed; }  /* kind の窓の名前の候補（窓の中では、窓の左上でなく画面の左上から置く） */
 .suggestions li { padding: 2px 8px; cursor: pointer; white-space: nowrap; }
 .suggestions li .count { color: #999; margin-left: 8px; font-size: 12px; }
 .suggestions li.active { background: #1a73e8; color: #fff; }
