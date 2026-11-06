@@ -402,7 +402,7 @@ def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_ima
     # 語句の行を選ぶと、開いているプロジェクトでその語句を使っている画像を右上に出す（最後に選んだ行の画像）。
     # 画像をクリックすると、右上と右下の間に、画像の画面のその行のサムネイルと段落の欄をそのまま出す（token・🤖・マーク・hint の列は
     # 出さない。別の語句を選んでも残す）。
-    # 画像のダブルクリックか、出した行のサムネイルのクリックで、画像の画面のその行へ
+    # 画像のダブルクリックか、出した行のサムネイルの下の jump で、画像の画面のその行へ
     open_movies(page)
     show_dictionary(page)
     page.fill("#dictFilter", ".looks")
@@ -430,7 +430,7 @@ def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_ima
     dict_row(page, "looks", "dancing").locator(".dict-phrase").click()  # 別の語句を選んでも残す
     expect(thumbs).to_have_count(1)
     expect(shown).to_be_visible()
-    shown.locator("td.thumb img").click()  # 出した行のサムネイル → 画像の画面のその行へ
+    shown.locator("td.thumb button", has_text="jump").click()  # 出した行のサムネイルの下の jump → 画像の画面のその行へ
     expect(page.locator("#imagesView")).to_be_visible()
     expect(page.locator('#gridBody tr[data-name="roman_holiday.png"]')).to_be_in_viewport()
     widths = lambda scope: page.locator(f'{scope} tr[data-name="roman_holiday.png"] td').evaluate_all(
@@ -442,6 +442,85 @@ def test_choosing_a_phrase_shows_its_images_and_a_click_shows_the_row_of_the_ima
     page.locator('#dictImageList .dict-thumb[title="lalaland.png"]').dblclick()  # 一覧のダブルクリックでも
     expect(page.locator("#imagesView")).to_be_visible()
     expect(page.locator('#gridBody tr[data-name="lalaland.png"]')).to_be_in_viewport()
+
+
+ROW_NOTE = "右上の画像をクリックすると、画像の画面のその行（サムネイルと段落の欄）をここに出します"
+
+
+def show_row_of(page, name):
+    """共用辞書の画面で looks の smile を選び、右上の画像 name をクリックして簡易表示に出す"""
+    page.fill("#dictFilter", ".looks")
+    dict_row(page, "looks", "smile").locator(".dict-phrase").click()
+    page.locator(f'#dictImageList .dict-thumb[title="{name}"]').click()
+    expect(page.locator(f'#dictRowView tbody tr[data-name="{name}"]')).to_be_visible()
+
+
+def test_the_row_view_has_jump_and_close_under_the_thumbnail(page, movies):
+    # 簡易表示は、出しているときは上の行（ファイル名と説明）を出さない。サムネイルの下に「jump」「閉じる」。
+    # jump で画像の画面のその行へ、閉じるで簡易表示を消す（何も出していないときの説明に戻る）
+    open_movies(page)
+    show_dictionary(page)
+    note = page.locator("#dictRowNote")
+    expect(note).to_have_text(ROW_NOTE)
+    show_row_of(page, "roman_holiday.png")
+    expect(note).to_be_hidden()
+    thumb = page.locator("#dictRowView td.thumb")
+    expect(thumb.locator("button")).to_have_text(["jump", "閉じる"])
+    image = thumb.locator("img").bounding_box()
+    assert all(button.bounding_box()["y"] >= image["y"] + image["height"] for button in thumb.locator("button").all())
+    thumb.locator("button", has_text="閉じる").click()
+    expect(page.locator("#dictRowTable")).to_be_hidden()
+    expect(note).to_have_text(ROW_NOTE)
+    page.locator('#dictImageList .dict-thumb[title="titanic.png"]').click()
+    thumb.locator("button", has_text="jump").click()
+    expect(page.locator("#imagesView")).to_be_visible()
+    expect(page.locator('#gridBody tr[data-name="titanic.png"]')).to_be_in_viewport()
+
+
+def topmost_is_in(page, at, inside):
+    """at の真ん中で一番上に見えている要素が、inside の中か"""
+    return page.evaluate("""([at, inside]) => { const r = document.querySelector(at).getBoundingClientRect();
+        return document.querySelector(inside).contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); }""",
+                         [at, inside])
+
+
+def test_the_thumbnail_of_the_row_view_shows_a_big_image_over_the_left_table_only(page, movies):
+    # 簡易表示のサムネイルを押すと、元の画像を左の表の場所だけに大きく重ねる（右側は隠さない）。右上で別の画像を押すと、その画像に
+    # 変わる。大きい画像のクリック・Esc・サムネイルをもう一度押す・閉じる・jump で閉じる
+    open_movies(page)
+    show_dictionary(page)
+    show_row_of(page, "roman_holiday.png")
+    big, thumb = page.locator("#dictBigImage"), page.locator("#dictRowView td.thumb")
+    expect(big).to_be_hidden()
+    thumb.locator("img").click()
+    expect(big).to_be_visible()
+    expect(big.locator("img")).to_have_attribute("src", "/image/roman_holiday.png")
+    box, left = big.bounding_box(), page.locator("#dictLeft").bounding_box()
+    assert all(abs(box[k] - left[k]) <= 1 for k in ("x", "y", "width", "height"))
+    assert topmost_is_in(page, "#dictGrid thead", "#dictBigImage")  # 表の見出しより上
+    assert topmost_is_in(page, "#dictRowView", "#dictRight") and topmost_is_in(page, "#dictKinds", "#dictRight")
+
+    page.locator('#dictImageList .dict-thumb[title="titanic.png"]').click()  # 右上で別の画像 → 大きい画像もその画像
+    expect(big.locator("img")).to_have_attribute("src", "/image/titanic.png")
+    big.click()
+    expect(big).to_be_hidden()
+    thumb.locator("img").click()
+    expect(big).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(big).to_be_hidden()
+    thumb.locator("img").click()
+    expect(big).to_be_visible()
+    thumb.locator("img").click()  # もう一度押すと閉じる
+    expect(big).to_be_hidden()
+    thumb.locator("img").click()
+    thumb.locator("button", has_text="閉じる").click()
+    expect(big).to_be_hidden()
+    page.locator('#dictImageList .dict-thumb[title="titanic.png"]').click()
+    thumb.locator("img").click()
+    thumb.locator("button", has_text="jump").click()
+    expect(page.locator("#imagesView")).to_be_visible()
+    show_dictionary(page)
+    expect(big).to_be_hidden()
 
 
 def test_the_kind_list_colors_the_phrases_that_follow_the_rule(page, movies):
@@ -548,9 +627,9 @@ def test_the_kind_name_field_suggests_kind_names_and_tags(page, movies):
     expect(dict_row(page, "clothes", "long dress").locator(".group-badge")).to_have_text(".hair")
 
 
-def test_the_kind_list_shows_every_kind_and_jumps_to_its_phrases(page, movies):
+def test_the_kind_list_shows_every_kind_and_renames_it(page, movies):
     # 右下に全部の kind を表で（キー・名称（印）・排他制限・改名と消す・タグ（仲間の語句））。kind の数の説明は出さない
-    # （kind が無いときだけ説明を出す）。語句をクリックすると左の表のその行を選ぶ（検索で見えなければ検索を外す）。改名で窓が出る
+    # （kind が無いときだけ説明を出す）。改名で窓が出る
     open_movies(page)
     show_dictionary(page)
     expect(page.locator("#dictKindsNote")).to_have_text("kind はまだありません（左の表で語句を選び、「kindを付与する」）")
@@ -563,15 +642,45 @@ def test_the_kind_list_shows_every_kind_and_jumps_to_its_phrases(page, movies):
     expect(kind.locator("td").first).to_have_text("looks")
     expect(kind.locator(".group-badge")).to_have_text(".posture")
     expect(kind.locator(".kind-member")).to_have_text(["sitting", "standing"])
-    page.fill("#dictFilter", ".body")
-    kind.locator(".kind-member", has_text="standing").click()
-    expect(page.locator("#dictFilter")).to_have_value("")
-    expect(page.locator("#dictBody tr.selected")).to_have_attribute("data-text", "standing")
     kind.locator(".kind-edit").click()
     expect(page.locator("#groupName")).to_have_value("posture")
     page.fill("#groupName", "pose")
     page.click('#groupDialog button[value="ok"]')
     expect(kind.locator(".group-badge")).to_have_text(".pose")
+
+
+def test_a_kind_row_or_its_tag_in_the_kind_list_searches_for_it(page, movies):
+    # 右下の kind の行を押すと、左上の検索にその kind の印を入れ、タグを押すとそのタグを入れて検索する（検索ボタンと同じ文字どおりの
+    # 一致で、「対象を表示」「共用辞書: すべて」に戻す）。排他制限のチェック・改名・消すでは検索しない
+    assert movies.post("/group_phrases", {"key": "clothes", "phrases": ["tie", "neckerchief"], "name": "neckwear",
+                                          "affix": "", "exclusive": False})["success"]
+    open_movies(page)
+    show_dictionary(page)
+    kind = page.locator("#dictKindList .dict-kind").first
+    expect(kind.locator(".group-badge")).to_have_text(".neckwear")
+    page.fill("#dictFilter", "white")
+    page.select_option("#dictFilterMode", "out")
+    page.select_option("#dictShared", "in")
+    kind.locator(".kind-member", has_text=re.compile("^tie$")).click()
+    expect(page.locator("#dictFilter")).to_have_value("tie")
+    expect(page.locator("#dictFilterMode")).to_have_value("in")
+    expect(page.locator("#dictShared")).to_have_value("")
+    phrases = page.locator("#dictBody .dict-phrase")
+    expect(phrases).to_have_text(["tie"])  # 文字どおり（あいまいなら white shirt なども合う）
+
+    kind.locator("td.kind-key").click()
+    expect(page.locator("#dictFilter")).to_have_value(".neckwear")
+    expect(phrases).to_have_count(2)
+    assert sorted(phrases.all_text_contents()) == ["neckerchief", "tie"]
+
+    page.click("#dictResetButton")
+    kind.locator("input.kind-exclusive").check()
+    expect(page.locator("#status")).to_have_text("kind .neckwear に排他制限を付けました")
+    kind.locator(".kind-delete").click()
+    expect(page.locator("#status")).to_have_text("1秒長押しすると、この kind を消します（語句はそのまま）")
+    kind.locator(".kind-edit").click()
+    page.keyboard.press("Escape")
+    expect(page.locator("#dictFilter")).to_have_value("")
 
 
 def test_rename_and_delete_buttons_do_not_wrap_in_a_narrow_window(page, movies):
@@ -585,6 +694,22 @@ def test_rename_and_delete_buttons_do_not_wrap_in_a_narrow_window(page, movies):
         const range = document.createRange(); range.selectNodeContents(el); return range.getClientRects().length === 1; })"""
     assert page.locator("#dictBody .dict-rename").evaluate_all(one_line)
     assert page.locator("#dictKindList .kind-edit, #dictKindList .kind-delete").evaluate_all(one_line)
+
+
+def test_the_kind_list_buttons_are_70_percent_as_high_as_a_normal_button(page, movies):
+    # 右下の kind の表の「改名」「消す」は、ふつうのボタン（左の表の「改名」）の 7 割の高さ。文字の大きさはそのまま
+    open_movies(page)
+    group_postures(page)
+    show_dictionary(page)
+    normal = page.locator("#dictBody .dict-rename").first
+    expect(normal).to_be_visible()
+    size = "el => [el.getBoundingClientRect().height, getComputedStyle(el).fontSize]"
+    normal_height, normal_font = normal.evaluate(size)
+    kind = page.locator("#dictKindList .dict-kind").first
+    for button in (kind.locator(".kind-edit"), kind.locator(".kind-delete")):
+        height, font = button.evaluate(size)
+        assert abs(height - 0.7 * normal_height) < 1, (height, normal_height)
+        assert font == normal_font
 
 
 def test_click_selects_one_row_and_ctrl_or_shift_select_more(page, movies):

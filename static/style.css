@@ -262,15 +262,22 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 #dictAddSection, #dictAddKey { max-width: 120px; }
 #dictFilter, #dictAddText { width: 170px; }
 .rename-option { margin-left: auto; color: #555; font-size: 12px; }
-/* 共用辞書の画面: 左 40% に表、右 60% の上に画像・真ん中に画像の画面の行（簡易表示）・下に kind（それぞれの中で流す） */
+/* 共用辞書の画面: 左 40% に表、右 60% の上に画像・真ん中に画像の画面の行（簡易表示）・下に kind（それぞれの中で流す）。
+   大きい画像は左の表と同じ場所に重ねる */
 #dictView:not([hidden]) { display: grid; grid-template-columns: 2fr 3fr; overflow: hidden; }
 #dictView .dict-pane { overflow: auto; min-height: 0; }
+#dictLeft, #dictBigImage { grid-area: 1 / 1; }
 #dictLeft { padding-bottom: 24px; }
-#dictRight { display: grid; grid-template-rows: 1fr auto 1fr; min-width: 0; min-height: 0; border-left: 1px solid #ddd; }
+#dictRight { grid-area: 1 / 2; display: grid; grid-template-rows: 1fr auto 1fr; min-width: 0; min-height: 0; border-left: 1px solid #ddd; }
 #dictRowView, #dictKinds { border-top: 1px solid #ddd; }
 #dictRowView { max-height: 45vh; }  /* 行が高くても、上と下の欄を残す（入り切らない分は中で流す） */
-#dictRowTable { pointer-events: none; }  /* 見るだけ（サムネイルのクリックだけで画像の画面へ） */
-#dictRowTable td.thumb img { pointer-events: auto; cursor: pointer; }
+#dictRowTable { pointer-events: none; }  /* 見るだけ（押せるのはサムネイルと、その下の jump・閉じる） */
+#dictRowTable td.thumb img, #dictRowTable .row-actions button { pointer-events: auto; }
+#dictRowTable .row-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }  /* サムネイルの幅に入り切らなければ2段 */
+#dictRowTable .row-actions button { flex: 1 1 auto; padding-top: 0; padding-bottom: 0; line-height: 20px; }  /* 右下の kind の表のボタンと同じ 22px */
+/* 大きい画像: 左の表の見出し（z-index 1）より上に、縦横の比を変えずに枠いっぱい（画像の大きさで枠を広げない） */
+#dictBigImage { position: relative; z-index: 2; background: #eee; cursor: zoom-out; }
+#dictBigImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .dict-side { padding: 6px 8px; }
 .dict-side > .key-help { margin: 0 0 6px; }
 #dictEmpty { padding: 24px; color: #777; }
@@ -282,6 +289,8 @@ button.hold.holding::before { animation: hold-fill var(--hold-ms, 1s) linear for
 .kind-table td { width: 1%; white-space: nowrap; }
 .kind-table td.kind-tags { width: auto; white-space: normal; }
 .kind-table td.kind-key { color: #555; }
+.kind-table tr.dict-kind { cursor: pointer; }  /* 行を押すと、その kind の印で左上を検索 */
+.kind-table td.kind-actions button { padding-top: 0; padding-bottom: 0; line-height: 20px; }  /* 改名・消すは、ふつうのボタン（31px）の 7 割の 22px。文字の大きさと横幅はそのまま */
 .kind-members { display: flex; flex-wrap: wrap; gap: 4px; }
 .kind-member { padding: 0 6px; border: 1px solid #ccc; border-radius: 3px; background: #fff; font-size: 12px; cursor: pointer; }
 .kind-member.rule { background: #e3effd; border-color: #a9c8ee; }  /* suffix・prefix の決まりに合う語句（合わないが付与した語句は白） */
