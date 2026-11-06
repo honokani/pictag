@@ -290,15 +290,20 @@ function jumpToImage(index) {
 // kind の仲間の語句: 一覧の語句と、前後の決まりに合う辞書の語句（同じキー）
 const kindMembers = g => [...new Set([...g.phrases, ...state.phrases.filter(p => p.key === g.key && followsRule(g, p.phrase)).map(p => p.phrase)])];
 
-// 右下: 全部の kind（印・キー・排他制限・改名・消すと、仲間の語句。語句をクリックすると左の表のその行へ。消すは1秒長押し）
+// 右下: 全部の kind の表（キー・名称（印）・排他制限・改名と消す・タグ（仲間の語句））。語句をクリックすると左の表のその行へ。
+// 消すは1秒長押し。kind が無いときだけ説明を出す
 function renderDictKinds() {
-    $('dictKindsNote').textContent = state.groups.length ? `kind ${state.groups.length} 件（語句をクリックすると、左の表のその行へ）`
-        : 'kind はまだありません（左の表で語句を選び、「kindを付与する」）';
-    $('dictKindList').innerHTML = state.groups.map((g, i) => `<div class="dict-kind" data-i="${i}">${groupBadge(i, false)} ` +
-        `<span class="key-help">${escapeHtml(g.key)}</span> <label class="key-help"><input type="checkbox" class="kind-exclusive"` +
-        `${exclusiveKind(g) ? ' checked' : ''}> 排他制限</label> <button type="button" class="kind-edit">改名</button> ` +
-        `<button type="button" class="kind-delete hold" title="1秒長押しで、この kind を消す（語句はそのまま）">消す</button>` +
-        `<div class="kind-members">${kindMembers(g).map(p => kindMemberHtml(g, p)).join('')}</div></div>`).join('');
+    const note = $('dictKindsNote');
+    note.textContent = state.groups.length ? '' : 'kind はまだありません（左の表で語句を選び、「kindを付与する」）';
+    note.hidden = state.groups.length > 0;
+    const rows = state.groups.map((g, i) => `<tr class="dict-kind" data-i="${i}"><td class="kind-key">${escapeHtml(g.key)}</td>` +
+        `<td>${groupBadge(i, false)}</td>` +
+        `<td><input type="checkbox" class="kind-exclusive" aria-label="排他制限"${exclusiveKind(g) ? ' checked' : ''}></td>` +
+        `<td class="kind-actions"><button type="button" class="kind-edit">改名</button> ` +
+        `<button type="button" class="kind-delete hold" title="1秒長押しで、この kind を消す（語句はそのまま）">消す</button></td>` +
+        `<td class="kind-tags"><div class="kind-members">${kindMembers(g).map(p => kindMemberHtml(g, p)).join('')}</div></td></tr>`);
+    $('dictKindList').innerHTML = state.groups.length ? '<table class="kind-table"><thead><tr><th>キー</th><th>名称</th><th>排他制限</th>' +
+        `<th></th><th>タグ</th></tr></thead><tbody>${rows.join('')}</tbody></table>` : '';
     $('dictKindList').querySelectorAll('.kind-delete').forEach(button => holdToRun(button,
         () => deleteKind(Number(button.closest('.dict-kind').dataset.i)), '1秒長押しすると、この kind を消します（語句はそのまま）'));
 }
